@@ -1,9 +1,2 @@
-# Auto detect text files and perform LF normalization
+# Set default behavior to automatically normalize line endings.
 * text=auto
-
-# Prevent leaking environment files
-*.env export-ignore
-
-# Prevent leaking ChromaDB data
-data/* export-ignore
-chroma.sqlite3 export-ignore
