@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Prevent leaking environment files
+*.env export-ignore
+
+# Prevent leaking ChromaDB data
+data/* export-ignore
+chroma.sqlite3 export-ignore

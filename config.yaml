@@ -1,0 +1,26 @@
+# Project Seeka 配置文件
+
+# API 配置
+api:
+  ark_api_key: ""  # 从环境变量读取
+  sovits_url: "http://127.0.0.1:9880"
+
+# 音频配置
+audio:
+  ref_audio_path: "assets/audio_ref/ref_audio.wav"
+  prompt_text: "大家好，我是虚拟歌手洛天依，欢迎来到我的十周年生日会直播。"
+  sample_rate: 32000
+
+# 记忆配置
+memory:
+  data_dir: "data/chroma_db"
+  collection_name: "seeka_memory"
+
+# 日志配置
+logging:
+  log_dir: "data/logs"
+
+# 其他阈值
+thresholds:
+  max_entity_count: 100
+  memory_cleanup_days: 7
