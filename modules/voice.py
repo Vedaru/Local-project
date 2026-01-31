@@ -39,11 +39,13 @@ class VoiceManager:
                     "streaming_mode": 1,
                     "parallel_infer": True
                 }
-                with requests.post(f"{self.sovits_url}/tts", json=tts_data, stream=True, timeout=8) as resp:
-                    if resp.status_code == 200:
-                        for chunk in resp.iter_content(chunk_size=2048):
-                            if chunk:
-                                self.audio_queue.put(chunk)
+                with requests.post(f"{self.sovits_url}/tts", json=tts_data, stream=True, timeout=30) as resp:
+                    resp.raise_for_status()  # 确保响应状态正确
+                    for chunk in resp.iter_content(chunk_size=2048):
+                        if chunk:
+                            self.audio_queue.put(chunk)
+            except requests.exceptions.RequestException as e:
+                print(f"[TTS网络错误] {e}")
             except Exception as e:
                 print(f"[TTS错误] {e}")
             self.text_queue.task_done()

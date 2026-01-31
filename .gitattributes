@@ -3,7 +3,7 @@
 
 # Ignore environment files in exports
 .env export-ignore
-*.wav export-ignore
 /data export-ignore
+/modules/__pycache__/ export-ignore
 __pycache__ export-ignore
 chroma_db/ export-ignore

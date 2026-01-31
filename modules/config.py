@@ -22,3 +22,12 @@ PROMPT_TEXT = "大家好，我是虚拟歌手洛天依，欢迎来到我的十�
 # ChromaDB 数据目录
 data_dir = os.path.join(os.path.dirname(__file__), "..", "data", "chroma_db")
 os.makedirs(data_dir, exist_ok=True)
+
+# GPT-SoVITS 路径
+GPT_SOVITS_PATH = env_vars.get("GPT_SOVITS_PATH")
+
+# model_name 
+MODEL_NAME = env_vars.get("MODEL_NAME")
+
+# system prompt
+SYSTEM_PROMPT = env_vars.get("SYSTEM_PROMPT")
