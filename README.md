@@ -33,6 +33,12 @@
    创建 `.env` 文件并设置以下变量：
    ```
    ARK_API_KEY=your_api_key_here
+
+   SYSTEM_PROMPT=example
+
+   GPT_SOVITS_PATH=example
+
+   MODEL_NAME=example
    ```
 
 4. **下载并配置GPT-SoVITS**
@@ -61,6 +67,8 @@
 
 - 输入 `exit` 或 `quit` 退出程序
 - 程序会自动管理对话记忆，提供连续的对话体验
+
+api服务的终端输出会存放在Local-project\GPT-SoVITS-v2pro-20250604-nvidia50\gpt_sovits.log中
 
 ## 项目结构
 
