@@ -41,7 +41,6 @@ def main():
     
     # 初始化模块
     memory_manager = MemoryManager()
-    graph_memory = GraphMemory()
     voice_manager = VoiceManager(
         sovits_url=SOVITS_URL,
         ref_audio=REF_AUDIO,
@@ -81,8 +80,6 @@ def main():
         # 清理输入文本
         cleaned_input = clean_text(user_input)
 
-        # 语义图谱摄取（可解释记忆）
-        graph_memory.ingest_utterance(cleaned_input, speaker="用户", source="dialog")
         
         # 添加到短期记忆
         memory_manager.add_to_short_term("用户", cleaned_input)
@@ -95,10 +92,6 @@ def main():
         # 调用 LLM 生成响应
         ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, cleaned_input, memory_context)
         
-        explain_lines = graph_memory.explain_latest()
-        if explain_lines:
-            memory_logger.info("[可解释链] " + " | ".join(explain_lines))
-
         print(f"AI: {ai_response}")
         
         # 只有在非错误响应时才处理记忆
