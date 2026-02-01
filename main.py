@@ -5,7 +5,6 @@ import signal
 import sys
 from modules.memory import MemoryManager
 from modules.memory.logger import get_logger
-from modules.memory_graph import GraphMemory
 from modules.voice import VoiceManager
 from modules.llm import call_llm
 from modules.config import REF_AUDIO, PROMPT_TEXT, SOVITS_URL, GPT_SOVITS_PATH, MODEL_NAME, SYSTEM_PROMPT
