@@ -5,7 +5,7 @@ import re
 
 # ==================== 核心配置 ====================
 SHORT_TERM_CAPACITY = 7
-SIMILARITY_THRESHOLD = 0.8  # 检索阈值
+SIMILARITY_THRESHOLD = 1.0  # 检索阈值（放宽至1.0，通过评分机制筛选）
 STRONG_SIMILARITY_THRESHOLD = 0.35  # 实体级冲突阈值
 SENTENCE_CONFLICT_THRESHOLD = 0.4  # 整句冲突阈值
 FORGETTING_RATE = 0.05  # 遗忘速率

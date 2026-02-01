@@ -6,6 +6,7 @@ from typing import List, Dict, Set, Tuple
 
 from ..analyzers import TextAnalyzer
 from ..logger import get_logger
+from ..config import PREFERENCE_CATEGORIES
 from .constants import ENTITY_CONFLICT_THRESHOLD, SAME_CATEGORY_THRESHOLD
 from .models import ConflictCandidate
 from .locator import EntityLocator
@@ -96,6 +97,44 @@ class ConflictResolver:
                 self.logger.error(f"[检索失败] [{layer_name}] | {e}")
         
         return candidates
+
+    def _query_by_category(self, category: str, n_results: int = 5, max_keywords: int = 3) -> List[ConflictCandidate]:
+        """基于偏好类别关键词检索相关记忆（用于同类偏好覆盖）"""
+        if not category:
+            return []
+
+        keywords = PREFERENCE_CATEGORIES.get(category, [])
+        query_terms = [category] + keywords[:max_keywords]
+
+        candidates: List[ConflictCandidate] = []
+
+        for term in query_terms:
+            for collection, layer_name in self.collections:
+                try:
+                    results = collection.query(
+                        query_texts=[term],
+                        n_results=n_results,
+                        include=["documents", "distances", "metadatas"]
+                    )
+
+                    docs = results.get('documents', [[]])[0]
+                    distances = results.get('distances', [[]])[0]
+                    ids = results.get('ids', [[]])[0]
+                    metas = results.get('metadatas', [[]])[0]
+
+                    for doc, dist, doc_id, meta in zip(docs, distances, ids, metas):
+                        candidates.append(ConflictCandidate(
+                            doc_id=doc_id,
+                            document=doc,
+                            distance=dist,
+                            metadata=meta or {},
+                            collection=collection,
+                            layer_name=layer_name
+                        ))
+                except Exception as e:
+                    self.logger.error(f"[检索失败] [{layer_name}] category={category} term={term} | {e}")
+
+        return candidates
     
     # ==================== Step 4: 删除 ====================
     def _execute_delete(self, candidates: List[ConflictCandidate]) -> int:
@@ -133,8 +172,10 @@ class ConflictResolver:
         
         self.logger.debug(f"[定位] 核心实体: {primary_entities}")
         
-        has_update_intent = ConflictDetector.has_update_intent(new_content)
-        has_preference = ConflictDetector.detect_preference_conflict(new_content)
+        user_input = extract_user_input(new_content)
+        has_update_intent = ConflictDetector.has_update_intent(user_input)
+        has_preference = ConflictDetector.detect_preference_conflict(user_input)
+        preference_category = ConflictDetector.get_preference_category(user_input)
         
         # Step 2: 检索
         all_candidates: Dict[str, ConflictCandidate] = {}
@@ -147,6 +188,12 @@ class ConflictResolver:
         for candidate in self._query_by_content(new_content, n_results=5):
             if candidate.doc_id not in all_candidates:
                 all_candidates[candidate.doc_id] = candidate
+
+        # 偏好类记忆：额外按类别关键词检索，避免“香蕉”无法召回“苹果”
+        if has_preference and preference_category:
+            for candidate in self._query_by_category(preference_category, n_results=5):
+                if candidate.doc_id not in all_candidates:
+                    all_candidates[candidate.doc_id] = candidate
         
         self.logger.debug(f"[检索] 共找到 {len(all_candidates)} 条候选记忆")
         

@@ -1,5 +1,5 @@
 """
-Project Seeka - 主入口文件
+Project Local - 主入口文件
 """
 import signal
 import sys

@@ -11,10 +11,10 @@ import chromadb
 from concurrent.futures import ThreadPoolExecutor
 
 from ..config import data_dir
-from .config import STRONG_SIMILARITY_THRESHOLD
+from .config import STRONG_SIMILARITY_THRESHOLD, PREFERENCE_PATTERNS
 from .logger import get_logger, get_log_path
 from .analyzers import TextAnalyzer
-from .conflict import ConflictResolver
+from .conflict import ConflictResolver, ConflictDetector, extract_user_input
 
 logger = get_logger()
 
@@ -34,8 +34,8 @@ class MemoryStorage:
         self._store_queue = queue.Queue()
         self._update_queue = queue.Queue()
         
-        # 线程池
-        self._executor = ThreadPoolExecutor(max_workers=3)
+        # 线程池（增加worker数量以支持并行查询）
+        self._executor = ThreadPoolExecutor(max_workers=10)
         
         self._initialize_storage()
     
@@ -198,6 +198,16 @@ class MemoryStorage:
     def _do_store_memory(self, clean_conv, entities, emotion_type, emotion_intensity, importance):
         """实际存储操作（后台线程）"""
         memory_id = str(uuid.uuid4())
+        user_input = extract_user_input(clean_conv)
+        has_preference = ConflictDetector.detect_preference_conflict(user_input)
+        preference_category = ConflictDetector.get_preference_category(user_input) if has_preference else None
+        preference_polarity = None
+        if has_preference:
+            if any(p in user_input for p in PREFERENCE_PATTERNS['negative']):
+                preference_polarity = 'negative'
+            elif any(p in user_input for p in PREFERENCE_PATTERNS['positive']):
+                preference_polarity = 'positive'
+
         metadata = {
             "timestamp": time.time(),
             "access_count": 0,
@@ -206,7 +216,11 @@ class MemoryStorage:
             "emotion_type": emotion_type,
             "emotion_intensity": emotion_intensity,
             "entities": json.dumps(list(entities.keys())) if entities else "[]",
-            "consolidated": False
+            "consolidated": False,
+            "preference": bool(has_preference),
+            "preference_category": preference_category or "",
+            "preference_polarity": preference_polarity or "",
+            "preference_entities": json.dumps(list(TextAnalyzer.extract_noun_entities(user_input))) if has_preference else "[]"
         }
         
         try:

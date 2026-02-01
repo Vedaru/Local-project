@@ -174,8 +174,8 @@ class ConflictDetector:
             if ConflictDetector.is_preference_contradiction(new_content, old_doc):
                 return "偏好矛盾"
         
-        # 条件4：同类偏好更新检测
-        if has_preference and distance < SAME_CATEGORY_THRESHOLD:
+        # 条件4：同类偏好更新检测（不依赖距离，避免漏判）
+        if has_preference:
             if ConflictDetector.is_same_category_preference(new_content, old_doc):
                 return "同类偏好更新"
         
