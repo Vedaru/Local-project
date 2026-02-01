@@ -59,7 +59,10 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
                 model=model_name,
                 messages=messages,
                 max_tokens=200,
-                temperature=0.8,
+                temperature=0.7,      # 压制幻觉的关键：不要超过 0.8
+                top_p=0.9,            # 限制词池范围，防止跑题
+                presence_penalty=0.1, # 稍微鼓励谈论新话题，但不要太高
+                frequency_penalty=0.1
             )
 
             content = response.choices[0].message.content
