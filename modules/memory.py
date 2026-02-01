@@ -10,7 +10,7 @@ from .config import data_dir
 class MemoryManager:
     # 语义差异阈值：越小越严格（0.3-0.4是推荐区间）
     # 当新旧记忆距离小于此值，且内容不同时，触发覆盖删除
-    OVERRIDE_THRESHOLD = 0.35
+    OVERRIDE_THRESHOLD = 0.5
 
     # 更加严谨的切割符
     PUNCTUATION = ['。', '！', '？', '!', '?', '\n', '；', ';', '：', ':', '，', ',']
