@@ -81,6 +81,10 @@ class HumanLikeMemory:
     def cleanup_old_memories(self):
         """清理旧记忆"""
         self._storage.cleanup_old_memories()
+
+    def resolve_all_contradictions(self):
+        """对所有记忆进行句意理解并清理矛盾对"""
+        self._storage.resolve_all_contradictions()
     
     def get_memory_stats(self) -> dict:
         """获取统计信息"""

@@ -3,6 +3,7 @@
 """
 import time
 from concurrent.futures import as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 from .config import SIMILARITY_THRESHOLD
 from .logger import get_logger
@@ -35,38 +36,86 @@ class MemoryRetriever:
             return ""
         
         logger.debug(f"[检索] 查询: {query[:50]}...")
+
+        def is_review_question(text: str) -> bool:
+            review_patterns = [
+                '你还记得', '还记得我', '我之前说过', '我以前说过', '我刚才说', '我刚刚说',
+                '我曾经说', '我刚才提到', '我刚刚提到', '我之前提到', '我以前提到',
+                '你记得', '记得我', '你能回忆', '你能想起', '你能记得', '你能告诉我我',
+                '我问过', '我说过', '我提过', '我提到过', '我讲过', '我讲到过',
+                '你知道我', '你知道我喜欢', '你知道我讨厌', '你知道我最喜欢', '你知道我最讨厌',
+            ]
+            return any(p in text for p in review_patterns)
+
+        def extract_user_input(text: str) -> str:
+            if '用户:' in text:
+                return text.split('用户:')[1].split('AI:')[0].strip()
+            return text
+
+        def is_preference_memory(text: str) -> bool:
+            user_text = extract_user_input(text)
+            return ConflictDetector.detect_preference_conflict(user_text)
+
+        review_question = is_review_question(query)
         
         # 并行查询所有集合
         all_memories = []
         futures = []
         executor = self.storage.get_executor()
         collections = self.storage.get_collections()
+
+        preference_queries = ["我喜欢", "我最喜欢", "我喜欢吃", "我爱吃"] if review_question else []
         
         for collection, layer_name in collections:
             future = executor.submit(
                 self._query_collection, collection, layer_name, query, n_results
             )
             futures.append(future)
+
+            for pq in preference_queries:
+                future = executor.submit(
+                    self._query_collection, collection, layer_name, pq, n_results
+                )
+                futures.append(future)
         
         # 等待所有查询完成
-        for future in as_completed(futures, timeout=2.0):
-            try:
-                memories = future.result()
-                all_memories.extend(memories)
-            except Exception:
-                pass
+        try:
+            for future in as_completed(futures, timeout=2.0):
+                try:
+                    memories = future.result()
+                    all_memories.extend(memories)
+                except Exception:
+                    pass
+        except FuturesTimeoutError:
+            logger.debug(f"[检索超时] 未完成任务: {len([f for f in futures if not f.done()])}")
+            for future in futures:
+                if future.done():
+                    try:
+                        memories = future.result()
+                        all_memories.extend(memories)
+                    except Exception:
+                        pass
         
         if not all_memories:
             return short_term_context if short_term_context else ""
         
         # 去重（包括偏好矛盾检测）
         all_memories = self._deduplicate_memories(all_memories)
+
+        # 回顾性提问时优先偏好记忆
+        if review_question:
+            preference_memories = [m for m in all_memories if is_preference_memory(m['content'])]
+            if preference_memories:
+                all_memories = preference_memories
         
         # 排序：优先新记忆
         current_time = time.time()
         for mem in all_memories:
             time_score = 1.0 / (1.0 + (current_time - mem['timestamp']) / 86400)
-            mem['final_score'] = mem['strength'] * 0.5 + time_score * 0.3 + (1 - mem['distance']) * 0.2
+            preference_bonus = 0.25 if is_preference_memory(mem['content']) else 0.0
+            if review_question:
+                preference_bonus += 0.15
+            mem['final_score'] = mem['strength'] * 0.45 + time_score * 0.25 + (1 - mem['distance']) * 0.2 + preference_bonus
         
         all_memories.sort(key=lambda x: -x['final_score'])
         top_memories = all_memories[:n_results]

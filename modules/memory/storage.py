@@ -150,21 +150,48 @@ class MemoryStorage:
             except Exception:
                 pass
     
+    def _is_review_question(self, text: str) -> bool:
+        """
+        检测是否为回顾性提问，如“你还记得我喜欢…吗”“我之前说过…”等
+        """
+        review_patterns = [
+            '你还记得', '还记得我', '我之前说过', '我以前说过', '我刚才说', '我刚刚说',
+            '我曾经说', '我刚才提到', '我刚刚提到', '我之前提到', '我以前提到',
+            '你记得', '记得我', '你能回忆', '你能想起', '你能记得', '你能告诉我我',
+            '我问过', '我说过', '我提过', '我提到过', '我讲过', '我讲到过',
+            '你知道我', '你知道我喜欢', '你知道我讨厌', '你知道我最喜欢', '你知道我最讨厌',
+            '你能猜', '你猜我', '你能想到', '你能想到我', '你能想到我喜欢', '你能想到我讨厌',
+            '你能想到我最喜欢', '你能想到我最讨厌',
+        ]
+        # 疑问句标记
+        question_marks = ['吗', '?', '？']
+        if any(p in text for p in review_patterns) and any(q in text for q in question_marks):
+            return True
+        # 也允许“你还记得我喜欢吃什么”这类无问号但明显回顾性提问
+        if any(p in text for p in review_patterns):
+            return True
+        return False
+
     def store_memory(self, conversation: str, current_emotion: str) -> str:
         """异步存储记忆（非阻塞）"""
         if not self.enabled:
             return current_emotion
-        
+
         clean_conv = TextAnalyzer.clean_text(conversation)
         if len(clean_conv) < 5:
             return current_emotion
-        
+
+        # 回顾性提问不存储为记忆
+        if self._is_review_question(clean_conv):
+            logger.debug(f"[过滤] 回顾性提问未存储: {clean_conv}")
+            return current_emotion
+
         entities = TextAnalyzer.extract_entities(clean_conv)
         emotion_type, emotion_intensity = TextAnalyzer.analyze_emotion(clean_conv)
         importance = TextAnalyzer.calculate_importance(clean_conv, entities, emotion_type, emotion_intensity)
-        
+
         new_emotion = emotion_type if emotion_type != 'neutral' else current_emotion
-        
+
         self._store_queue.put((clean_conv, entities, emotion_type, emotion_intensity, importance))
         return new_emotion
     
@@ -236,6 +263,9 @@ class MemoryStorage:
         
         if total_deleted > 0:
             logger.info(f"[清理完成] 共删除 {total_deleted} 条记忆")
+
+        # 全量语义矛盾检测与覆盖
+        self.resolve_all_contradictions()
     
     def get_stats(self):
         """获取存储统计信息"""
@@ -246,6 +276,12 @@ class MemoryStorage:
             'pending_stores': self._store_queue.qsize(),
             'pending_updates': self._update_queue.qsize(),
         }
+
+    def resolve_all_contradictions(self):
+        """对所有记忆进行句意理解并清理矛盾对"""
+        if not self.enabled or not self._conflict_resolver:
+            return
+        self._conflict_resolver.resolve_all_semantic_conflicts()
     
     def force_update_memory(self, old_info: str, new_info: str) -> bool:
         """强制更新记忆"""
