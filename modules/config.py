@@ -10,7 +10,16 @@ dotenv.load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".e
 
 # --- 配置区 ---
 env_vars = dotenv.dotenv_values(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
-api_key = env_vars.get("ARK_API_KEY")
+
+def _clean_env_value(value):
+    if value is None:
+        return None
+    value = str(value).strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        value = value[1:-1]
+    return value
+
+api_key = _clean_env_value(env_vars.get("ARK_API_KEY"))
 client = OpenAI(
     base_url="https://ark.cn-beijing.volces.com/api/v3",
     api_key=api_key,
@@ -24,10 +33,10 @@ data_dir = os.path.join(os.path.dirname(__file__), "..", "data", "chroma_db")
 os.makedirs(data_dir, exist_ok=True)
 
 # GPT-SoVITS 路径
-GPT_SOVITS_PATH = env_vars.get("GPT_SOVITS_PATH")
+GPT_SOVITS_PATH = _clean_env_value(env_vars.get("GPT_SOVITS_PATH"))
 
 # model_name 
-MODEL_NAME = env_vars.get("MODEL_NAME")
+MODEL_NAME = _clean_env_value(env_vars.get("MODEL_NAME"))
 
 # system prompt
-SYSTEM_PROMPT = env_vars.get("SYSTEM_PROMPT")
+SYSTEM_PROMPT = _clean_env_value(env_vars.get("SYSTEM_PROMPT"))
