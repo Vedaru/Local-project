@@ -55,9 +55,9 @@
         let lastPointerPosition = { x: 0, y: 0 };
         let isReady = false;
         
-        // 口型同步平滑变量
-        let targetMouthValue = 0;  // 目标值 (Python 发过来的)
-        let currentMouthValue = 0; // 当前值 (模型正在显示的)
+        // 口型同步变量 (使用 window 全局变量确保 update 钩子可以访问)
+        window.targetMouthValue = 0;  // 目标值 (从 Web Audio API 计算)
+        window.currentMouthValue = 0; // 当前值 (经过平滑插值)
         
         // 缩放相关变量
         let currentScale = 1.0;      // 当前缩放比例
@@ -270,31 +270,53 @@
                     }
                 });
                 
-                // 【核心黑科技】劫持 internalModel 的 update 方法
-                // 在动画系统更新后强制覆盖嘴巴参数
-                const originalUpdate = model.internalModel.update.bind(model.internalModel);
+                // ===========================================================
+                // ⚔️ 核心修复：双层劫持确保口型同步不被表情覆盖
+                // ===========================================================
                 
+                // 第一层：劫持 internalModel.update (处理 Lerp 平滑)
+                const originalInternalUpdate = model.internalModel.update;
+                let mouthDebugCounter = 0;
                 model.internalModel.update = function(dt, now) {
-                    // 1. 先让官方逻辑跑完 (计算动作、表情、物理)
-                    originalUpdate(dt, now);
+                    // 先让官方逻辑跑完
+                    originalInternalUpdate.call(this, dt, now);
                     
-                    // 2. Lerp 平滑插值
-                    currentMouthValue += (targetMouthValue - currentMouthValue) * 0.3;
+                    // Lerp 平滑插值
+                    window.currentMouthValue += (window.targetMouthValue - window.currentMouthValue) * 0.35;
                     
-                    // 3. 在最后关头强行覆盖嘴巴参数
-                    if (currentMouthValue > 0.001) {
-                        // 针对 Cubism 4 (.moc3)
-                        if (this.coreModel.setParameterValueById) {
-                            this.coreModel.setParameterValueById('ParamMouthOpenY', currentMouthValue);
-                        } 
-                        // 针对 Cubism 2.1 (老模型 .moc)
-                        else if (this.coreModel.setParamFloat) {
-                            this.coreModel.setParamFloat('PARAM_MOUTH_OPEN_Y', currentMouthValue);
-                        }
+                    // ⚔️ 在 internalModel 更新后立即设置嘴巴参数到 coreModel
+                    // 这样能确保在每一帧都被应用
+                    const coreModel = this.coreModel;
+                    if (coreModel && coreModel.setParameterValueById) {
+                        coreModel.setParameterValueById('ParamMouthOpenY', window.currentMouthValue);
+                    }
+                    
+                    // 调试日志（每 60 帧输出一次）
+                    mouthDebugCounter++;
+                    if (mouthDebugCounter % 60 === 0 && window.targetMouthValue > 0) {
+                        console.log('[Mouth Debug] target:', window.targetMouthValue.toFixed(3), 
+                                    'current:', window.currentMouthValue.toFixed(3));
                     }
                 };
                 
-                console.log('[Live2D Viewer] Mouth control hijacked via internalModel.update');
+                // 第二层：劫持 coreModel.update (备用方案，在 internalModel 没有被调用时兜底)
+                // 这是绝对的最终关卡，在这之后就是 GPU 渲染了
+                const coreModel = model.internalModel.coreModel;
+                const originalCoreUpdate = coreModel.update.bind(coreModel);
+                
+                coreModel.update = function() {
+                    // 先执行原始的核心更新
+                    originalCoreUpdate();
+                    
+                    // 二次保险：在渲染前的最后时刻再覆盖一次嘴巴参数
+                    // （以防万一 internalModel.update 没有被正确调用）
+                    if (this.setParameterValueById) {
+                        this.setParameterValueById('ParamMouthOpenY', window.currentMouthValue);
+                    }
+                };
+                // ===========================================================
+                
+                console.log('[Live2D Viewer] Mouth control hijacked (dual-layer)');
                 console.log('[Live2D Viewer] Model loaded successfully');
                 return true;
             } catch (error) {
@@ -425,7 +447,7 @@
                 audioSource.onended = () => {
                     console.log('[Live2D Viewer] Audio playback ended');
                     isAnalyzing = false;
-                    targetMouthValue = 0;
+                    window.targetMouthValue = 0;
                 };
                 
                 // 开始播放
@@ -439,7 +461,7 @@
                 return true;
             } catch (error) {
                 console.error('[Live2D Viewer] Failed to play audio:', error);
-                targetMouthValue = 0;
+                window.targetMouthValue = 0;
                 isAnalyzing = false;
                 return false;
             }
@@ -482,8 +504,8 @@
                 volume = Math.min(Math.pow(rms * 3, 0.6), 1.0);
             }
             
-            // 赋值给目标变量
-            targetMouthValue = volume;
+            // 赋值给全局目标变量
+            window.targetMouthValue = volume;
             
             // 调试日志（每 500ms 输出一次）
             const now = Date.now();
@@ -512,7 +534,7 @@
                 }
                 audioSource = null;
             }
-            targetMouthValue = 0;
+            window.targetMouthValue = 0;
         }
 
         /**

@@ -132,9 +132,6 @@ class HumanLikeMemory:
             self.logger.info(f"[每日总结] 今日形成 {len(today_memories)} 条记忆")
             for i, m in enumerate(today_memories[:5], 1):
                 self.logger.info(f"  {i}. {m['content'][:60]}...")
-            print(f"\n[📖 每日总结] 今日形成 {len(today_memories)} 条记忆")
-            for i, m in enumerate(today_memories[:3], 1):
-                print(f"  {i}. {m['content'][:40]}...")
     
     def force_update_memory(self, old_info: str, new_info: str) -> bool:
         """强制更新记忆"""

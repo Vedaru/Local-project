@@ -84,40 +84,58 @@ api服务的终端输出会存放在Local-project\GPT-SoVITS-v2pro-20250604-nvid
 
 ```
 Local-project/
-├── main.py                 # 主入口文件
-├── config.yaml            # 配置文件
-├── requirements.txt       # Python依赖
-├── .env                   # 环境变量配置
-├── modules/               # 核心模块
-│   ├── __init__.py        # 模块初始化
-│   ├── config.py          # 配置加载
-│   ├── llm.py            # LLM接口
-│   ├── memory/           # 记忆管理子模块
-│   │   ├── __init__.py   # 记忆模块初始化
-│   │   ├── analyzers.py  # 文本分析器
-│   │   ├── config.py     # 记忆配置参数
-│   │   ├── conflict/     # 冲突检测与覆盖模块
+├── .env                        # 环境变量配置
+├── .gitattributes             # Git 配置
+├── .gitignore                 # Git 忽略规则
+├── assets/                    # 资源文件
+│   ├── audio_ref/             # 参考音频
+│   └── web/                   # 前端资源
+├── config.yaml                # 配置文件
+├── data/                      # 数据存储
+│   ├── chroma_db/             # 向量数据库
+│   ├── logs/                  # 日志文件
+│   └── temp/                  # 运行时临时文件
+├── GPT-SoVITS-v2pro-20250604-nvidia50/ # GPT-SoVITS 模型目录
+├── main.py                    # 主入口文件
+├── modules/                   # 核心模块
+│   ├── __init__.py            # 模块初始化
+│   ├── avatar/                # Avatar 子模块
+│   │   ├── __init__.py
+│   │   ├── click_through.py
+│   │   ├── expression.py
+│   │   ├── js_communication.py
+│   │   ├── lip_sync.py
+│   │   ├── logger.py
+│   │   ├── manager.py
+│   │   ├── resize.py
+│   │   ├── tray.py
+│   │   ├── webengine.py
+│   │   └── widget.py
+│   ├── config.py              # 配置加载
+│   ├── llm.py                 # LLM 接口
+│   ├── logging_config.py      # 日志配置
+│   ├── memory/                # 记忆管理子模块
+│   │   ├── __init__.py        # 记忆模块初始化
+│   │   ├── analyzers.py       # 文本分析器
+│   │   ├── config.py          # 记忆配置参数
+│   │   ├── conflict/          # 冲突检测与覆盖模块
 │   │   │   ├── __init__.py
 │   │   │   ├── constants.py
-│   │   │   ├── models.py
-│   │   │   ├── utils.py
-│   │   │   ├── locator.py
 │   │   │   ├── detector.py
-│   │   │   └── resolver.py
-│   │   ├── core.py       # 核心记忆管理类
-│   │   ├── logger.py     # 日志配置
-│   │   ├── retrieval.py  # 记忆检索与去重
-│   │   └── storage.py    # 存储层
-│   ├── utils.py          # 工具函数
-│   └── voice.py          # 语音管理
-├── assets/                # 资源文件
-│   ├── audio_ref/        # 参考音频
-├── data/                  # 数据存储
-│   ├── chroma_db/        # 向量数据库
-│   └── logs/             # 日志文件
-├── temp/                  # 临时文件
-├── GPT-SoVITS-v2pro-.../ # GPT-SoVITS模型目录
-└── README.md             # 项目说明文档
+│   │   │   ├── locator.py
+│   │   │   ├── models.py
+│   │   │   ├── resolver.py
+│   │   │   └── utils.py
+│   │   ├── core.py            # 核心记忆管理类
+│   │   ├── logger.py          # 日志配置
+│   │   ├── retrieval.py       # 记忆检索与去重
+│   │   └── storage.py         # 存储层
+│   ├── utils.py               # 工具函数
+│   └── voice.py               # 语音管理
+├── requirements.txt           # Python 依赖
+├── temp/                      # 临时文件
+├── test_avatar.py             # Avatar 测试入口
+└── README.md                  # 项目说明文档
 ```
 
 ## 注意事项

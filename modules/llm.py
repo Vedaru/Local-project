@@ -5,6 +5,9 @@ LLM 模块 - OpenAI 接口
 import time
 from openai import APIConnectionError, APITimeoutError, APIStatusError, RateLimitError
 from .config import client
+from .logging_config import get_logger
+
+logger = get_logger('llm')
 
 def _normalize_text(value, default=""):
     if value is None:
@@ -28,7 +31,7 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
     memory_context = _normalize_text(memory_context)
 
     if not model_name:
-        print("[LLM错误] 未配置 MODEL_NAME，请检查 .env 文件")
+        logger.error("未配置 MODEL_NAME，请检查 .env 文件")
         return "抱歉，模型未配置，暂时无法回答。"
 
     if not prompt:
@@ -71,14 +74,14 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
             if attempt < max_retries:
                 time.sleep(1.5 * (2 ** attempt))
                 continue
-            print(f"[LLM错误] 连接失败: {e}")
+            logger.error(f"连接失败: {e}")
             return "抱歉，我现在连接不上服务。"
         except RateLimitError as e:
-            print(f"[LLM错误] 触发限流: {e}")
+            logger.warning(f"触发限流: {e}")
             return "抱歉，请求太频繁了，稍后再试。"
         except APIStatusError as e:
-            print(f"[LLM错误] 服务返回错误: {e}")
+            logger.error(f"服务返回错误: {e}")
             return "抱歉，服务出现错误，请稍后再试。"
         except Exception as e:
-            print(f"[LLM错误] {e}")
+            logger.error(f"LLM 错误: {e}", exc_info=True)
             return "抱歉，我现在有点卡住了。"

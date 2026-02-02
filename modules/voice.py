@@ -7,6 +7,9 @@ import queue
 import time
 import wave
 import os
+from .logging_config import get_logger
+
+logger = get_logger('voice')
 
 class VoiceManager:
     def __init__(self, sovits_url="http://127.0.0.1:9880", ref_audio="", prompt_text=""):
@@ -100,10 +103,10 @@ class VoiceManager:
             return True
             
         except requests.exceptions.RequestException as e:
-            print(f"[TTS网络错误] {e}")
+            logger.error(f"TTS 网络错误: {e}")
             return False
         except Exception as e:
-            print(f"[TTS保存错误] {e}")
+            logger.error(f"TTS 保存错误: {e}", exc_info=True)
             return False
     
     def play_wav(self, wav_path: str, lip_sync_callback=None):
@@ -187,7 +190,7 @@ class VoiceManager:
                     temp_stream.close()
                     
         except Exception as e:
-            print(f"[播放错误] {e}")
+            logger.error(f"播放错误: {e}", exc_info=True)
             self.is_playing = False
             if lip_sync_callback:
                 lip_sync_callback(0.0)
@@ -273,9 +276,9 @@ class VoiceManager:
                             self.audio_queue.put(chunk)
                             
             except requests.exceptions.RequestException as e:
-                print(f"[TTS网络错误] {e}")
+                logger.error(f"TTS 网络错误: {e}")
             except Exception as e:
-                print(f"[TTS错误] {e}")
+                logger.error(f"TTS 错误: {e}", exc_info=True)
             finally:
                 # 发送结束标记
                 self.audio_queue.put(b'__END__')

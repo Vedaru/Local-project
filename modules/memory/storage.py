@@ -295,9 +295,6 @@ class MemoryStorage:
             return False
         
         logger.info(f"[强制更新] 旧: {old_info} -> 新: {new_info}")
-        print(f"\n[🔄 强制记忆更新]")
-        print(f"   旧信息: {old_info}")
-        print(f"   新信息: {new_info}")
         
         deleted_count = 0
         for collection, layer_name in self._collections:
