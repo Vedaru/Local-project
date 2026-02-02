@@ -3,12 +3,14 @@
 """
 import os
 import logging
-import tempfile
+from pathlib import Path
 from datetime import datetime
 
 # ==================== 日志配置 ====================
-LOG_DIR = os.path.join(tempfile.gettempdir(), 'memory_logs')
-os.makedirs(LOG_DIR, exist_ok=True)
+# 使用项目的 data/logs 目录
+LOG_DIR = Path(__file__).parent.parent.parent / "data" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR = str(LOG_DIR)
 
 # 创建日志文件（按日期命名）
 log_filename = os.path.join(LOG_DIR, f'memory_{datetime.now().strftime("%Y%m%d")}.log')

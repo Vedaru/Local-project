@@ -5,3 +5,7 @@ jieba>=0.42.1
 pyaudio>=0.2.13
 requests>=2.31.0
 pyyaml>=6.0
+
+# Avatar 模块依赖（PyQt6 + WebEngine）
+PyQt6>=6.4.0
+PyQt6-WebEngine>=6.4.0

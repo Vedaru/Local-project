@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live2D Avatar Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: transparent !important;
+        }
+        
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            background: transparent !important;
+        }
+        
+        canvas {
+            display: block;
+            background: transparent !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <!-- 使用本地 JS 库（避免 CDN 网络问题） -->
+    
+    <!-- PixiJS v6.x -->
+    <script src="js/pixi.min.js"></script>
+    
+    <!-- Live2D Cubism 2 SDK (for older .moc models) -->
+    <script src="js/live2d.min.js"></script>
+    
+    <!-- Live2D Cubism 4 SDK Core (for .moc3 models) -->
+    <script src="js/live2dcubismcore.min.js"></script>
+    
+    <!-- pixi-live2d-display (supports both Cubism 2 and 4) -->
+    <script src="js/pixi-live2d-display.min.js"></script>
+
+    <script>
+        // 全局变量
+        let app = null;
+        let currentModel = null;
+        let isDragging = false;
+        let lastPointerPosition = { x: 0, y: 0 };
+        let isReady = false;
+        
+        // 口型同步平滑变量
+        let targetMouthValue = 0;  // 目标值 (Python 发过来的)
+        let currentMouthValue = 0; // 当前值 (模型正在显示的)
+        
+        // 缩放相关变量
+        let currentScale = 1.0;      // 当前缩放比例
+        let baseScale = 1.0;         // 基础缩放比例（fitModelToScreen 计算的）
+        const MIN_SCALE = 0.1;       // 最小缩放
+        const MAX_SCALE = 5.0;       // 最大缩放
+        const SCALE_STEP = 0.1;      // 每次缩放步长
+        
+        // 窗口和模型尺寸
+        let initialWindowWidth = 400;   // 初始窗口宽度
+        let initialWindowHeight = 600;  // 初始窗口高度
+        let modelOriginalWidth = 0;     // 模型原始宽度
+        let modelOriginalHeight = 0;    // 模型原始高度
+
+        // 初始化 PixiJS 应用
+        function initApp() {
+            const container = document.getElementById('canvas-container');
+            
+            app = new PIXI.Application({
+                width: window.innerWidth,
+                height: window.innerHeight,
+                backgroundAlpha: 0,  // 完全透明背景
+                antialias: true,
+                resolution: window.devicePixelRatio || 1,
+                autoDensity: true,
+            });
+            
+            container.appendChild(app.view);
+            
+            // 监听窗口大小变化
+            window.addEventListener('resize', onResize);
+            
+            // 监听鼠标滚轮事件（缩放模型）
+            container.addEventListener('wheel', onMouseWheel, { passive: false });
+            
+            console.log('[Live2D Viewer] App initialized');
+            
+            // 保存初始窗口大小
+            initialWindowWidth = window.innerWidth;
+            initialWindowHeight = window.innerHeight;
+            
+            // 标记页面就绪
+            isReady = true;
+            console.log('[Live2D Viewer] Ready');
+        }
+
+        /**
+         * 检查页面是否就绪
+         */
+        function checkReady() {
+            return isReady;
+        }
+
+        // 窗口大小变化处理 - 只调整渲染器大小，不重置模型
+        function onResize() {
+            if (app) {
+                app.renderer.resize(window.innerWidth, window.innerHeight);
+                // 不再调用 fitModelToScreen，保持用户的缩放设置
+                // 只在首次加载模型时会自动适应屏幕
+            }
+        }
+
+        // 调整模型大小以适应屏幕
+        function fitModelToScreen(model) {
+            if (!model) return;
+            
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+            
+            // 获取模型原始尺寸
+            modelOriginalWidth = model.internalModel.width;
+            modelOriginalHeight = model.internalModel.height;
+            
+            // 计算缩放比例，保持宽高比
+            const scaleX = screenWidth / modelOriginalWidth;
+            const scaleY = screenHeight / modelOriginalHeight;
+            baseScale = Math.min(scaleX, scaleY) * 0.85;  // 留一些边距
+            currentScale = 1.0;  // 重置用户缩放比例
+            
+            model.scale.set(baseScale * currentScale, baseScale * currentScale);
+            
+            // 居中显示
+            model.x = screenWidth / 2;
+            model.y = screenHeight / 2;
+            model.anchor.set(0.5, 0.5);
+        }
+        
+        /**
+         * 鼠标滚轮缩放模型 - 以鼠标为中心缩放，同步调整窗口大小
+         */
+        function onMouseWheel(event) {
+            event.preventDefault();
+            
+            if (!currentModel) return;
+            
+            // 获取鼠标位置
+            const mouseX = event.clientX;
+            const mouseY = event.clientY;
+            
+            // 计算新的缩放比例
+            const delta = event.deltaY > 0 ? -SCALE_STEP : SCALE_STEP;
+            const oldScale = currentScale;
+            const newScale = currentScale + delta;
+            
+            // 限制缩放范围
+            if (newScale < MIN_SCALE || newScale > MAX_SCALE) return;
+            
+            currentScale = newScale;
+            const finalScale = baseScale * currentScale;
+            
+            // 计算鼠标相对于模型中心的位置
+            const dx = mouseX - currentModel.x;
+            const dy = mouseY - currentModel.y;
+            
+            // 计算缩放比例变化
+            const scaleRatio = newScale / oldScale;
+            
+            // 调整模型位置，使鼠标指向的点保持不变
+            currentModel.x = mouseX - dx * scaleRatio;
+            currentModel.y = mouseY - dy * scaleRatio;
+            
+            // 设置新的缩放
+            currentModel.scale.set(finalScale, finalScale);
+            
+            console.log('[Live2D Viewer] Scale:', currentScale.toFixed(2));
+        }
+
+        /**
+         * 补偿模型位置 - 当窗口左边缘或上边缘调整时调用
+         * @param {number} dx - 窗口 X 方向的位移（正值表示窗口右移）
+         * @param {number} dy - 窗口 Y 方向的位移（正值表示窗口下移）
+         */
+        function compensateModelPosition(dx, dy) {
+            if (!currentModel) return;
+            
+            // 窗口向右/下移动时，模型需要向左/上移动以保持屏幕上的位置不变
+            currentModel.x -= dx;
+            currentModel.y -= dy;
+        }
+
+        /**
+         * 重置模型缩放和位置到初始状态
+         */
+        function resetModelScale() {
+            if (!currentModel) return;
+            
+            // 重置缩放比例
+            currentScale = 1.0;
+            const finalScale = baseScale * currentScale;
+            currentModel.scale.set(finalScale, finalScale);
+            
+            // 重置位置到居中
+            currentModel.x = window.innerWidth / 2;
+            currentModel.y = window.innerHeight / 2;
+            
+            console.log('[Live2D Viewer] Model reset to initial scale and position');
+        }
+
+        /**
+         * 加载 Live2D 模型
+         * @param {string} url - 模型文件路径 (.model3.json 或 .model.json)
+         * @returns {Promise<boolean>} 加载是否成功
+         */
+        async function loadModel(url) {
+            try {
+                console.log('[Live2D Viewer] Loading model:', url);
+                
+                // 移除旧模型
+                if (currentModel) {
+                    app.stage.removeChild(currentModel);
+                    currentModel.destroy();
+                    currentModel = null;
+                }
+                
+                // 加载新模型
+                const model = await PIXI.live2d.Live2DModel.from(url);
+                
+                currentModel = model;
+                app.stage.addChild(model);
+                
+                // 适应屏幕
+                fitModelToScreen(model);
+                
+                // 启用模型交互（点击触发动作）
+                model.interactive = true;
+                model.buttonMode = true;
+                
+                // 点击模型触发随机动作
+                model.on('pointerdown', (event) => {
+                    // 阻止事件冒泡，避免触发窗口拖动
+                    event.stopPropagation();
+                });
+                
+                model.on('pointertap', () => {
+                    // 点击时播放随机动作
+                    const motionGroups = Object.keys(model.internalModel.motionManager.definitions || {});
+                    if (motionGroups.length > 0) {
+                        const randomGroup = motionGroups[Math.floor(Math.random() * motionGroups.length)];
+                        model.motion(randomGroup);
+                    }
+                });
+                
+                // 启用眼睛跟随鼠标
+                app.ticker.add(() => {
+                    if (model && model.internalModel) {
+                        // 使模型眼睛跟随鼠标
+                        const mouseX = app.renderer.plugins.interaction.mouse.global.x;
+                        const mouseY = app.renderer.plugins.interaction.mouse.global.y;
+                        model.focus(mouseX, mouseY);
+                    }
+                });
+                
+                // 【核心黑科技】劫持 internalModel 的 update 方法
+                // 在动画系统更新后强制覆盖嘴巴参数
+                const originalUpdate = model.internalModel.update.bind(model.internalModel);
+                
+                model.internalModel.update = function(dt, now) {
+                    // 1. 先让官方逻辑跑完 (计算动作、表情、物理)
+                    originalUpdate(dt, now);
+                    
+                    // 2. Lerp 平滑插值
+                    currentMouthValue += (targetMouthValue - currentMouthValue) * 0.3;
+                    
+                    // 3. 在最后关头强行覆盖嘴巴参数
+                    if (currentMouthValue > 0.001) {
+                        // 针对 Cubism 4 (.moc3)
+                        if (this.coreModel.setParameterValueById) {
+                            this.coreModel.setParameterValueById('ParamMouthOpenY', currentMouthValue);
+                        } 
+                        // 针对 Cubism 2.1 (老模型 .moc)
+                        else if (this.coreModel.setParamFloat) {
+                            this.coreModel.setParamFloat('PARAM_MOUTH_OPEN_Y', currentMouthValue);
+                        }
+                    }
+                };
+                
+                console.log('[Live2D Viewer] Mouth control hijacked via internalModel.update');
+                console.log('[Live2D Viewer] Model loaded successfully');
+                return true;
+            } catch (error) {
+                console.error('[Live2D Viewer] Failed to load model:', error);
+                return false;
+            }
+        }
+
+        /**
+         * 同步版本的模型加载（用于从 Python 调用，通过回调通知结果）
+         * @param {string} url - 模型文件路径
+         */
+        function loadModelSync(url) {
+            loadModel(url).then(result => {
+                // 结果会通过 console.log 输出，Python 可以监听
+                if (window.onModelLoaded) {
+                    window.onModelLoaded(result);
+                }
+            });
+            return "loading";  // 立即返回，表示正在加载
+        }
+
+        /**
+         * 设置表情
+         * @param {number|string} index - 表情索引或名称
+         */
+        function setExpression(index) {
+            if (!currentModel) {
+                console.warn('[Live2D Viewer] No model loaded');
+                return false;
+            }
+            
+            try {
+                if (typeof index === 'number') {
+                    currentModel.expression(index);
+                } else {
+                    currentModel.expression(index);
+                }
+                console.log('[Live2D Viewer] Expression set:', index);
+                return true;
+            } catch (error) {
+                console.error('[Live2D Viewer] Failed to set expression:', error);
+                return false;
+            }
+        }
+
+        /**
+         * 播放动作
+         * @param {string} group - 动作组名称
+         * @param {number} index - 动作索引（可选，默认随机）
+         */
+        function setMotion(group, index = undefined) {
+            if (!currentModel) {
+                console.warn('[Live2D Viewer] No model loaded');
+                return false;
+            }
+            
+            try {
+                if (index !== undefined) {
+                    currentModel.motion(group, index);
+                } else {
+                    currentModel.motion(group);
+                }
+                console.log('[Live2D Viewer] Motion set:', group, index);
+                return true;
+            } catch (error) {
+                console.error('[Live2D Viewer] Failed to set motion:', error);
+                return false;
+            }
+        }
+
+        /**
+         * 控制嘴巴开合（用于口型同步）
+         * @param {number} value - 开合程度 (0.0 - 1.0)
+         */
+        function setMouth(value) {
+            // 只设置目标值，不直接设置模型参数
+            // 实际的平滑插值在 ticker 中进行
+            targetMouthValue = Math.max(0, Math.min(1, value));
+            return true;
+        }
+        
+        // ==================== Web Audio API 音频播放和口型分析 ====================
+        let audioContext = null;
+        let analyser = null;
+        let audioSource = null;
+        let dataArray = null;
+        let isAnalyzing = false;
+        
+        /**
+         * 播放音频并自动驱动口型（浏览器内完美同步）
+         * @param {string} audioUrl - 音频文件 URL (支持 file:/// 和 http://)
+         */
+        async function playAudio(audioUrl) {
+            try {
+                // 初始化 AudioContext
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 256;
+                    dataArray = new Uint8Array(analyser.frequencyBinCount);
+                }
+                
+                // 停止之前的音频
+                if (audioSource) {
+                    try {
+                        audioSource.stop();
+                        audioSource.disconnect();
+                    } catch (e) {}
+                }
+                isAnalyzing = false;
+                
+                // 获取音频数据
+                console.log('[Live2D Viewer] Loading audio:', audioUrl);
+                const response = await fetch(audioUrl);
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                
+                // 创建音频源
+                audioSource = audioContext.createBufferSource();
+                audioSource.buffer = audioBuffer;
+                
+                // 连接节点
+                audioSource.connect(analyser);
+                analyser.connect(audioContext.destination);
+                
+                // 播放结束回调
+                audioSource.onended = () => {
+                    console.log('[Live2D Viewer] Audio playback ended');
+                    isAnalyzing = false;
+                    targetMouthValue = 0;
+                };
+                
+                // 开始播放
+                audioSource.start(0);
+                console.log('[Live2D Viewer] Audio playback started');
+                
+                // 开始分析循环
+                isAnalyzing = true;
+                analyzeLoop();
+                
+                return true;
+            } catch (error) {
+                console.error('[Live2D Viewer] Failed to play audio:', error);
+                targetMouthValue = 0;
+                isAnalyzing = false;
+                return false;
+            }
+        }
+        
+        /**
+         * 音频分析循环 - 实时更新口型
+         * 使用时域波形数据检测音量变化，让嘴巴能跟随语音节奏开合
+         */
+        let lastLogTime = 0;
+        let timeDataArray = null;  // 时域数据数组
+        
+        function analyzeLoop() {
+            if (!isAnalyzing || !analyser) {
+                return;
+            }
+            
+            // 初始化时域数据数组
+            if (!timeDataArray) {
+                timeDataArray = new Uint8Array(analyser.fftSize);
+            }
+            
+            // 获取时域波形数据（而非频谱数据）
+            analyser.getByteTimeDomainData(timeDataArray);
+            
+            // 计算 RMS（均方根）- 真实反映当前音量
+            let sumOfSquares = 0;
+            for (let i = 0; i < timeDataArray.length; i++) {
+                // 波形数据以 128 为中心，范围 0-255
+                const normalized = (timeDataArray[i] - 128) / 128;
+                sumOfSquares += normalized * normalized;
+            }
+            const rms = Math.sqrt(sumOfSquares / timeDataArray.length);
+            
+            // 门限过滤 + 非线性映射
+            let volume = 0;
+            if (rms > 0.02) {  // 底噪阈值
+                // 将 RMS (通常 0.02-0.5) 映射到 0-1
+                // 使用 pow 0.6 让小音量时嘴巴也能张开
+                volume = Math.min(Math.pow(rms * 3, 0.6), 1.0);
+            }
+            
+            // 赋值给目标变量
+            targetMouthValue = volume;
+            
+            // 调试日志（每 500ms 输出一次）
+            const now = Date.now();
+            if (now - lastLogTime > 500) {
+                console.log('[Live2D Viewer] Audio RMS:', rms.toFixed(3), 'volume:', volume.toFixed(2));
+                lastLogTime = now;
+            }
+            
+            // 继续循环
+            if (isAnalyzing) {
+                requestAnimationFrame(analyzeLoop);
+            }
+        }
+        
+        /**
+         * 停止音频播放
+         */
+        function stopAudio() {
+            isAnalyzing = false;
+            if (audioSource) {
+                try {
+                    audioSource.stop();
+                    audioSource.disconnect();
+                } catch (e) {
+                    // 已经停止
+                }
+                audioSource = null;
+            }
+            targetMouthValue = 0;
+        }
+
+        /**
+         * 获取模型信息
+         */
+        function getModelInfo() {
+            if (!currentModel || !currentModel.internalModel) {
+                return null;
+            }
+            
+            try {
+                const motionManager = currentModel.internalModel.motionManager;
+                const expressionManager = currentModel.internalModel.expressionManager;
+                
+                return {
+                    motionGroups: Object.keys(motionManager.definitions || {}),
+                    expressionCount: expressionManager ? expressionManager.definitions.length : 0,
+                    expressions: expressionManager ? expressionManager.definitions.map(e => e.Name || e.name || 'unknown') : [],
+                };
+            } catch (error) {
+                console.error('[Live2D Viewer] Failed to get model info:', error);
+                return null;
+            }
+        }
+
+        /**
+         * 设置模型位置
+         * @param {number} x - X 坐标
+         * @param {number} y - Y 坐标
+         */
+        function setModelPosition(x, y) {
+            if (currentModel) {
+                currentModel.x = x;
+                currentModel.y = y;
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * 设置模型缩放
+         * @param {number} scale - 缩放比例 (0.1 - 5.0)
+         */
+        function setModelScale(scale) {
+            if (currentModel) {
+                // 限制缩放范围
+                scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+                currentScale = scale;
+                const finalScale = baseScale * currentScale;
+                currentModel.scale.set(finalScale, finalScale);
+                console.log('[Live2D Viewer] Scale set:', currentScale.toFixed(2));
+                return true;
+            }
+            return false;
+        }
+        
+        /**
+         * 获取当前模型缩放比例
+         * @returns {number} 当前缩放比例
+         */
+        function getModelScale() {
+            return currentScale;
+        }
+        
+        /**
+         * 放大模型
+         * @param {number} step - 放大步长（默认 0.1）
+         */
+        function zoomIn(step = SCALE_STEP) {
+            const newScale = currentScale + step;
+            if (newScale <= MAX_SCALE) {
+                return setModelScale(newScale);
+            }
+            return false;
+        }
+        
+        /**
+         * 缩小模型
+         * @param {number} step - 缩小步长（默认 0.1）
+         */
+        function zoomOut(step = SCALE_STEP) {
+            const newScale = currentScale - step;
+            if (newScale >= MIN_SCALE) {
+                return setModelScale(newScale);
+            }
+            return false;
+        }
+
+        /**
+         * 重置模型到默认状态（居中、适应屏幕）
+         */
+        function resetModel() {
+            if (currentModel) {
+                fitModelToScreen(currentModel);
+                return true;
+            }
+            return false;
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            initApp();
+        });
+
+        // 将函数暴露给全局作用域（供 Python 调用）
+        window.checkReady = checkReady;
+        window.loadModel = loadModel;
+        window.setExpression = setExpression;
+        window.setMotion = setMotion;
+        window.setMouth = setMouth;
+        window.getModelInfo = getModelInfo;
+        window.setModelPosition = setModelPosition;
+        window.setModelScale = setModelScale;
+        window.getModelScale = getModelScale;
+        window.zoomIn = zoomIn;
+        window.zoomOut = zoomOut;
+        window.resetModel = resetModel;
+        window.playAudio = playAudio;
+        window.stopAudio = stopAudio;
+    </script>
+</body>
+</html>

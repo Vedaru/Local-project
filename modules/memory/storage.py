@@ -43,8 +43,6 @@ class MemoryStorage:
         """初始化 ChromaDB 存储"""
         os.makedirs(data_dir, exist_ok=True)
         
-        print("\n" + "="*60)
-        print(" [🧠 人类化记忆系统] 正在初始化（低延迟模式）...")
         logger.info("=" * 50)
         logger.info("人类化记忆系统 正在初始化（低延迟模式）")
         
@@ -76,20 +74,14 @@ class MemoryStorage:
             logger.info(f"存储路径: {data_dir}")
             logger.info(f"长期记忆: {self.long_term.count()} | 情感记忆: {self.emotional.count()} | 工作记忆: {self.working.count()}")
             logger.info(f"日志文件: {get_log_path()}")
-            
-            print(f" ├─ 存储路径: {data_dir}")
-            print(f" ├─ 长期记忆: {self.long_term.count()} | 情感记忆: {self.emotional.count()} | 工作记忆: {self.working.count()}")
-            print(f" ├─ 日志文件: {get_log_path()}")
-            print(" [状态] ✓ 记忆系统已就绪")
+            logger.info("记忆系统已就绪")
             
             self._start_background_workers()
             
         except Exception as e:
             logger.error(f"记忆系统初始化失败: {e}")
-            print(f" [错误] 记忆系统初始化失败: {e}")
             self.enabled = False
         
-        print("="*60 + "\n")
         logger.info("=" * 50)
     
     def _start_background_workers(self):
