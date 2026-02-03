@@ -20,6 +20,7 @@ from modules.avatar.logger import log_info as avatar_log_info
 from modules.memory import MemoryManager
 from modules.memory.logger import get_logger as get_memory_logger
 from modules.voice import VoiceManager
+from modules.ear import Ear
 from modules.llm import call_llm
 from modules.config import REF_AUDIO, PROMPT_TEXT, SOVITS_URL, GPT_SOVITS_PATH, MODEL_NAME, SYSTEM_PROMPT
 from modules.utils import clean_text, start_gpt_sovits_api, check_sovits_service
@@ -36,6 +37,51 @@ class AIWorkerSignals(QObject):
     shutdown = pyqtSignal()                 # 关闭信号
     speak_request = pyqtSignal(str)         # 语音合成请求（带口型同步）
     play_audio = pyqtSignal(str)            # 播放音频请求（wav 文件路径）
+    ear_recognized = pyqtSignal(str)        # 麦克风识别结果（来自 Ear 模块）
+
+
+class EarWorker(threading.Thread):
+    """
+    Ear 工作线程：在后台线程中运行麦克风监听
+    识别到文本后通过队列发送给 AIWorker 处理
+    """
+    
+    def __init__(self, input_queue: queue.Queue, model_size: str = "base"):
+        super().__init__(daemon=True)
+        self.input_queue = input_queue
+        self.model_size = model_size
+        self.ear = None
+        self._running = True
+    
+    def run(self):
+        """线程主循环"""
+        logger = get_logger('EarWorker')
+        try:
+            logger.info(f"[Ear] 初始化听觉模块，模型大小: {self.model_size}")
+            self.ear = Ear(model_size=self.model_size)
+            
+            def on_text_recognized(text: str):
+                """当识别到文本时，发送到 AIWorker 的输入队列"""
+                if self._running and text.strip():
+                    logger.info(f"[Ear] 识别结果: {text}")
+                    self.input_queue.put(text)
+            
+            # 开始阻塞监听麦克风
+            logger.info("[Ear] 开始监听麦克风...")
+            self.ear.listen(callback=on_text_recognized)
+            
+        except Exception as e:
+            logger.error(f"[Ear] 错误: {e}", exc_info=True)
+        finally:
+            if self.ear:
+                self.ear.close()
+            logger.info("[Ear] 听觉模块已关闭")
+    
+    def stop(self):
+        """停止监听"""
+        self._running = False
+        if self.ear:
+            self.ear.stop()
 
 
 class AIWorker(threading.Thread):
@@ -144,6 +190,7 @@ class MainApplication:
         self.app: Optional[QApplication] = None
         self.avatar: Optional[AvatarWidget] = None
         self.ai_worker: Optional[AIWorker] = None
+        self.ear_worker: Optional[EarWorker] = None  # 新增：Ear 工作线程
         self.input_queue: queue.Queue = queue.Queue()
         self.signals: Optional[AIWorkerSignals] = None
         
@@ -223,6 +270,7 @@ class MainApplication:
         self.signals.shutdown.connect(self._on_shutdown)
         self.signals.speak_request.connect(self._on_speak_request)
         self.signals.play_audio.connect(self._on_play_audio)
+        self.signals.ear_recognized.connect(self._on_ear_recognized)
     
     def _change_expression(self, expression_index: int):
         """表情切换回调 - 被 ExpressionManager 调用"""
@@ -335,6 +383,12 @@ class MainApplication:
         """显示状态"""
         print(status)
     
+    def _on_ear_recognized(self, text: str):
+        """处理 Ear 模块识别的文本"""
+        logger = get_logger('MainApplication')
+        logger.info(f"[Ear 识别] {text}")
+        # Ear 已将文本放入 input_queue，AIWorker 会自动处理
+    
     def _on_shutdown(self):
         """处理关闭信号"""
         self.cleanup()
@@ -347,6 +401,10 @@ class MainApplication:
         # 停止口型同步
         if self.lip_sync_manager:
             self.lip_sync_manager.stop()
+        
+        # 停止 Ear 工作线程
+        if self.ear_worker:
+            self.ear_worker.stop()
         
         # 停止 AI 工作线程
         if self.ai_worker:
@@ -374,15 +432,21 @@ class MainApplication:
         # 延迟加载模型（等待页面加载完成）
         QTimer.singleShot(1500, self._load_default_model)
         
+        # 启动 Ear 工作线程（麦克风监听）
+        logger.info("正在启动 Ear 听觉模块...")
+        self.ear_worker = EarWorker(self.input_queue, model_size="base")
+        self.ear_worker.start()
+        
         # 启动 AI 工作线程
         self.ai_worker.start()
         
         # 显示启动信息
         stats = self.memory_manager.get_memory_stats()
         logger.info("=" * 60)
-        logger.info("Project Local 已启动（带 Avatar）。")
+        logger.info("Project Local 已启动（带 Avatar 和 Ear 听觉模块）。")
         logger.info(f"记忆状态: 短期({stats['short_term']}/{stats['short_term_capacity']}) | "
                    f"长期({stats['long_term']}) | 情感({stats['emotional']})")
+        logger.info("📣 现在可以直接对麦克风说话！")
         logger.info("输入 'exit' 或 'quit' 退出，输入 'status' 查看记忆状态。")
         logger.info("=" * 60)
         
@@ -466,4 +530,16 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys
+    # 提供一个可选的命令行参数: --ear-demo ，用于快速本地测试 modules/ear.py 的听觉功能
+    if "--ear-demo" in sys.argv:
+        print("[main] 启动 Ear 模块演示 (--ear-demo)。按 Ctrl+C 退出。")
+        from modules.ear import Ear
+        ear = Ear(model_size="base")
+        try:
+            ear.listen(callback=lambda txt: print("[EAR DEMO] 识别:", txt))
+        finally:
+            ear.close()
+            sys.exit(0)
+
     main()
