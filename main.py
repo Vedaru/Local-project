@@ -4,9 +4,13 @@ Project Local - 带 Avatar 虚拟形象的主入口文件
 """
 import signal
 import sys
+import os
+
+# 必须在导入任何其他模块前设置环境变量（修复 ctranslate2 的 ROCm 路径问题）
+os.environ["CT2_USE_CUDA"] = "0"
+
 import threading
 import queue
-import os
 import tempfile
 import time
 from typing import Optional

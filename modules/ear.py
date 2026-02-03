@@ -16,23 +16,20 @@ import wave
 import tempfile
 import threading
 import re
+import sys
 
 import numpy as np
 import pyaudio
+import torch
 
-# 尝试导入 faster_whisper；失败则尝试 openai-whisper 作为备选
-try:
-    import torch
-    from faster_whisper import WhisperModel
-    USE_FASTER_WHISPER = True
-    CUDA_AVAILABLE = torch.cuda.is_available()
-except (ImportError, Exception):
-    USE_FASTER_WHISPER = False
-    CUDA_AVAILABLE = False
-    try:
-        import whisper
-    except ImportError:
-        whisper = None
+# 必须首先导入补丁模块（修复 ctranslate2 的 ROCm 路径问题）
+from . import _patch_ctranslate2
+
+# 现在可以安全导入 faster_whisper
+from faster_whisper import WhisperModel
+
+# 检查 CUDA 可用性
+CUDA_AVAILABLE = torch.cuda.is_available()
 
 
 class Ear:
@@ -63,22 +60,13 @@ class Ear:
         end_silence: float = 1.5,
         max_record_seconds: float = 30.0,
     ):
-        """初始化并加载 Whisper 模型（faster-whisper 优先，失败则使用 openai-whisper）。"""
-        if not USE_FASTER_WHISPER and whisper is None:
-            raise RuntimeError(
-                "[Ear] 无法导入 Whisper 库。请运行以下命令安装：\n"
-                "  pip install faster-whisper ctranslate2\n"
-                "  或（备选）：\n"
-                "  pip install openai-whisper"
-            )
-
+        """初始化并加载 faster-whisper 模型到 GPU。"""
         self.model_size = model_size
         self.threshold = threshold
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
         self.end_silence = end_silence
         self.max_record_seconds = max_record_seconds
-        self.use_faster_whisper = USE_FASTER_WHISPER
 
         # PyAudio / 流
         self.pa = pyaudio.PyAudio()
@@ -91,20 +79,33 @@ class Ear:
         # 临时目录
         self.temp_dir = os.path.join(os.path.dirname(__file__), "..", "data", "temp")
         os.makedirs(self.temp_dir, exist_ok=True)
+        
+        # 清理旧的临时文件
+        self._cleanup_old_temp_files()
 
-        # 加载 Whisper 模型
-        if USE_FASTER_WHISPER:
-            device = "cuda" if CUDA_AVAILABLE else "cpu"
-            compute_type = "float16" if CUDA_AVAILABLE else "int8"
-            print(f"[Ear] 正在加载 faster-whisper 模型: {model_size}, device={device}, compute_type={compute_type} ...")
-            from faster_whisper import WhisperModel
+        # 强制使用 GPU（不自动降级到 CPU）
+        if not CUDA_AVAILABLE:
+            raise RuntimeError(
+                "[Ear] 错误：CUDA 不可用。请检查：\n"
+                "  1. NVIDIA GPU 驱动是否已安装\n"
+                "  2. torch.cuda.is_available() 是否返回 True\n"
+                "  3. PyTorch 是否安装了 GPU 版本\n"
+                "\n提示：坚持使用 GPU，不使用 CPU。"
+            )
+        
+        device = "cuda"
+        compute_type = "float16"
+        print(f"[Ear] 正在加载 faster-whisper 模型: {model_size}, device={device}, compute_type={compute_type} ...")
+        
+        try:
             self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
-            print("[Ear] 模型加载完成（faster-whisper）。")
-        else:
-            device = "cuda" if CUDA_AVAILABLE else "cpu"
-            print(f"[Ear] 正在加载 openai-whisper 模型: {model_size}, device={device} ...")
-            self.model = whisper.load_model(model_size, device=device)
-            print("[Ear] 模型加载完成（openai-whisper）。")
+            print("[Ear] 模型加载完成（GPU 模式，仅支持 CUDA）。")
+        except (RuntimeError, OSError) as e:
+            raise RuntimeError(
+                f"[Ear] 错误：加载模型失败（GPU 模式下仅支持 CUDA）。\n"
+                f"原始错误: {e}\n"
+                f"请检查 CUDA 环境和驱动。"
+            )
 
     def _open_stream(self):
         if self.stream is None:
@@ -125,6 +126,21 @@ class Ear:
                 pass
             self.stream = None
 
+    def _cleanup_old_temp_files(self):
+        """清理临时目录中的所有旧的 .wav 文件"""
+        try:
+            if os.path.exists(self.temp_dir):
+                for filename in os.listdir(self.temp_dir):
+                    if filename.endswith('.wav'):
+                        filepath = os.path.join(self.temp_dir, filename)
+                        try:
+                            os.remove(filepath)
+                        except Exception:
+                            pass  # 忽略单个文件删除错误
+                print(f"[Ear] 初始化时清理了临时音频目录")
+        except Exception:
+            pass  # 如果清理失败，不影响初始化
+
     def _write_wav(self, frames: bytes, path: str):
         """将原始 PCM bytes 写入 wav 文件（16-bit 单声道）"""
         with wave.open(path, "wb") as wf:
@@ -135,19 +151,15 @@ class Ear:
 
     def transcribe(self, audio_np: np.ndarray) -> str:
         """
-        使用 Whisper 转录音频片段。
+        使用 faster-whisper 转录音频片段（语言设定为中文）。
         输入：audio_np 为 np.float32 数组，取值范围约 [-1, 1]，采样率为 self.sample_rate。
         返回：识别出的文本（已过滤空或幻觉结果），如果无有效文本，返回空字符串。
         """
         try:
-            if self.use_faster_whisper:
-                # faster-whisper 的 transcribe 接口会返回 (segments, info)
-                segments, _ = self.model.transcribe(audio_np, beam_size=5)
-                text = "".join([seg.text for seg in segments]).strip()
-            else:
-                # openai-whisper 的 transcribe 接口返回字典
-                result = self.model.transcribe(audio_np, language="zh", verbose=False)
-                text = result.get("text", "").strip()
+            # faster-whisper 的 transcribe 接口会返回 (segments, info)
+            # 指定语言为中文 (language="zh")
+            segments, _ = self.model.transcribe(audio_np, language="zh", beam_size=5)
+            text = "".join([seg.text for seg in segments]).strip()
 
             # 过滤空文本或明显的系统幻觉（例如以括号起始的系统提示）
             if not text:
@@ -160,8 +172,16 @@ class Ear:
             return text
 
         except Exception as e:
-            print(f"[Ear] 转写失败: {e}")
-            return ""
+            # GPU 模式下推理失败，直接抛出异常而不静默处理
+            raise RuntimeError(
+                f"[Ear] 错误：GPU 推理失败。\n"
+                f"原始错误: {e}\n"
+                f"\n常见原因：\n"
+                f"  - cublas64_*.dll 未找到：检查 CUDA 驱动和工具包安装\n"
+                f"  - 显存不足：尝试重启应用或关闭其他 GPU 应用\n"
+                f"  - GPU 驱动过旧：更新到最新版本\n"
+                f"\n当前要求：仅使用 GPU，不降级到 CPU。"
+            )
 
     def listen(self, callback=None):
         """
@@ -211,23 +231,34 @@ class Ear:
                         audio_float32 = (ints.astype(np.float32) / 32768.0).astype(np.float32)
 
                         # 可选：将音频保存为临时 wav（如果需要调试或外部工具使用）
+                        tmp_wav = None
                         try:
                             tmp_wav = os.path.join(self.temp_dir, f"input_{int(time.time()*1000)}.wav")
                             self._write_wav(raw, tmp_wav)
-                        except Exception:
+                        except Exception as e:
+                            print(f"[Ear] 保存临时音频失败: {e}")
                             tmp_wav = None
 
                         # 转写
-                        text = self.transcribe(audio_float32)
-                        if text:
-                            print(f"[Ear] 转写结果: {text}")
-                            if callback:
+                        try:
+                            text = self.transcribe(audio_float32)
+                            if text:
+                                print(f"[Ear] 转写结果: {text}")
+                                if callback:
+                                    try:
+                                        callback(text)
+                                    except Exception as e:
+                                        print(f"[Ear] 回调函数出错: {e}")
+                            else:
+                                print("[Ear] 未识别出有效文本（可能为噪声或模型幻觉被过滤）")
+                        finally:
+                            # 对话完成后立即删除临时音频文件
+                            if tmp_wav and os.path.exists(tmp_wav):
                                 try:
-                                    callback(text)
+                                    os.remove(tmp_wav)
+                                    print(f"[Ear] 已删除临时音频: {os.path.basename(tmp_wav)}")
                                 except Exception as e:
-                                    print(f"[Ear] 回调函数出错: {e}")
-                        else:
-                            print("[Ear] 未识别出有效文本（可能为噪声或模型幻觉被过滤）")
+                                    print(f"[Ear] 删除临时音频失败: {e}")
 
                         # 重置状态，准备下一句
                         self._recording = False
@@ -259,15 +290,11 @@ class Ear:
         except Exception:
             pass
 
-        # 删除模型并尝试释放 GPU 内存
+        # 删除模型并释放 GPU 显存
         try:
             del self.model
-            if CUDA_AVAILABLE and self.use_faster_whisper:
-                import torch
-                torch.cuda.empty_cache()
-                print("[Ear] 已释放模型并清理 GPU 显存。")
-            else:
-                print("[Ear] 已释放模型。")
+            torch.cuda.empty_cache()
+            print("[Ear] 已释放模型并清理 GPU 显存。")
         except Exception as e:
             print(f"[Ear] 释放模型时出现异常: {e}")
 
