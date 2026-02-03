@@ -17,6 +17,7 @@ import tempfile
 import threading
 import re
 import sys
+import logging
 
 import numpy as np
 import pyaudio
@@ -30,6 +31,9 @@ from faster_whisper import WhisperModel
 
 # 检查 CUDA 可用性
 CUDA_AVAILABLE = torch.cuda.is_available()
+
+# 获取 logger（自动配置好的）
+logger = logging.getLogger('ProjectLocal.Ear')
 
 
 class Ear:
@@ -95,11 +99,11 @@ class Ear:
         
         device = "cuda"
         compute_type = "float16"
-        print(f"[Ear] 正在加载 faster-whisper 模型: {model_size}, device={device}, compute_type={compute_type} ...")
+        logger.info(f"⏳ 正在加载 faster-whisper 模型: {model_size}, device={device}, compute_type={compute_type} ...")
         
         try:
             self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
-            print("[Ear] 模型加载完成（GPU 模式，仅支持 CUDA）。")
+            logger.info("✅ Whisper 模型加载完成（GPU 模式，float16 精度）。")
         except (RuntimeError, OSError) as e:
             raise RuntimeError(
                 f"[Ear] 错误：加载模型失败（GPU 模式下仅支持 CUDA）。\n"
@@ -137,7 +141,7 @@ class Ear:
                             os.remove(filepath)
                         except Exception:
                             pass  # 忽略单个文件删除错误
-                print(f"[Ear] 初始化时清理了临时音频目录")
+                logger.info("🗑️  初始化时清理了临时音频目录")
         except Exception:
             pass  # 如果清理失败，不影响初始化
 
@@ -193,7 +197,7 @@ class Ear:
         """
         self._open_stream()
         self._running = True
-        print("[Ear] 开始监听麦克风，按 Ctrl+C 停止。")
+        logger.info("🎤 开始监听麦克风，按 Ctrl+C 停止。")
 
         frames = []  # 临时存放 bytes
         last_voice_time = None
@@ -214,7 +218,7 @@ class Ear:
                         frames = [data]
                         last_voice_time = now
                         start_time = now
-                        print("[Ear] 语音开始，开始录制...")
+                        logger.debug("🔴 语音开始，开始录制...")
                 else:
                     # 已在录制状态
                     frames.append(data)
@@ -223,7 +227,7 @@ class Ear:
 
                     # 结束条件：末次检测到语音距离当前超过 end_silence，或超出最长录制时间
                     if (now - last_voice_time) >= self.end_silence or (now - start_time) >= self.max_record_seconds:
-                        print("[Ear] 检测到语音结束，准备转写...")
+                        logger.debug("⏹️  检测到语音结束，准备转写...")
 
                         # 合并 bytes 并转为 numpy float32（范围 -1..1）
                         raw = b"".join(frames)
@@ -236,29 +240,29 @@ class Ear:
                             tmp_wav = os.path.join(self.temp_dir, f"input_{int(time.time()*1000)}.wav")
                             self._write_wav(raw, tmp_wav)
                         except Exception as e:
-                            print(f"[Ear] 保存临时音频失败: {e}")
+                            logger.debug(f"⚠️  保存临时音频失败: {e}")
                             tmp_wav = None
 
                         # 转写
                         try:
                             text = self.transcribe(audio_float32)
                             if text:
-                                print(f"[Ear] 转写结果: {text}")
+                                logger.info(f"📝 转写结果: {text}")
                                 if callback:
                                     try:
                                         callback(text)
                                     except Exception as e:
-                                        print(f"[Ear] 回调函数出错: {e}")
+                                        logger.error(f"回调函数出错: {e}")
                             else:
-                                print("[Ear] 未识别出有效文本（可能为噪声或模型幻觉被过滤）")
+                                logger.debug("🤔 未识别出有效文本（可能为噪声或模型幻觉被过滤）")
                         finally:
                             # 对话完成后立即删除临时音频文件
                             if tmp_wav and os.path.exists(tmp_wav):
                                 try:
                                     os.remove(tmp_wav)
-                                    print(f"[Ear] 已删除临时音频: {os.path.basename(tmp_wav)}")
+                                    logger.debug(f"已删除临时音频: {os.path.basename(tmp_wav)}")
                                 except Exception as e:
-                                    print(f"[Ear] 删除临时音频失败: {e}")
+                                    logger.debug(f"删除临时音频失败: {e}")
 
                         # 重置状态，准备下一句
                         self._recording = False
@@ -267,9 +271,9 @@ class Ear:
                         start_time = None
 
         except KeyboardInterrupt:
-            print("[Ear] 用户中断，停止监听。")
+            logger.info("⏹️  用户中断，停止监听。")
         except Exception as e:
-            print(f"[Ear] 监听出错: {e}")
+            logger.error(f"监听出错: {e}")
         finally:
             self._close_stream()
 
@@ -279,7 +283,7 @@ class Ear:
 
     def close(self):
         """释放资源并尽可能释放显存"""
-        print("[Ear] 正在释放资源...")
+        logger.info("♻️  正在释放资源...")
         try:
             self._close_stream()
             if self.pa is not None:
@@ -294,9 +298,9 @@ class Ear:
         try:
             del self.model
             torch.cuda.empty_cache()
-            print("[Ear] 已释放模型并清理 GPU 显存。")
+            logger.info("✅ 已释放模型并清理 GPU 显存。")
         except Exception as e:
-            print(f"[Ear] 释放模型时出现异常: {e}")
+            logger.error(f"释放模型时出现异常: {e}")
 
     # 支持上下文管理
     def __enter__(self):

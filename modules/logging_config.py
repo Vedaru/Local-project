@@ -10,20 +10,10 @@ from pathlib import Path
 
 
 class ColoredFormatter(logging.Formatter):
-    """带颜色的日志格式化器（仅用于控制台输出）"""
-    
-    COLORS = {
-        'DEBUG': '\033[36m',      # 青色
-        'INFO': '\033[32m',       # 绿色
-        'WARNING': '\033[33m',    # 黄色
-        'ERROR': '\033[31m',      # 红色
-        'CRITICAL': '\033[35m',   # 洋红色
-    }
-    RESET = '\033[0m'
+    """日志格式化器（控制台输出）"""
     
     def format(self, record):
-        level_color = self.COLORS.get(record.levelname, self.RESET)
-        record.levelname = f"{level_color}[{record.levelname}]{self.RESET}"
+        # 简单格式：不使用颜色代码，直接输出
         return super().format(record)
 
 
@@ -52,6 +42,7 @@ def setup_logging(log_dir: str = None, level: int = logging.DEBUG) -> logging.Lo
     # 创建或获取 logger
     logger = logging.getLogger('ProjectLocal')
     logger.setLevel(level)
+    logger.propagate = False  # 禁用日志传播
     
     # 清除已有的处理器（避免重复）
     logger.handlers.clear()
@@ -69,7 +60,7 @@ def setup_logging(log_dir: str = None, level: int = logging.DEBUG) -> logging.Lo
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_formatter = ColoredFormatter(
-        fmt='%(levelname)s [%(name)s] %(message)s'
+        fmt='[%(name)s] %(levelname)s %(message)s'
     )
     console_handler.setFormatter(console_formatter)
     
@@ -103,7 +94,10 @@ def get_logger(name: str = 'ProjectLocal') -> logging.Logger:
     
     # 为子模块创建独立的 logger
     if name != 'ProjectLocal':
-        return logging.getLogger(f'ProjectLocal.{name}')
+        child_logger = logging.getLogger(f'ProjectLocal.{name}')
+        # 关键：不设置 handlers，让子 logger 继承父 logger 的 handlers
+        child_logger.propagate = True
+        return child_logger
     return _logger
 
 

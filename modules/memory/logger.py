@@ -29,12 +29,12 @@ file_handler.setFormatter(logging.Formatter(
 ))
 memory_logger.addHandler(file_handler)
 
-# 控制台处理器（仅显示重要信息）
-CONSOLE_LOG_LEVEL = logging.WARNING  # 默认只显示警告及以上
-console_handler = logging.StreamHandler()
-console_handler.setLevel(CONSOLE_LOG_LEVEL)
-console_handler.setFormatter(logging.Formatter('[Memory] %(message)s'))
-memory_logger.addHandler(console_handler)
+# 控制台处理器已禁用 - 仅记录到文件
+# CONSOLE_LOG_LEVEL = logging.WARNING  # 默认只显示警告及以上
+# console_handler = logging.StreamHandler()
+# console_handler.setLevel(CONSOLE_LOG_LEVEL)
+# console_handler.setFormatter(logging.Formatter('[Memory] %(message)s'))
+# memory_logger.addHandler(console_handler)
 
 
 def get_logger():

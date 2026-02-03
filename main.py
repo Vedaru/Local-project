@@ -59,27 +59,27 @@ class EarWorker(threading.Thread):
     
     def run(self):
         """线程主循环"""
-        logger = get_logger('EarWorker')
+        logger = get_logger('Ear')  # 使用 Ear logger，而不是 MainApplication
         try:
-            logger.info(f"[Ear] 初始化听觉模块，模型大小: {self.model_size}")
+            logger.info(f"🎙️  初始化听觉模块，模型大小: {self.model_size}")
             self.ear = Ear(model_size=self.model_size)
             
             def on_text_recognized(text: str):
                 """当识别到文本时，发送到 AIWorker 的输入队列"""
                 if self._running and text.strip():
-                    logger.info(f"[Ear] 识别结果: {text}")
+                    logger.info(f"🎯 识别结果: {text}")
                     self.input_queue.put(text)
             
             # 开始阻塞监听麦克风
-            logger.info("[Ear] 开始监听麦克风...")
+            # Ear 模块会输出其自己的监听日志
             self.ear.listen(callback=on_text_recognized)
             
         except Exception as e:
-            logger.error(f"[Ear] 错误: {e}", exc_info=True)
+            logger.error(f"❌ 错误: {e}", exc_info=True)
         finally:
             if self.ear:
                 self.ear.close()
-            logger.info("[Ear] 听觉模块已关闭")
+            logger.info("🛑 听觉模块已关闭")
     
     def stop(self):
         """停止监听"""
@@ -385,12 +385,13 @@ class MainApplication:
     
     def _on_status_update(self, status: str):
         """显示状态"""
-        print(status)
+        logger = get_logger('MainApplication')
+        logger.info(f"📊 {status}")
     
     def _on_ear_recognized(self, text: str):
         """处理 Ear 模块识别的文本"""
         logger = get_logger('MainApplication')
-        logger.info(f"[Ear 识别] {text}")
+        logger.info(f"👂 Ear 识别: {text}")
         # Ear 已将文本放入 input_queue，AIWorker 会自动处理
     
     def _on_shutdown(self):
@@ -437,22 +438,19 @@ class MainApplication:
         QTimer.singleShot(1500, self._load_default_model)
         
         # 启动 Ear 工作线程（麦克风监听）
-        logger.info("正在启动 Ear 听觉模块...")
+        logger.info("🎤 正在启动 Ear 听觉模块...")
         self.ear_worker = EarWorker(self.input_queue, model_size="base")
         self.ear_worker.start()
         
         # 启动 AI 工作线程
         self.ai_worker.start()
         
-        # 显示启动信息
+        # 显示启动信息（单行输出，避免日志混乱）
         stats = self.memory_manager.get_memory_stats()
-        logger.info("=" * 60)
-        logger.info("Project Local 已启动（带 Avatar 和 Ear 听觉模块）。")
-        logger.info(f"记忆状态: 短期({stats['short_term']}/{stats['short_term_capacity']}) | "
-                   f"长期({stats['long_term']}) | 情感({stats['emotional']})")
-        logger.info("📣 现在可以直接对麦克风说话！")
+        logger = get_logger('MainApplication')
+        logger.info(f"🤖  Project Local 已启动（带 Avatar 和 Ear 听觉模块）")
+        logger.info("🎤  现在可以直接对麦克风说话！")
         logger.info("输入 'exit' 或 'quit' 退出，输入 'status' 查看记忆状态。")
-        logger.info("=" * 60)
         
         # 启动控制台输入线程（在启动信息之后）
         console_thread = threading.Thread(target=self._console_input_loop, daemon=True)
@@ -490,7 +488,7 @@ class MainApplication:
                 # 等待允许输入
                 self.can_input.wait()
                 
-                user_input = input("你: ")
+                user_input = input("")
                 
                 # 设置为不可输入状态，直到 AI 响应完成
                 if user_input.strip():
