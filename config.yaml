@@ -24,3 +24,14 @@ logging:
 thresholds:
   max_entity_count: 100
   memory_cleanup_days: 7
+
+# 电脑控制模块配置
+controller:
+  enabled: true                    # 是否启用电脑控制功能
+  failsafe: true                   # PyAutoGUI 防故障（鼠标移至角落停止）
+  app_whitelist:                   # 应用白名单（key为别名，value为绝对路径）
+    notepad: "C:\\Windows\\System32\\notepad.exe"
+    calc: "C:\\Windows\\System32\\calc.exe"
+    edge: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+    qq: "C:\\Program Files\\Tencent\\QQNT\\QQ.exe"
+    

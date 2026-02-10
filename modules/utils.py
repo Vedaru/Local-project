@@ -77,7 +77,11 @@ def start_gpt_sovits_api(gpt_sovits_path):
         return None
     except Exception as e:
         logger.error(f"启动 GPT-SoVITS API 服务失败: {e}", exc_info=True)
-        return None
+def filter_emotion_tags(text):
+    """过滤掉表情标签，避免在语音中读出"""
+    # 移除所有 [表情] 标签
+    text = re.sub(r'\[开心\]|\[生气\]|\[委屈\]|\[疑惑\]|\[嘲笑\]|\[宕机\]', '', text)
+    return text.strip()
 
 def check_sovits_service(url="http://127.0.0.1:9880/docs"):
     """检查 GPT-SoVITS 服务是否可用"""

@@ -2,11 +2,17 @@
 配置模块
 """
 import os
+import yaml
 import dotenv
 from openai import OpenAI
 
 # 加载环境变量
 dotenv.load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
+
+# 加载 YAML 配置
+config_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+with open(config_path, 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
 
 # --- 配置区 ---
 env_vars = dotenv.dotenv_values(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -40,3 +46,8 @@ MODEL_NAME = _clean_env_value(env_vars.get("MODEL_NAME"))
 
 # system prompt
 SYSTEM_PROMPT = _clean_env_value(env_vars.get("SYSTEM_PROMPT"))
+
+# 电脑控制配置
+CONTROLLER_ENABLED = config.get('controller', {}).get('enabled', False)
+CONTROLLER_FAILSAFE = config.get('controller', {}).get('failsafe', True)
+CONTROLLER_APP_WHITELIST = config.get('controller', {}).get('app_whitelist', {})

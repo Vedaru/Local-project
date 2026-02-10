@@ -34,3 +34,7 @@ faster-whisper>=0.5.0
 ctranslate2>=4.0
 numpy>=1.22.0,<2.3.0
 
+# 电脑控制模块依赖
+pyautogui>=0.9.53
+pygetwindow>=0.0.9
+
