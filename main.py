@@ -25,9 +25,10 @@ from modules.memory import MemoryManager
 from modules.memory.logger import get_logger as get_memory_logger
 from modules.voice import VoiceManager
 from modules.ear import Ear
+from modules.controller import ComputerController, SafetyGuard, ActionExecutor
 from modules.llm import call_llm
 from modules.config import REF_AUDIO, PROMPT_TEXT, SOVITS_URL, GPT_SOVITS_PATH, MODEL_NAME, SYSTEM_PROMPT, CONTROLLER_ENABLED, CONTROLLER_FAILSAFE, CONTROLLER_APP_WHITELIST
-from modules.utils import clean_text, start_gpt_sovits_api, check_sovits_service
+from modules.utils import clean_text, start_gpt_sovits_api, check_sovits_service, filter_emotion_tags
 from modules.logging_config import get_logger
 
 
@@ -48,6 +49,7 @@ class EarWorker(threading.Thread):
     """
     Ear 工作线程：在后台线程中运行麦克风监听
     识别到文本后通过队列发送给 AIWorker 处理
+    暂时禁用
     """
     
     def __init__(self, input_queue: queue.Queue, model_size: str = "base"):
@@ -204,7 +206,7 @@ class MainApplication:
         self.app: Optional[QApplication] = None
         self.avatar: Optional[AvatarWidget] = None
         self.ai_worker: Optional[AIWorker] = None
-        self.ear_worker: Optional[EarWorker] = None  # 新增：Ear 工作线程
+        self.ear_worker: Optional[EarWorker] = None
         self.input_queue: queue.Queue = queue.Queue()
         self.signals: Optional[AIWorkerSignals] = None
         
@@ -338,7 +340,10 @@ class MainApplication:
     def _on_speak_request(self, text: str):
         """处理语音合成请求 - 浏览器内音频播放和口型同步（100%完美同步）"""
         logger = get_logger('MainApplication')
-        logger.debug(f"[TTS] 收到语音请求: {text[:50]}...")
+        
+        # 过滤表情标签，避免在语音中读出
+        filtered_text = filter_emotion_tags(text)
+        logger.debug(f"[TTS] 收到语音请求: {filtered_text[:50]}...")
         
         if self.voice_manager and self.avatar:
             try:
@@ -357,7 +362,7 @@ class MainApplication:
                         logger.debug("[TTS] 开始合成语音...")
                         
                         # 1. 合成语音并保存到本地
-                        if not self.voice_manager.speak_and_save(text, wav_path):
+                        if not self.voice_manager.speak_and_save(filtered_text, wav_path):
                             logger.warning("[TTS] 语音合成失败")
                             return
                         
@@ -470,8 +475,8 @@ class MainApplication:
         # 显示启动信息（单行输出，避免日志混乱）
         stats = self.memory_manager.get_memory_stats()
         logger = get_logger('MainApplication')
-        logger.info(f"🤖  Project Local 已启动（带 Avatar 和 Ear 听觉模块）")
-        logger.info("🎤  现在可以直接对麦克风说话！")
+        logger.info(f"🤖  Project Local 已启动（带 Avatar 模块）")
+        logger.info("💬  现在可以直接输入文字进行对话，或通过麦克风说话！")
         logger.info("输入 'exit' 或 'quit' 退出，输入 'status' 查看记忆状态。")
         
         # 启动控制台输入线程（在启动信息之后）
@@ -555,15 +560,15 @@ def main():
 
 if __name__ == "__main__":
     import sys
-    # 提供一个可选的命令行参数: --ear-demo ，用于快速本地测试 modules/ear.py 的听觉功能
-    if "--ear-demo" in sys.argv:
-        print("[main] 启动 Ear 模块演示 (--ear-demo)。按 Ctrl+C 退出。")
-        from modules.ear import Ear
-        ear = Ear(model_size="base")
-        try:
-            ear.listen(callback=lambda txt: print("[EAR DEMO] 识别:", txt))
-        finally:
-            ear.close()
-            sys.exit(0)
+    # 提供一个可选的命令行参数: --ear-demo ，用于快速本地测试 modules/ear.py 的听觉功能 - 暂时禁用
+    # if "--ear-demo" in sys.argv:
+    #     print("[main] 启动 Ear 模块演示 (--ear-demo)。按 Ctrl+C 退出。")
+    #     from modules.ear import Ear
+    #     ear = Ear(model_size="base")
+    #     try:
+    #         ear.listen(callback=lambda txt: print("[EAR DEMO] 识别:", txt))
+    #     finally:
+    #         ear.close()
+    #         sys.exit(0)
 
     main()

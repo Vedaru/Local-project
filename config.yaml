@@ -7,7 +7,7 @@ api:
 
 # 音频配置
 audio:
-  ref_audio_path: "assets/audio_ref/ref_audio.wav"
+  ref_audio_path: "assets/audio_ref/大家好，我是虚拟歌手洛天依.wav"
   prompt_text: "大家好，我是虚拟歌手洛天依，欢迎来到我的十周年生日会直播。"
   sample_rate: 32000
 
@@ -34,4 +34,3 @@ controller:
     calc: "C:\\Windows\\System32\\calc.exe"
     edge: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
     qq: "C:\\Program Files\\Tencent\\QQNT\\QQ.exe"
-    
