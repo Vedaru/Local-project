@@ -127,6 +127,23 @@ class ComputerController:
                 
                 return self.action_executor.open_browser(url, browser_path)
 
+            elif tool == 'ocr_scan':
+                """扫描屏幕上所有可识别的文字并返回清单（JSON 字符串）。"""
+                items = self.action_executor.find_text_on_screen()
+                if items is None:
+                    return "🔍 OCR 未初始化或发生错误，无法扫描屏幕。"
+                try:
+                    return json.dumps(items, ensure_ascii=False)
+                except Exception:
+                    return str(items)
+
+            elif tool == 'ocr_click':
+                """在屏幕上查找包含指定文本的项并点击（参数：text）。"""
+                target = action_data.get('text', '')
+                if not target:
+                    return "❌ 指令错误: ocr_click 缺少 'text' 参数"
+                return self.action_executor.click_text(target)
+
             else:
                 return f"❌ 未知指令: {tool}"
 

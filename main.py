@@ -27,6 +27,9 @@ from modules.voice import VoiceManager
 from modules.ear import Ear
 from modules.controller import ComputerController, SafetyGuard, ActionExecutor
 from modules.llm import call_llm
+# Agent 模块（Manus 风格的 ReAct 智能体）
+from modules.agent.core import ManusAgent
+from modules.agent.tools import AgentTools
 from modules.config import REF_AUDIO, PROMPT_TEXT, SOVITS_URL, GPT_SOVITS_PATH, MODEL_NAME, SYSTEM_PROMPT, CONTROLLER_ENABLED, CONTROLLER_FAILSAFE, CONTROLLER_APP_WHITELIST
 from modules.utils import clean_text, start_gpt_sovits_api, check_sovits_service, filter_emotion_tags
 from modules.logging_config import get_logger
@@ -103,7 +106,8 @@ class AIWorker(threading.Thread):
         input_queue: queue.Queue,
         memory_manager: MemoryManager,
         voice_manager: VoiceManager,
-        controller: Optional[ComputerController] = None
+        controller: Optional[ComputerController] = None,
+        agent: Optional[ManusAgent] = None
     ):
         super().__init__(daemon=True)
         self.signals = signals
@@ -111,6 +115,7 @@ class AIWorker(threading.Thread):
         self.memory_manager = memory_manager
         self.voice_manager = voice_manager
         self.controller = controller
+        self.agent = agent
         self._running = True
     
     def run(self):
@@ -165,18 +170,121 @@ class AIWorker(threading.Thread):
                 
                 # 调用 LLM 生成响应
                 ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, cleaned_input, memory_context)
-                
-                # 处理电脑控制指令
+
+                # --- 语义触发：优先检测是否包含 [SUMMON_AGENT] 标签 ---
+                import re, json
+                summon_pattern = r'\[SUMMON_AGENT\](.*?)\[/SUMMON_AGENT\]'
+                m = re.search(summon_pattern, ai_response, re.DOTALL)
+                if m:
+                    # 提取标签前的普通回复以及标签内的 JSON 任务
+                    pre_text = ai_response[:m.start()].strip()
+                    tag_json = m.group(1).strip()
+                    task_desc = None
+                    try:
+                        payload = json.loads(tag_json)
+                        task_desc = payload.get('task')
+                    except Exception as e:
+                        logger.error(f"解析 SUMMON_AGENT 任务失败: {e}")
+
+                    # 先播放标签前的闲聊文本（非阻塞 TTS）
+                    if pre_text:
+                        self.signals.speak_request.emit(pre_text)
+
+                    # 如果 pre_text 中包含 [ACTION] 指令，则先执行这些电脑控制（与 Agent 并行的预操作）
+                    execution_log = ""
+                    clean_pre = pre_text
+                    if self.controller and pre_text:
+                        execution_log, clean_pre = self.controller.process_command(pre_text)
+                        if execution_log:
+                            logger.info(f"电脑控制: {execution_log}")
+
+                    # 阻塞地调用本地 Agent 执行任务（如果已初始化）
+                    agent_result = "⚠️ Agent 未启用"
+                    if self.agent and task_desc:
+                        agent_result = self.agent.run_task(task_desc)
+                    elif task_desc:
+                        agent_result = "⚠️ Agent 未初始化或不可用"
+
+                    # 将 Agent 的执行结果通过语音播报并显示在 UI 上
+                    self.signals.speak_request.emit(agent_result)
+                    combined = (clean_pre + "\n\n[Agent 执行结果]\n" + agent_result).strip()
+
+                    # 将结果作为最终响应发送并写入记忆
+                    self.signals.expression_change.emit(combined)
+                    self.signals.response_ready.emit(combined)
+                    if combined != "抱歉，我现在有点卡住了。":
+                        self.memory_manager.add_to_short_term("AI", combined)
+                        self.memory_manager.store_memory(f"用户: {cleaned_input}\nAI: {combined}")
+
+                    # 本次循环结束，等待下一个用户输入
+                    continue
+
+                # --- 自动处理 LLM 直接输出的 Agent-style JSON（无须 [SUMMON_AGENT] 标签） ---
+                try:
+                    def _extract_first_json(s: str):
+                        m2 = re.search(r'(\{(?:.|\n)*?\})', s)
+                        if not m2:
+                            return None
+                        try:
+                            cand = json.loads(m2.group(1))
+                            return cand
+                        except Exception:
+                            return None
+
+                    auto_attempts = 0
+                    max_auto_attempts = 3
+                    # 如果模型在普通对话里直接输出了工具调用 JSON，则我们自动执行并将观察结果回写给模型，直到模型返回普通文本为止
+                    while auto_attempts < max_auto_attempts:
+                        parsed_agent = _extract_first_json(ai_response)
+                        if not parsed_agent or not isinstance(parsed_agent, dict) or 'tool' not in parsed_agent:
+                            break
+
+                        tool_name = (parsed_agent.get('tool') or '').strip()
+                        tool_args = parsed_agent.get('args')
+
+                        # 选择执行器（优先使用已初始化的 ManusAgent.tools）
+                        tools_executor = None
+                        if self.agent and hasattr(self.agent, 'tools') and self.agent.tools:
+                            tools_executor = self.agent.tools
+                        else:
+                            from modules.agent.tools import AgentTools
+                            tools_executor = AgentTools(controller=self.controller)
+
+                        logger.info(f"检测到 Agent-style 输出，执行工具: {tool_name} args={tool_args}")
+                        observation = tools_executor.execute(tool_name, tool_args)
+                        logger.info(f"工具观察: {observation}")
+
+                        # 若工具返回失败类型的字符串，则把失败直接作为最终回复
+                        if isinstance(observation, str) and (observation.startswith('❌') or observation.startswith('⚠️') or '无法获取' in observation):
+                            ai_response = observation
+                            break
+
+                        # 否则把观察结果提供回模型，要求给出可读的最终回答（不要再返回 JSON）
+                        followup_prompt = (
+                            f"模型此前的输出为: {json.dumps(parsed_agent, ensure_ascii=False)}。"
+                            f"\n工具执行后的观察结果: {observation}\n"
+                            "请基于观察结果直接给出面向用户的、可读的最终回答（不要返回任何 JSON 或工具调用）。"
+                        )
+                        ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, followup_prompt, memory_context)
+                        if not ai_response:
+                            ai_response = observation
+                            break
+
+                        auto_attempts += 1
+                except Exception as e:
+                    logger.error(f"自动 Agent 处理失败: {e}", exc_info=True)
+
+                # 处理电脑控制指令（常规流程）
                 execution_log = ""
                 clean_response = ai_response
                 if self.controller:
                     execution_log, clean_response = self.controller.process_command(ai_response)
                     if execution_log:
                         logger.info(f"电脑控制: {execution_log}")
-                
+
                 # 根据响应内容自动切换表情
                 self.signals.expression_change.emit(clean_response)  # 发送文本，让主线程分析情感
-                
+
                 # 发送响应到主线程
                 self.signals.response_ready.emit(clean_response)
                 
@@ -214,6 +322,7 @@ class MainApplication:
         self.voice_manager: Optional[VoiceManager] = None
         self.controller: Optional[ComputerController] = None  # 新增：电脑控制器
         self.sovits_process = None
+        self.agent: Optional[ManusAgent] = None  # 本地智能体（ManusAgent）实例
         
         # 口型同步和表情管理器
         self.lip_sync_manager: Optional[LipSyncManager] = None
@@ -256,6 +365,11 @@ class MainApplication:
         else:
             self.controller = None
             logger.info("电脑控制模块已禁用")
+
+        # 初始化 Agent（Manus 风格 ReAct 智能体）并注入工具集（使用现有 ComputerController）
+        tools = AgentTools(controller=self.controller)
+        self.agent = ManusAgent(llm_fn=call_llm, tools=tools, model_name=MODEL_NAME, system_prompt=SYSTEM_PROMPT)
+
         
         # 清理旧记忆
         self.memory_manager.cleanup_old_memories()
@@ -285,7 +399,8 @@ class MainApplication:
             input_queue=self.input_queue,
             memory_manager=self.memory_manager,
             voice_manager=self.voice_manager,
-            controller=self.controller
+            controller=self.controller,
+            agent=self.agent
         )
     
     def _connect_signals(self):
@@ -338,13 +453,33 @@ class MainApplication:
             self.avatar.play_motion(group, index)
     
     def _on_speak_request(self, text: str):
-        """处理语音合成请求 - 浏览器内音频播放和口型同步（100%完美同步）"""
+        """处理语音合成请求 - 浏览器内音频播放和口型同步（100%完美同步）
+
+        如果传入的文本包含 Agent-style 的 JSON（例如 {"thought":...,"tool":...}），
+        则语音只朗读 JSON 中的 `thought` 字段，界面仍然显示原始文本。
+        """
         logger = get_logger('MainApplication')
-        
+
+        # 优先尝试从可能的 JSON 中抽取 `thought` 字段，仅将其送入 TTS
+        speak_text = text
+        try:
+            import re, json
+            m = re.search(r'(\{(?:.|\n)*?\})', text)
+            if m:
+                try:
+                    candidate = json.loads(m.group(1))
+                    if isinstance(candidate, dict) and 'thought' in candidate and isinstance(candidate['thought'], str):
+                        speak_text = candidate['thought']
+                except Exception:
+                    # 忽略解析错误，回退为原始文本
+                    pass
+        except Exception:
+            pass
+
         # 过滤表情标签，避免在语音中读出
-        filtered_text = filter_emotion_tags(text)
-        logger.debug(f"[TTS] 收到语音请求: {filtered_text[:50]}...")
-        
+        filtered_text = filter_emotion_tags(speak_text)
+        logger.debug(f"[TTS] 收到语音请求(用于朗读): {filtered_text[:50]}...")
+
         if self.voice_manager and self.avatar:
             try:
                 # 生成临时 wav 文件路径
@@ -355,23 +490,23 @@ class MainApplication:
                 )
                 os.makedirs(os.path.dirname(wav_path), exist_ok=True)
                 logger.debug(f"[TTS] wav 保存路径: {wav_path}")
-                
+
                 # 在子线程中执行 TTS（避免阻塞主线程）
                 def speak_with_browser():
                     try:
                         logger.debug("[TTS] 开始合成语音...")
-                        
+
                         # 1. 合成语音并保存到本地
                         if not self.voice_manager.speak_and_save(filtered_text, wav_path):
                             logger.warning("[TTS] 语音合成失败")
                             return
-                        
+
                         logger.debug(f"[TTS] 语音合成成功, 文件存在: {os.path.exists(wav_path)}")
-                        
+
                         # 2. 通过信号让主线程播放音频
                         logger.debug("[TTS] 发送 play_audio 信号...")
                         self.signals.play_audio.emit(wav_path)
-                        
+
                         # 3. 等待音频时长后清理临时文件
                         import wave
                         try:
@@ -379,9 +514,9 @@ class MainApplication:
                                 frames = wf.getnframes()
                                 rate = wf.getframerate()
                                 duration = frames / float(rate)
-                            
+
                             logger.debug(f"[TTS] 音频时长: {duration:.2f}秒")
-                                
+
                             # 等待播放完成后清理
                             time.sleep(duration + 0.5)
                             try:
@@ -391,13 +526,13 @@ class MainApplication:
                                 pass
                         except Exception as e:
                             logger.warning(f"[TTS] 读取 wav 错误: {e}")
-                            
+
                     except Exception as e:
                         logger.error(f"[TTS] 错误: {e}", exc_info=True)
-                
+
                 # 启动子线程执行
                 threading.Thread(target=speak_with_browser, daemon=True).start()
-                
+
             except Exception as e:
                 logger.error(f"[TTS] 错误: {e}", exc_info=True)
         else:

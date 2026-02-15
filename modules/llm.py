@@ -30,6 +30,28 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
     prompt = _normalize_text(prompt)
     memory_context = _normalize_text(memory_context)
 
+    # --- 为了支持本地智能体触发，自动在 system prompt 中追加说明（如果调用端未包含） ---
+    # 要求 LLM 在需要本地执行复杂联网 / 本地操作时，在回复末尾添加特殊标签：
+    # [SUMMON_AGENT]{"task": "<简明任务描述>"}[/SUMMON_AGENT]
+    # 标签内必须是 JSON（仅包含 task 字段或其他必要字段），主程序会检测到并启动 modules.agent 执行。
+    agent_trigger_hint = (
+        "注意：如果用户请求需要联网检索、规划或操作本地电脑的复杂任务，"
+        "请在回复末尾以纯 JSON 的形式添加触发标签："
+        "[SUMMON_AGENT]{\"task\": \"<简明任务描述>\"}[/SUMMON_AGENT]。"
+        "标签内只应包含 JSON，不要包含其他文字。"
+    )
+    if "[SUMMON_AGENT]" not in system_prompt:
+        system_prompt = system_prompt + "\n\n" + agent_trigger_hint
+
+    # --- 盲人神探（OCR 使用说明） ---
+    ocr_guidance = (
+        "你是'盲人神探'：你无法直接看见屏幕。若需要点击屏幕上的按钮或图标，必须先使用 OCR 工具获取文字与坐标，"
+        "然后再发出点击指令。流程示例：思考 '我要点网易云' -> 发送 [ACTION]{\"action\": \"ocr_click\", \"text\": \"网易云音乐\"}[/ACTION] -> 系统会先通过 OCR 定位并执行点击。"
+        "不要假设任何坐标；所有点击必须基于 OCR 返回的坐标。"
+    )
+    if "盲人神探" not in system_prompt:
+        system_prompt = system_prompt + "\n\n" + ocr_guidance
+
     if not model_name:
         logger.error("未配置 MODEL_NAME，请检查 .env 文件")
         return "抱歉，模型未配置，暂时无法回答。"

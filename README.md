@@ -140,6 +140,11 @@ Local-project/
 ├── modules/                   # 核心模块
 │   ├── __init__.py            # 模块初始化
 │   ├── _patch_ctranslate2.py  # CTranslate2 补丁
+│   ├── agent/                 # Agent 子模块（ReAct agent + 工具）
+│   │   ├── __init__.py
+│   │   ├── browser.py         # 浏览器 / 网页检索工具
+│   │   ├── core.py            # Agent 核心逻辑（ReAct loop）
+│   │   └── tools.py           # Agent 可用工具封装
 │   ├── avatar/                # Avatar 子模块
 │   │   ├── __init__.py
 │   │   ├── click_through.py   # 点击穿透
@@ -183,6 +188,44 @@ Local-project/
 ├── temp/                      # 临时文件目录
 └── README.md                  # 项目说明文档
 ```
+
+## 核心模块详解
+
+### Avatar 子模块
+- **click_through.py**: 实现点击穿透功能。
+- **expression.py**: 管理虚拟形象的表情。
+- **js_communication.py**: 处理与前端的 JavaScript 通信。
+- **lip_sync.py**: 实现虚拟形象的口型同步。
+- **logger.py**: 记录日志。
+- **manager.py**: 管理 Avatar 的状态和行为。
+- **resize.py**: 处理窗口调整功能。
+- **tray.py**: 系统托盘功能。
+- **webengine.py**: 集成 WebEngine。
+- **widget.py**: 定义主窗口组件。
+
+### Memory 子模块
+- **analyzers.py**: 提供文本分析功能。
+- **config.py**: 配置记忆模块的参数。
+- **conflict/**: 处理记忆冲突的子模块。
+  - **detector.py**: 检测记忆冲突。
+  - **locator.py**: 定位冲突位置。
+  - **resolver.py**: 解决冲突并更新记忆。
+- **core.py**: 核心记忆管理类。
+- **logger.py**: 记录记忆模块的日志。
+- **retrieval.py**: 实现记忆的检索和去重。
+- **storage.py**: 负责记忆的存储。
+
+### 其他模块
+- **config.py**: 加载和管理项目配置。
+- **controller/**: 实现电脑控制功能。
+  - **core.py**: 控制核心逻辑。
+  - **executor.py**: 执行具体的电脑操作。
+  - **safety.py**: 提供安全守卫功能。
+- **ear.py**: 语音识别模块。
+- **llm.py**: 与 LLM 的接口。
+- **logging_config.py**: 配置日志记录。
+- **utils.py**: 提供通用工具函数。
+- **voice.py**: 管理语音相关功能。
 
 ## 故障排除
 

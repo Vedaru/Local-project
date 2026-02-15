@@ -7,6 +7,7 @@ import subprocess
 import os
 import time
 import pyautogui
+import numpy as np
 from typing import Optional
 from ..logging_config import get_logger
 
@@ -21,13 +22,37 @@ class ActionExecutor:
 
     def __init__(self, failsafe: bool = True):
         """
-        初始化执行器
+        初始化执行器，并尝试初始化 PaddleOCR（若可用）
 
         Args:
             failsafe: 是否开启 PyAutoGUI 防故障机制
         """
         pyautogui.FAILSAFE = failsafe
         self.failsafe = failsafe
+
+        # 初始化 Tesseract OCR（使用 pytesseract + 系统 tesseract 二进制）
+        # 我们默认使用环境变量 TESSERACT_CMD 指定 tesseract 可执行文件路径（优先），
+        # 否则尝试在 PATH 中查找。若未找到，则 OCR 功能会被禁用并返回友好提示。
+        self.ocr_available = False
+        self.tesseract_cmd = os.getenv('TESSERACT_CMD', None)
+        try:
+            import pytesseract
+            # 如果未通过环境变量指定，可尝试从 PATH 查找 tesseract 可执行文件
+            if not self.tesseract_cmd:
+                from shutil import which
+                found = which('tesseract')
+                if found:
+                    self.tesseract_cmd = found
+            if self.tesseract_cmd:
+                pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
+                self.ocr_available = True
+                logger.info(f"Tesseract OCR 可用，cmd={self.tesseract_cmd}")
+            else:
+                # 未找到 tesseract 可执行文件
+                logger.warning('Tesseract 可执行文件未找到（请安装 tesseract 并确保在 PATH 中，或设置环境变量 TESSERACT_CMD）。')
+        except Exception as e:
+            logger.warning(f"pytesseract 未安装或初始化失败，OCR 将被禁用：{e}")
+
 
     def open_app(self, path: str) -> str:
         """
@@ -177,3 +202,109 @@ class ActionExecutor:
 
         except Exception as e:
             return f"❌ 打开浏览器失败, 错误: {str(e)}"
+
+    def find_text_on_screen(self, keyword: Optional[str] = None, min_confidence: float = 0.3):
+        """
+        使用 Tesseract（pytesseract）扫描当前屏幕并返回识别文本与中心坐标。
+
+        返回格式与之前保持一致，便于上层无缝调用：
+        - keyword 为 None 时返回列表: [{"text": str, "confidence": float (0-1), "x": int, "y": int, "box": [[x,y],...]}, ...]
+        - keyword 提供时返回第一个匹配到的 dict 或 None
+
+        说明：
+        - 置信度由 pytesseract 的 conf（0-100）映射为 0-1
+        - 如果系统未安装 Tesseract 或 pytesseract 不可用，将返回空列表或 None（不会抛异常）
+        """
+        try:
+            if not getattr(self, 'ocr_available', False):
+                logger.warning("OCR 未启用（找不到 tesseract 或 pytesseract 未安装）")
+                return None if keyword else []
+
+            # 截取屏幕（PIL.Image）
+            img = pyautogui.screenshot()
+
+            # 延迟导入 pytesseract，避免模块导入阶段出现依赖错误
+            import pytesseract
+            from pytesseract import Output
+
+            # 优先使用环境变量指定的语言（例如：'chi_sim+eng'），如果未安装指定语言，pytesseract 会抛异常，我们捕获并回退
+            lang = os.getenv('TESSERACT_LANG', '')
+            try:
+                if lang:
+                    data = pytesseract.image_to_data(img, output_type=Output.DICT, lang=lang)
+                else:
+                    data = pytesseract.image_to_data(img, output_type=Output.DICT)
+            except Exception:
+                # 回退到默认识别（不指定 lang）
+                data = pytesseract.image_to_data(img, output_type=Output.DICT)
+
+            n = len(data.get('text', []))
+            items = []
+            for i in range(n):
+                txt = (data['text'][i] or '').strip()
+                if not txt:
+                    continue
+
+                # pytesseract 返回的 conf 字段有时为 '-1' 或字符串；安全转换
+                try:
+                    conf_raw = float(data['conf'][i])
+                except Exception:
+                    conf_raw = -1.0
+
+                # 将置信度映射到 0-1（pytesseract 的 conf 是 0-100）
+                conf = max(0.0, min(100.0, conf_raw)) / 100.0 if conf_raw >= 0 else 0.0
+                if conf < float(min_confidence):
+                    continue
+
+                left = int(data['left'][i])
+                top = int(data['top'][i])
+                width = int(data['width'][i])
+                height = int(data['height'][i])
+                cx = int(left + width / 2)
+                cy = int(top + height / 2)
+
+                box = [[left, top], [left + width, top], [left + width, top + height], [left, top + height]]
+                items.append({
+                    'text': txt,
+                    'confidence': conf,
+                    'x': cx,
+                    'y': cy,
+                    'box': box
+                })
+
+            if keyword:
+                key_norm = str(keyword).strip().lower()
+                for it in items:
+                    if key_norm in it['text'].lower():
+                        return it
+                return None
+
+            return items
+
+        except Exception as e:
+            logger.error(f"Tesseract OCR 识别出错: {e}", exc_info=True)
+            return None if keyword else []
+
+    def click_text(self, text: str, clicks: int = 1, interval: float = 0.0, button: str = 'left') -> str:
+        """
+        在屏幕上查找包含指定 `text` 的文本框并点击其中心点（基于 Tesseract OCR）。
+
+        返回友好的执行结果字符串（便于上层记录与 LLM 展示）。
+        """
+        try:
+            if not getattr(self, 'ocr_available', False):
+                return "❌ OCR 功能未启用（请安装 tesseract 二进制并确保 pytesseract 可用）"
+
+            found = self.find_text_on_screen(keyword=text)
+            if not found:
+                return f"❌ 未在屏幕上找到文本: {text}"
+
+            x, y = found['x'], found['y']
+            # 移动并点击，保留 PyAutoGUI 的 failsafe
+            pyautogui.moveTo(x, y, duration=0.15)
+            pyautogui.click(x, y, clicks=clicks, interval=interval, button=button)
+            return f"✅ 已点击文本 '{found['text']}' (坐标: {x},{y}, 置信度: {found.get('confidence',0):.2f})"
+
+        except Exception as e:
+            logger.error(f"点击识别文本失败: {e}", exc_info=True)
+            return f"❌ 点击失败: {str(e)}"

@@ -45,7 +45,17 @@ GPT_SOVITS_PATH = _clean_env_value(env_vars.get("GPT_SOVITS_PATH"))
 MODEL_NAME = _clean_env_value(env_vars.get("MODEL_NAME"))
 
 # system prompt
-SYSTEM_PROMPT = _clean_env_value(env_vars.get("SYSTEM_PROMPT"))
+_prompt_file = _clean_env_value(env_vars.get("SYSTEM_PROMPT_FILE"))
+if _prompt_file:
+    _prompt_path = os.path.join(os.path.dirname(__file__), "..", _prompt_file)
+    if os.path.exists(_prompt_path):
+        with open(_prompt_path, 'r', encoding='utf-8') as _f:
+            SYSTEM_PROMPT = _f.read()
+    else:
+        # 回退：尝试从环境变量读取（兼容旧配置）
+        SYSTEM_PROMPT = _clean_env_value(env_vars.get("SYSTEM_PROMPT"))
+else:
+    SYSTEM_PROMPT = _clean_env_value(env_vars.get("SYSTEM_PROMPT"))
 
 # 电脑控制配置
 CONTROLLER_ENABLED = config.get('controller', {}).get('enabled', False)
