@@ -222,14 +222,108 @@ class AIWorker(threading.Thread):
                 # --- 自动处理 LLM 直接输出的 Agent-style JSON（无须 [SUMMON_AGENT] 标签） ---
                 try:
                     def _extract_first_json(s: str):
-                        m2 = re.search(r'(\{(?:.|\n)*?\})', s)
-                        if not m2:
+                        """更稳健的 JSON 提取器：
+
+                        - 优先寻找 [ACTION]...</ACTION> 块并解析其中 JSON（Agent 风格）
+                        - 否则做一次平衡花括号扫描（支持字符串/转义），逐个尝试解析
+                        - 解析时使用宽容策略（去除代码围栏、移除尾随逗号、单引号 -> 双引号、ast.literal_eval 回退）
+                        - 优先返回含有 'tool' 或 'action' 字段的对象（若有多个 JSON，则优先选取包含这些键的）
+                        """
+                        if not s:
                             return None
-                        try:
-                            cand = json.loads(m2.group(1))
-                            return cand
-                        except Exception:
-                            return None
+
+                        def _parse_loose(js_text: str):
+                            """尝试多种宽松解析策略，返回 dict 或 None。"""
+                            try:
+                                return json.loads(js_text)
+                            except Exception:
+                                pass
+
+                            # 去除常见的代码围栏（```json ... ```）并重试
+                            m = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', js_text, re.IGNORECASE)
+                            candidate = m.group(1) if m else js_text
+
+                            # 基本清洗：移除尾随逗号、规范智能引号
+                            cand = re.sub(r',\s*(\}|\])', r'\1', candidate)
+                            cand = cand.replace('“', '"').replace('”', '"')
+
+                            # 尝试严格 JSON
+                            try:
+                                return json.loads(cand)
+                            except Exception:
+                                pass
+
+                            # 最后手段：把单引号替换为双引号再尝试 / ast.literal_eval 回退
+                            try:
+                                cand2 = cand.replace("'", '"')
+                                return json.loads(cand2)
+                            except Exception:
+                                try:
+                                    import ast
+                                    obj = ast.literal_eval(candidate)
+                                    if isinstance(obj, dict):
+                                        return obj
+                                except Exception:
+                                    return None
+
+                        # 1) 优先查找 [ACTION] 标签内的 JSON（Agent 输出常用）
+                        if '[ACTION]' in s:
+                            for block in re.findall(r'\[ACTION\](.*?)\[/ACTION\]', s, re.DOTALL):
+                                txt = block.strip()
+                                if not txt:
+                                    continue
+                                parsed = _parse_loose(txt)
+                                if isinstance(parsed, dict):
+                                    return parsed
+
+                        # 2) 平衡花括号扫描：逐个 '{' 起点，向前查找到匹配的 '}'（考虑字符串/转义）
+                        candidates = []
+                        i = 0
+                        L = len(s)
+                        while True:
+                            try:
+                                i = s.index('{', i)
+                            except ValueError:
+                                break
+                            depth = 0
+                            in_str = False
+                            esc = False
+                            quote_ch = None
+                            j = i
+                            while j < L:
+                                ch = s[j]
+                                if esc:
+                                    esc = False
+                                elif ch == '\\':
+                                    esc = True
+                                elif in_str:
+                                    if ch == quote_ch:
+                                        in_str = False
+                                        quote_ch = None
+                                elif ch == '"' or ch == "'":
+                                    in_str = True
+                                    quote_ch = ch
+                                elif ch == '{':
+                                    depth += 1
+                                elif ch == '}':
+                                    depth -= 1
+                                    if depth == 0:
+                                        js_text = s[i:j+1]
+                                        parsed = _parse_loose(js_text)
+                                        if isinstance(parsed, dict):
+                                            # 若包含关键字段，立即返回；否则收集为候选
+                                            if 'tool' in parsed or 'action' in parsed:
+                                                return parsed
+                                            candidates.append(parsed)
+                                        break
+                                j += 1
+                            i = i + 1
+
+                        # 3) 若找到候选但无含关键字段的对象，返回第一个候选
+                        if candidates:
+                            return candidates[0]
+
+                        return None
 
                     auto_attempts = 0
                     max_auto_attempts = 3
@@ -253,6 +347,17 @@ class AIWorker(threading.Thread):
                         logger.info(f"检测到 Agent-style 输出，执行工具: {tool_name} args={tool_args}")
                         observation = tools_executor.execute(tool_name, tool_args)
                         logger.info(f"工具观察: {observation}")
+
+                        # 若 dom_open 返回 no_page，重试一次（短期容错）
+                        try:
+                            if (str(tool_name).lower() == 'dom_open' and isinstance(observation, str)
+                                    and 'no_page' in observation.lower()):
+                                logger.info('dom_open 返回 no_page，尝试重试一次')
+                                retry_obs = tools_executor.execute(tool_name, tool_args)
+                                logger.info(f'dom_open 重试返回: {retry_obs}')
+                                observation = retry_obs
+                        except Exception:
+                            pass
 
                         # 若工具返回失败类型的字符串，则把失败直接作为最终回复
                         if isinstance(observation, str) and (observation.startswith('❌') or observation.startswith('⚠️') or '无法获取' in observation):

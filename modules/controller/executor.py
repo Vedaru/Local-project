@@ -5,6 +5,7 @@
 
 import subprocess
 import os
+import json
 import pyautogui
 from typing import Optional
 from ..logging_config import get_logger
@@ -368,6 +369,43 @@ class ActionExecutor:
         except Exception as e:
             logger.error(f"dom_preview 失败: {e}", exc_info=True)
             return []
+
+    def dom_scan(self) -> str:
+        """对当前页面执行“全页语义扫描”，返回供 LLM 阅读的元素地图字符串。"""
+        if not self._ensure_playwright():
+            return "❌ DOM 操作不可用：Playwright 未安装或初始化失败。"
+        try:
+            res = self._pw_runner.get_semantic_dom()
+            # 支持返回 dict 或直接文本的兼容性处理
+            if isinstance(res, dict):
+                if not res.get('ok'):
+                    return f"❌ dom_scan 失败: {res.get('error', 'unknown')}"
+                return res.get('text') or (json.dumps(res.get('items', []), ensure_ascii=False))
+            if isinstance(res, list):
+                # 构建默认文本格式
+                lines = []
+                for i, it in enumerate(res):
+                    lines.append(f"[{i}] <{it.get('tag')}> \"{(it.get('text') or it.get('summary') or '')}\"")
+                return '\n'.join(lines)
+            return str(res)
+        except Exception as e:
+            logger.error(f"dom_scan 失败: {e}", exc_info=True)
+            return f"❌ dom_scan 异常: {e}"
+
+    def dom_click_id(self, sid: int) -> str:
+        """通过语义元素 ID 点击（要求先调用 dom_scan 获取 id）。"""
+        if not self._ensure_playwright():
+            return "❌ DOM 操作不可用：Playwright 未安装或初始化失败。"
+        try:
+            if not getattr(self, '_pw_runner', None):
+                return "❌ DOM runner 未初始化。"
+            res = self._pw_runner.click_by_semantic_id(int(sid))
+            if res.get('ok'):
+                return f"✅ dom_click_id 已点击: id={sid}"
+            return f"❌ dom_click_id 失败: {res.get('error') or res.get('detail', 'unknown')}"
+        except Exception as e:
+            logger.error(f"dom_click_id 失败: {e}", exc_info=True)
+            return f"❌ dom_click_id 异常: {e}"
 
     def dom_click(self, selector: str, by: str = 'css', timeout: int = 5000, index: Optional[int] = None) -> str:
         """在 DOM 页面上点击元素 — **仅使用回退策略**（query -> click_index / 候选 selector）。

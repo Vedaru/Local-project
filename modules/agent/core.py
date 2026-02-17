@@ -35,7 +35,7 @@ class ManusAgent:
             "【强制规则】当你作为 Agent 响应时，**必须且只能输出一个 JSON 对象**，不得包含任何额外文字、注释、解释、或 Markdown/代码围栏。\n"
             "输出必须严格遵循下列 JSON 模式（字段顺序不限）：\n"
             "{" + '"thought": "<解释你的下一步思路>", "tool": "<工具名>", "args": <字符串或对象>' + "}\n"
-            "可用工具（严格）：search, browse, read_file, write_file, open_local_app, click_screen, dom_open, dom_query, dom_preview, dom_click, dom_open_and_click, dom_fill, dom_eval, dom_status, final_answer。\n"            "重要：**绝对不要**在 thought 或 args 中提及或使用 Google 搜索（google.com / google.*）。如需检索，请使用 `search` 工具或 `https://www.baidu.com/s?wd=...`（默认使用百度）。\n"            "此外：**不要使用或生成 `open_browser` 指令**——该指令已从系统移除；遇到网页交互请使用 `dom_open`（Playwright）。\n"            "示例（严格，输出中不得有其他任何字符）：\n"
+            "可用工具（严格）：search, browse, read_file, write_file, open_local_app, click_screen, dom_open, dom_query, dom_preview, dom_click, dom_open_and_click, dom_fill, dom_eval, dom_status, final_answer。\n"            "重要：**绝对不要**在 thought 或 args 中提及或使用 Google 搜索（google.com / google.*）。如需检索，请使用 `search` 工具或 `https://www.baidu.com/s?wd=...`（默认使用百度）。\n"            "此外：**不要使用或生成 `open_browser` 指令**——该指令已从系统移除；遇到网页交互请使用 `dom_open`（Playwright）。\n"            "重要规则：在未收到 `scan_page_elements` 或其他 DOM 工具的返回结果之前，**禁止凭空编造或引用页面元素 ID/selector/文本**。你必须先调用 `scan_page_elements` 来获取页面的语义元素映射，并仅使用返回的 `id` 或 selector 来定位元素；若无法获得元素，请返回合适的工具调用而不是随意编造元素信息。\n"            "示例（严格，输出中不得有其他任何字符）：\n"
             "{\"thought\":\"我要先搜索相关新闻\",\"tool\":\"search\",\"args\":\"DeepSeek 新闻\"}\n"
             "完成任务时请使用 tool=\"final_answer\" 并在 args 中放最终结果（字符串或 JSON 对象）。\n"
             "如果你无法完成某步，请仍然返回符合格式的 JSON（例如使用 tool=\"search\" 或返回空的 args），不要返回纯文本解释。"

@@ -183,6 +183,22 @@ class ComputerController:
                 except Exception as e:
                     return f"❌ dom_preview 失败: {e}"
 
+            elif tool == 'dom_scan':
+                """返回页面语义元素地图（供 LLM 阅读）。"""
+                try:
+                    return self.action_executor.dom_scan()
+                except Exception as e:
+                    return f"❌ dom_scan 失败: {e}"
+
+            elif tool == 'dom_click_id':
+                sid = action_data.get('id', None)
+                if sid is None:
+                    return "❌ 指令错误: dom_click_id 缺少 'id' 参数"
+                try:
+                    return self.action_executor.dom_click_id(int(sid))
+                except Exception as e:
+                    return f"❌ dom_click_id 失败: {e}"
+
             elif tool == 'dom_click':
                 selector = action_data.get('selector', '')
                 by = action_data.get('by', 'css')

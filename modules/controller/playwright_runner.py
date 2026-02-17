@@ -197,6 +197,117 @@ class PlaywrightRunner:
             'current_url': getattr(self._page, 'url', None) if self._page else None
         }
 
+    # --- 新增：全页语义扫描（semantic DOM map） ---
+    async def _get_semantic_dom(self):
+        """在页面上执行 JS，提取所有可交互且可见的重要元素并在 DOM 上打上 data-seeka-id（从 0 开始）。
+
+        返回：{ok: True, items: [...], text: "[0] <link> \"...\"\n..."}
+        每个 item 包含 {id, tag, text, summary, box}
+        """
+        if not self._page:
+            return {'ok': False, 'error': 'no_page'}
+
+        js = r'''
+(function(){
+  const selectors = ['a','button','input','textarea','select','h1','h2','h3','h4','h5','h6','span','p','div'];
+  const nodeList = Array.from(document.querySelectorAll(selectors.join(',')));
+  const out = [];
+  function isVisible(el){
+    if(!el) return false;
+    if(el.tagName === 'INPUT' && (el.type||'').toLowerCase() === 'hidden') return false;
+    const style = window.getComputedStyle(el);
+    if(!style || style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity||1) === 0) return false;
+    if(el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true') return false;
+    const rect = el.getBoundingClientRect();
+    if(!rect || rect.width <= 0 || rect.height <= 0) return false;
+    if(rect.width * rect.height <= 0) return false;
+    if(!document.body.contains(el)) return false;
+    return true;
+  }
+
+  let idx = 0;
+  for(const el of nodeList){
+    try{
+      if(!isVisible(el)) continue;
+      const tag = (el.tagName||'').toLowerCase();
+      let text = '';
+      if(['a','button','h1','h2','h3','h4','h5','h6','span','p','div'].includes(tag)){
+        text = (el.innerText || '').trim();
+      } else if(tag === 'input' || tag === 'textarea'){
+        text = (el.getAttribute('placeholder') || el.getAttribute('aria-label') || (el.value||'')) + '';
+      } else if(tag === 'select'){
+        const opt = el.options && el.selectedIndex >= 0 ? (el.options[el.selectedIndex] && el.options[el.selectedIndex].text) : '';
+        text = (el.getAttribute('aria-label') || el.name || opt || '') + '';
+      }
+
+      if(!text && ['div','span','p'].includes(tag)){
+        continue;
+      }
+
+      const rect = el.getBoundingClientRect();
+      const summary = (text || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || el.getAttribute('placeholder') || (el.href||'') || el.className || '').toString().trim().slice(0,240);
+      el.setAttribute('data-seeka-id', String(idx));
+      out.push({id: idx, tag: tag, text: (text||'').toString().trim().slice(0,240), summary: summary, box: {x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height)}});
+      idx += 1;
+    }catch(e){ }
+  }
+  return out;
+})()
+'''
+        try:
+            items = await self._page.evaluate(js)
+        except Exception as e:
+            return {'ok': False, 'error': 'evaluate_failed', 'detail': str(e)}
+
+        try:
+            self._last_semantic_map = items or []
+        except Exception:
+            self._last_semantic_map = items or []
+
+        lines = []
+        for it in (items or []):
+            idx = it.get('id')
+            tag = it.get('tag') or ''
+            text = (it.get('text') or it.get('summary') or '').replace('\n', ' ').strip()
+            text = text[:240]
+            lines.append(f"[{idx}] <{tag}> \"{text}\"")
+
+        return {'ok': True, 'items': items or [], 'text': '\n'.join(lines)}
+
+    async def _click_by_semantic_id(self, sid):
+        """通过 data-seeka-id 属性查找元素并点击。sid 支持数字或字符串。"""
+        if not self._page:
+            return {'ok': False, 'error': 'no_page'}
+        if sid is None:
+            return {'ok': False, 'error': 'no_id'}
+        sid_str = str(sid)
+        try:
+            handle = await self._page.query_selector(f'[data-seeka-id="{sid_str}"]')
+        except Exception as e:
+            return {'ok': False, 'error': 'query_failed', 'detail': str(e)}
+        if not handle:
+            return {'ok': False, 'error': 'no_match'}
+
+        try:
+            try:
+                await handle.scroll_into_view_if_needed()
+            except Exception:
+                try:
+                    await handle.evaluate('el => el.scrollIntoView({block: "center", inline: "nearest"})')
+                except Exception:
+                    pass
+            await handle.click()
+            return {'ok': True}
+        except Exception as e_click:
+            try:
+                js = f"(function(){{ const el = document.querySelector('[data-seeka-id=\"{sid_str}\"]'); if(!el) return false; el.click(); return true; }})()"
+                res = await self._page.evaluate(js)
+                if res:
+                    return {'ok': True, 'fallback': 'js'}
+            except Exception:
+                pass
+            return {'ok': False, 'error': 'click_error', 'detail': str(e_click)}
+
     # --- sync wrappers exposed to caller thread ---
     def open(self, bt: str, url: str | None, headless: bool, executable_path: str | None):
         return self._run(self._open(bt, url, headless, executable_path))
@@ -221,3 +332,10 @@ class PlaywrightRunner:
 
     def status(self):
         return self._run(self._status())
+
+    # --- 同步包装器 for semantic methods ---
+    def get_semantic_dom(self):
+        return self._run(self._get_semantic_dom())
+
+    def click_by_semantic_id(self, sid):
+        return self._run(self._click_by_semantic_id(sid))
