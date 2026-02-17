@@ -16,7 +16,7 @@ class EntityLocator:
     这是记忆覆盖的第一步：找到"关于谁"的记忆
     例："我现在不喜欢吃苹果了" -> 提取 "苹果"
     """
-    
+
     @staticmethod
     def locate(text: str) -> List[LocatedEntity]:
         """
@@ -30,7 +30,7 @@ class EntityLocator:
         """
         user_input = extract_user_input(text)
         entities = TextAnalyzer.extract_entities(user_input)
-        
+
         located = []
         for entity, weight in entities.items():
             category = EntityLocator._get_entity_category(entity, user_input)
@@ -39,11 +39,11 @@ class EntityLocator:
                 weight=weight,
                 category=category
             ))
-        
+
         # 按权重降序排列
         located.sort(key=lambda x: x.weight, reverse=True)
         return located
-    
+
     @staticmethod
     def _get_entity_category(entity: str, context: str) -> Optional[str]:
         """根据实体和上下文判断偏好类别"""
@@ -54,7 +54,7 @@ class EntityLocator:
             if entity in keywords:
                 return category
         return None
-    
+
     @staticmethod
     def get_primary_entities(text: str, top_n: int = 3) -> List[str]:
         """

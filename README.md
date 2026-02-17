@@ -91,6 +91,7 @@
 AI可以执行以下电脑操作命令：
 - **打开应用**：如"打开QQ"、"打开浏览器"等（需在白名单内）
 - **访问网页**：如"打开百度"、"搜索Python教程"等
+- **默认搜索引擎**：系统将 `搜索` 操作使用 **百度**（若 LLM/指令包含 Google 搜索链接，会自动重写为 `https://www.baidu.com/s?wd=...`）
 - **保存笔记**：如"保存笔记：今天的学习内容"等
 - **输入文本**：AI可以模拟键盘输入中文和英文文本
 
@@ -259,6 +260,14 @@ Local-project/
 - 检查麦克风权限和设置
 - 减少环境噪音
 - 使用带语音识别的主入口文件 `main copy.py`
+
+**Q: OCR / Tesseract 报错（找不到 tessdata 或 'eng.traineddata'）**
+- 问题表现：日志包含 "Please make sure the TESSDATA_PREFIX environment variable is set to your \"tessdata\" directory" 或 "Could not initialize tesseract"
+- 解决方法：
+  1. 安装 Tesseract（并下载语言包，例如 `eng.traineddata`）
+  2. 设置环境变量 `TESSDATA_PREFIX` 指向 `tessdata` 目录（示例 Windows：`setx TESSDATA_PREFIX "C:\\Program Files\\Tesseract-OCR\\tessdata"`）
+  3. 可通过 `TESSERACT_CMD` 环境变量显式指定 tesseract 可执行文件路径
+- 备注：代码在检测到致命 Tesseract 错误时会自动禁用 OCR，并在日志中给出修复建议。程序会尝试在首次检测到缺失语言包时**自动下载 `eng.traineddata`（若网络可用）**；若自动修复失败，请按上面的步骤手动安装/配置。
 
 ## 注意事项
 

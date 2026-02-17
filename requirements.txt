@@ -39,7 +39,7 @@ pyautogui>=0.9.53
 pygetwindow>=0.0.9
 
 # Agent / 浏览与检索能力（用于 modules.agent）
-# 使用国内友好的爬虫流：requests + BeautifulSoup，优先访问 cn.bing.com / baidu
+# 使用国内友好的爬虫流：requests + BeautifulSoup，优先访问 baidu（不回退到 Bing）
 beautifulsoup4>=4.12.0
 requests>=2.31.0
 # 可选：DrissionPage（用于需要 JS 渲染的页面，非必须）

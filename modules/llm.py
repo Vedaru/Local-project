@@ -43,14 +43,14 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
     if "[SUMMON_AGENT]" not in system_prompt:
         system_prompt = system_prompt + "\n\n" + agent_trigger_hint
 
-    # --- 盲人神探（OCR 使用说明） ---
-    ocr_guidance = (
-        "你是'盲人神探'：你无法直接看见屏幕。若需要点击屏幕上的按钮或图标，必须先使用 OCR 工具获取文字与坐标，"
-        "然后再发出点击指令。流程示例：思考 '我要点网易云' -> 发送 [ACTION]{\"action\": \"ocr_click\", \"text\": \"网易云音乐\"}[/ACTION] -> 系统会先通过 OCR 定位并执行点击。"
-        "不要假设任何坐标；所有点击必须基于 OCR 返回的坐标。"
+    # --- DOM 优先（已弃用 OCR）使用说明 ---
+    dom_guidance = (
+        "项目已改为直接操作网页 DOM（通过 dom_* 指令和 Playwright）。"
+        "若需要点击或读取网页内容，请使用 DOM 工具：例如 `dom_open` 打开页面，`dom_query` 查找元素，`dom_click` 点击元素，或 `dom_eval` 执行 JS。"
+        "示例：要点击页面第一个视频 -> 发送 [ACTION]{\"action\": \"dom_eval\", \"expression\": \"document.querySelector('a').click()\"}[/ACTION]。"
     )
     if "盲人神探" not in system_prompt:
-        system_prompt = system_prompt + "\n\n" + ocr_guidance
+        system_prompt = system_prompt + "\n\n" + dom_guidance
 
     if not model_name:
         logger.error("未配置 MODEL_NAME，请检查 .env 文件")

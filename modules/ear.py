@@ -13,18 +13,25 @@ modules/ear.py
 import os
 import time
 import wave
-import tempfile
-import threading
 import re
-import sys
 import logging
 
 import numpy as np
-import pyaudio
+try:
+    import pyaudio
+    PYAUDIO_AVAILABLE = True
+except Exception:
+    pyaudio = None
+    PYAUDIO_AVAILABLE = False
 import torch
 
 # 必须首先导入补丁模块（修复 ctranslate2 的 ROCm 路径问题）
-from . import _patch_ctranslate2
+# 补丁会修补 os.add_dll_directory，必须在导入 faster_whisper / ctranslate2 之前执行
+try:
+    from . import _patch_ctranslate2  # apply patch that guards os.add_dll_directory on Windows
+except Exception:
+    # 如果补丁无法加载，继续执行以便后续导入能呈现错误信息
+    pass
 
 # 现在可以安全导入 faster_whisper
 from faster_whisper import WhisperModel
@@ -73,6 +80,8 @@ class Ear:
         self.max_record_seconds = max_record_seconds
 
         # PyAudio / 流
+        if not globals().get('PYAUDIO_AVAILABLE', False):
+            raise ImportError("pyaudio is required for Ear but is not installed. Install via your platform's package manager or `pip install pyaudio`.")
         self.pa = pyaudio.PyAudio()
         self.stream = None
 
@@ -83,7 +92,7 @@ class Ear:
         # 临时目录
         self.temp_dir = os.path.join(os.path.dirname(__file__), "..", "data", "temp")
         os.makedirs(self.temp_dir, exist_ok=True)
-        
+
         # 清理旧的临时文件
         self._cleanup_old_temp_files()
 
@@ -96,11 +105,11 @@ class Ear:
                 "  3. PyTorch 是否安装了 GPU 版本\n"
                 "\n提示：坚持使用 GPU，不使用 CPU。"
             )
-        
+
         device = "cuda"
         compute_type = "float16"
         logger.info(f"⏳ 正在加载 faster-whisper 模型: {model_size}, device={device}, compute_type={compute_type} ...")
-        
+
         try:
             self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
             logger.info("✅ Whisper 模型加载完成（GPU 模式，float16 精度）。")
@@ -307,4 +316,6 @@ class Ear:
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        # 保留参数签名以兼容上下文管理器接口；引用以避免静态检查误报
+        _ = (exc_type, exc, tb)
         self.close()

@@ -7,7 +7,7 @@ import jieba
 import jieba.posseg as pseg
 
 from .config import (
-    ENTITY_WEIGHTS, ENTITY_FLAGS, 
+    ENTITY_WEIGHTS, ENTITY_FLAGS,
     EMOTION_KEYWORDS, ALL_EMOTION_WORDS,
     CLEAN_PATTERN, SPACE_PATTERN,
     FORGETTING_RATE
@@ -19,7 +19,7 @@ jieba.initialize()
 
 class TextAnalyzer:
     """文本分析器"""
-    
+
     @staticmethod
     def extract_entities(text: str) -> dict:
         """
@@ -41,11 +41,11 @@ class TextAnalyzer:
         # 先检查是否包含任何情感词
         if not any(c in text for word in ALL_EMOTION_WORDS for c in word[:1]):
             return 'neutral', 0
-        
+
         scores = {k: sum(1 for kw in v if kw in text) for k, v in EMOTION_KEYWORDS.items()}
         max_emotion = max(scores, key=scores.get)
         intensity = scores[max_emotion]
-        
+
         return (max_emotion, min(intensity, 5)) if intensity > 0 else ('neutral', 0)
 
     @staticmethod
@@ -69,7 +69,7 @@ class TextAnalyzer:
         access_count = metadata.get('access_count', 0)
         last_access = metadata.get('last_access', metadata.get('timestamp', time.time()))
         hours_since = (time.time() - last_access) / 3600
-        
+
         base = importance * math.exp(-FORGETTING_RATE * hours_since / 24)
         boost = 1 + math.log(1 + access_count) * 0.3
         return min(base * boost, 1.0)

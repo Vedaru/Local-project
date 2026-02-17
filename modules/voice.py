@@ -1,10 +1,14 @@
 # voice.py - 语音模块（低延迟版）
 
 import requests
-import pyaudio
+try:
+    import pyaudio
+    PYAUDIO_AVAILABLE = True
+except Exception:
+    pyaudio = None
+    PYAUDIO_AVAILABLE = False
 import threading
 import queue
-import time
 import wave
 import os
 from .logging_config import get_logger
@@ -19,11 +23,14 @@ class VoiceManager:
         self.text_queue = queue.Queue()
         self.audio_queue = queue.Queue()
         self.session = requests.Session()
-        
+
         # 低延迟音频配置
         self.sample_rate = 32000
         self.chunk_size = 256  # 更小的chunk降低延迟
-        
+
+        if not globals().get('PYAUDIO_AVAILABLE', False):
+            raise ImportError("pyaudio is required for VoiceManager but is not installed.")
+
         self.p = pyaudio.PyAudio()
         self.stream = self.p.open(
             format=pyaudio.paInt16,
@@ -32,7 +39,7 @@ class VoiceManager:
             output=True,
             frames_per_buffer=self.chunk_size  # 匹配chunk大小
         )
-        
+
         # 播放状态控制
         self.is_playing = False
         self.stop_current = threading.Event()
@@ -48,7 +55,7 @@ class VoiceManager:
         """发送文本到TTS队列"""
         # 如果正在播放，可以选择打断
         self.text_queue.put(text)
-    
+
     def speak_and_save(self, text: str, wav_path: str) -> bool:
         """
         合成语音并保存到 wav 文件（同步阻塞）
@@ -73,7 +80,7 @@ class VoiceManager:
                 "parallel_infer": True,
                 "speed_factor": 1.0
             }
-            
+
             # 收集所有音频数据
             audio_data = b''
             with self.session.post(
@@ -86,29 +93,29 @@ class VoiceManager:
                 for chunk in resp.iter_content(chunk_size=4096):
                     if chunk:
                         audio_data += chunk
-            
+
             if not audio_data:
                 return False
-            
+
             # 确保目录存在
             os.makedirs(os.path.dirname(wav_path) if os.path.dirname(wav_path) else '.', exist_ok=True)
-            
+
             # 保存为 wav 文件
             with wave.open(wav_path, 'wb') as wav_file:
                 wav_file.setnchannels(1)
                 wav_file.setsampwidth(2)  # 16-bit
                 wav_file.setframerate(self.sample_rate)
                 wav_file.writeframes(audio_data)
-            
+
             return True
-            
+
         except requests.exceptions.RequestException as e:
             logger.error(f"TTS 网络错误: {e}")
             return False
         except Exception as e:
             logger.error(f"TTS 保存错误: {e}", exc_info=True)
             return False
-    
+
     def play_wav(self, wav_path: str, lip_sync_callback=None):
         """
         播放 wav 文件（阻塞）并可选地进行实时口型同步
@@ -119,16 +126,16 @@ class VoiceManager:
         """
         try:
             import numpy as np
-            
+
             with wave.open(wav_path, 'rb') as wav_file:
                 # 读取参数
                 n_channels = wav_file.getnchannels()
                 sampwidth = wav_file.getsampwidth()
                 framerate = wav_file.getframerate()
-                
+
                 # --- 优化点 1: 减小 Chunk，降低延迟 ---
                 chunk_size = 512  # 从 256 减小到 512，降低延迟
-                
+
                 # 创建临时播放流（如果参数不同）
                 if framerate != self.sample_rate or n_channels != 1:
                     temp_stream = self.p.open(
@@ -142,18 +149,18 @@ class VoiceManager:
                 else:
                     stream = self.stream
                     temp_stream = None
-                
+
                 # 播放
                 self.is_playing = True
                 self.stop_current.clear()
-                
+
                 # 用于控制发送频率
                 update_counter = 0
-                
+
                 data = wav_file.readframes(chunk_size)
                 while data and not self.stop_current.is_set():
                     stream.write(data)
-                    
+
                     # --- 优化点 2: 不要每一帧都发指令，降低浏览器负担 ---
                     if lip_sync_callback:
                         update_counter += 1
@@ -162,7 +169,7 @@ class VoiceManager:
                                 # 计算音量（RMS）
                                 audio_data = np.frombuffer(data, dtype=np.int16)
                                 rms = np.sqrt(np.mean(audio_data**2))
-                                
+
                                 # --- 优化点 3: 门限过滤 + 非线性映射 ---
                                 # 1. 门限过滤 (Gate)：消除底噪
                                 if rms < 500:  # 如果音量太小，直接当做 0
@@ -171,24 +178,24 @@ class VoiceManager:
                                     # 2. 非线性映射：让嘴巴更容易张开
                                     # 将线性音量转为指数曲线
                                     volume = min((rms / 8000) ** 0.8, 1.0)
-                                
+
                                 lip_sync_callback(volume)
-                            except Exception as e:
+                            except Exception:
                                 pass  # 忽略回调错误，继续播放
-                    
+
                     data = wav_file.readframes(chunk_size)
-                
+
                 # 播放完成，关闭嘴巴
                 if lip_sync_callback:
                     lip_sync_callback(0.0)
-                
+
                 self.is_playing = False
-                
+
                 # 关闭临时流
                 if temp_stream:
                     temp_stream.stop_stream()
                     temp_stream.close()
-                    
+
         except Exception as e:
             logger.error(f"播放错误: {e}", exc_info=True)
             self.is_playing = False
@@ -238,10 +245,10 @@ class VoiceManager:
             text = self.text_queue.get()
             if text is None:
                 break
-            
+
             self.stop_current.clear()
             self.is_playing = True
-            
+
             try:
                 tts_data = {
                     "text": text,
@@ -255,7 +262,7 @@ class VoiceManager:
                     "parallel_infer": True,
                     "speed_factor": 1.0
                 }
-                
+
                 # 使用更小的chunk和更短的超时
                 with self.session.post(
                     f"{self.sovits_url}/tts",
@@ -267,14 +274,14 @@ class VoiceManager:
 
                     # 通知播放线程新流开始，首包即播
                     self.audio_queue.put(b'__START__')
-                    
+
                     # 使用更小的chunk_size实现更低延迟
                     for chunk in resp.iter_content(chunk_size=512):
                         if self.stop_current.is_set():
                             break
                         if chunk:
                             self.audio_queue.put(chunk)
-                            
+
             except requests.exceptions.RequestException as e:
                 logger.error(f"TTS 网络错误: {e}")
             except Exception as e:
@@ -289,15 +296,15 @@ class VoiceManager:
         buffer = b''
         min_buffer_size = 256  # 最小缓冲大小，收到这么多数据就开始播放
         immediate_first_packet = False
-        
+
         while True:
             try:
                 # 非阻塞获取，超时后检查buffer
                 chunk = self.audio_queue.get(timeout=0.01)
-                
+
                 if chunk is None:
                     break
-                
+
                 if chunk == b'__END__':
                     # 播放剩余buffer
                     if buffer:
@@ -312,7 +319,7 @@ class VoiceManager:
                     immediate_first_packet = True
                     self.audio_queue.task_done()
                     continue
-                
+
                 if immediate_first_packet:
                     self.stream.write(chunk)
                     immediate_first_packet = False
@@ -325,9 +332,9 @@ class VoiceManager:
                 while len(buffer) >= min_buffer_size:
                     self.stream.write(buffer[:min_buffer_size])
                     buffer = buffer[min_buffer_size:]
-                
+
                 self.audio_queue.task_done()
-                
+
             except queue.Empty:
                 # 队列为空时，播放剩余buffer（如果有）
                 if buffer and len(buffer) >= 128:

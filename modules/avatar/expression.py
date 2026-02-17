@@ -1,8 +1,11 @@
 """
 表情管理模块 - 基于文本情感分析的表情控制
+
+NOTE: Several methods and dataclasses in this module are part of the public
+Avatar expression API and may be called dynamically by the Avatar manager or
+external code. Keep public method signatures stable to preserve compatibility.
 """
 
-import re
 from typing import Callable, Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
@@ -71,10 +74,10 @@ class EmotionKeywords:
 
 class EmotionAnalyzer:
     """情感分析器 - 分析文本中的情感"""
-    
+
     def __init__(self, keywords: Optional[EmotionKeywords] = None):
         self.keywords = keywords or EmotionKeywords()
-        
+
         # 构建情感-关键词映射
         self._emotion_keywords: Dict[Emotion, List[str]] = {
             Emotion.HAPPY: self.keywords.positive,
@@ -84,7 +87,7 @@ class EmotionAnalyzer:
             Emotion.SHY: self.keywords.shy,
             Emotion.CONFUSED: self.keywords.confused,
         }
-        
+
         # 标点符号情感映射
         self._punctuation_emotions = {
             '！': (Emotion.HAPPY, 0.3),
@@ -96,7 +99,7 @@ class EmotionAnalyzer:
             '~': (Emotion.HAPPY, 0.2),
             '～': (Emotion.HAPPY, 0.2),
         }
-    
+
     def analyze(self, text: str) -> Tuple[Emotion, float]:
         """
         分析文本的情感
@@ -109,10 +112,10 @@ class EmotionAnalyzer:
         """
         if not text:
             return Emotion.NEUTRAL, 0.0
-        
+
         text_lower = text.lower()
         scores: Dict[Emotion, float] = {e: 0.0 for e in Emotion}
-        
+
         # 关键词匹配
         for emotion, keywords in self._emotion_keywords.items():
             for keyword in keywords:
@@ -120,33 +123,33 @@ class EmotionAnalyzer:
                     # 根据关键词长度给予不同权重
                     weight = 0.5 + len(keyword) * 0.1
                     scores[emotion] += weight
-        
+
         # 标点符号分析
         for punct, (emotion, weight) in self._punctuation_emotions.items():
             count = text.count(punct)
             scores[emotion] += count * weight
-        
+
         # 感叹号多表示强烈情感
         exclaim_count = text.count('！') + text.count('!')
         if exclaim_count >= 2:
             # 增强当前最高情感
             max_emotion = max(scores, key=scores.get)
             scores[max_emotion] += exclaim_count * 0.2
-        
+
         # 找出最高分的情感
         max_emotion = max(scores, key=scores.get)
         max_score = scores[max_emotion]
-        
+
         # 如果分数太低，返回中性
         if max_score < 0.3:
             return Emotion.NEUTRAL, 0.0
-        
+
         # 计算置信度（归一化）
         confidence = min(1.0, max_score / 3.0)
-        
+
         log_debug(f"Emotion analysis: {max_emotion.value} (confidence: {confidence:.2f})")
         return max_emotion, confidence
-    
+
     def add_keywords(self, emotion: Emotion, keywords: List[str]):
         """添加自定义关键词"""
         if emotion in self._emotion_keywords:
@@ -155,7 +158,7 @@ class EmotionAnalyzer:
 
 class ExpressionManager:
     """表情管理器 - 管理和控制 Live2D 模型的表情"""
-    
+
     # 默认表情配置
     DEFAULT_EXPRESSIONS: Dict[Emotion, ExpressionConfig] = {
         Emotion.NEUTRAL: ExpressionConfig(Emotion.NEUTRAL, 0, None, None, 1),
@@ -167,7 +170,7 @@ class ExpressionManager:
         Emotion.SHY: ExpressionConfig(Emotion.SHY, 6, None, None, 2),
         Emotion.CONFUSED: ExpressionConfig(Emotion.CONFUSED, 7, None, None, 1),
     }
-    
+
     def __init__(
         self,
         expression_callback: Callable[[int], None],
@@ -185,17 +188,17 @@ class ExpressionManager:
         self._expressions = expression_config or self.DEFAULT_EXPRESSIONS.copy()
         self._analyzer = EmotionAnalyzer()
         self._current_emotion = Emotion.NEUTRAL
-        
+
         log_info("ExpressionManager initialized")
-    
+
     def set_expression_config(self, emotion: Emotion, config: ExpressionConfig):
         """设置表情配置"""
         self._expressions[emotion] = config
-    
+
     def get_expression_config(self, emotion: Emotion) -> Optional[ExpressionConfig]:
         """获取表情配置"""
         return self._expressions.get(emotion)
-    
+
     def set_emotion(self, emotion: Emotion, play_motion: bool = True):
         """
         设置表情
@@ -208,21 +211,21 @@ class ExpressionManager:
         if not config:
             log_debug(f"No config for emotion: {emotion.value}, using neutral")
             config = self._expressions.get(Emotion.NEUTRAL)
-        
+
         if config:
             # 切换表情
             self._expression_callback(config.expression_index)
             self._current_emotion = emotion
-            
+
             # 播放配套动作
             if play_motion and self._motion_callback and config.motion_group:
                 self._motion_callback(
                     config.motion_group,
                     config.motion_index if config.motion_index is not None else 0
                 )
-            
+
             log_debug(f"Expression set: {emotion.value} (index: {config.expression_index})")
-    
+
     def set_expression_from_text(self, text: str, play_motion: bool = True) -> Emotion:
         """
         根据文本内容自动设置表情
@@ -235,7 +238,7 @@ class ExpressionManager:
             检测到的情感
         """
         emotion, confidence = self._analyzer.analyze(text)
-        
+
         # 只有置信度足够高才切换表情
         if confidence >= 0.3:
             self.set_emotion(emotion, play_motion=play_motion)
@@ -243,22 +246,22 @@ class ExpressionManager:
             # 保持当前表情或切换到中性
             if self._current_emotion == Emotion.THINKING:
                 self.set_emotion(Emotion.NEUTRAL, play_motion=False)
-        
+
         return emotion
-    
+
     def set_thinking(self):
         """设置思考表情"""
         self.set_emotion(Emotion.THINKING, play_motion=False)
-    
+
     def reset(self):
         """重置为中性表情"""
         self.set_emotion(Emotion.NEUTRAL, play_motion=False)
-    
+
     @property
     def current_emotion(self) -> Emotion:
         """当前情感"""
         return self._current_emotion
-    
+
     def add_keywords(self, emotion: Emotion, keywords: List[str]):
         """添加情感关键词"""
         self._analyzer.add_keywords(emotion, keywords)

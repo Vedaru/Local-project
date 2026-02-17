@@ -41,7 +41,7 @@ os.makedirs(data_dir, exist_ok=True)
 # GPT-SoVITS 路径
 GPT_SOVITS_PATH = _clean_env_value(env_vars.get("GPT_SOVITS_PATH"))
 
-# model_name 
+# model_name
 MODEL_NAME = _clean_env_value(env_vars.get("MODEL_NAME"))
 
 # system prompt

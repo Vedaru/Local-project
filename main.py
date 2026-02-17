@@ -362,6 +362,31 @@ class MainApplication:
             action_executor = ActionExecutor(failsafe=CONTROLLER_FAILSAFE)
             self.controller = ComputerController(safety_guard, action_executor)
             logger.info("电脑控制模块已启用")
+
+            # 尝试在启动时初始化 Playwright（避免启动阶段的假性不可用提示）
+            try:
+                try:
+                    action_executor._ensure_playwright()
+                except Exception as _e:
+                    # 不阻塞启动，仅记录调试信息
+                    logger.debug(f"Playwright 启动时初始化失败（可忽略）：{_e}")
+
+                if getattr(self.controller.action_executor, 'dom_available', False):
+                    self.signals.status_update.emit("✅ DOM 工具（Playwright）已启用：网页交互可用。")
+                else:
+                    # 更精确的诊断：区分 Playwright 包是否已安装 vs. 浏览器二进制未安装
+                    try:
+                        import importlib.util
+                        spec = importlib.util.find_spec('playwright')
+                        if spec is None:
+                            msg = "⚠️ Playwright 未安装。运行 `pip install playwright` 来安装。"
+                        else:
+                            msg = "⚠️ Playwright 包已安装，但浏览器二进制可能缺失。运行 `playwright install` 来安装浏览器驱动。"
+                    except Exception:
+                        msg = "⚠️ DOM 工具（Playwright）不可用。请安装 Playwright 并运行 `playwright install`。"
+                    self.signals.status_update.emit(msg)
+            except Exception:
+                pass
         else:
             self.controller = None
             logger.info("电脑控制模块已禁用")

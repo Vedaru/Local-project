@@ -5,7 +5,7 @@
 
 import json
 import re
-from typing import Tuple, Optional
+from typing import Tuple
 from .safety import SafetyGuard
 from .executor import ActionExecutor
 
@@ -42,7 +42,7 @@ class ComputerController:
         # 查找所有 [ACTION] 标签
         action_pattern = r'\[ACTION\](.*?)\[/ACTION\]'
         matches = re.findall(action_pattern, response_text, re.DOTALL)
-        
+
         if not matches:
             # 无指令，返回原文本
             return "", response_text
@@ -52,16 +52,16 @@ class ComputerController:
         for action_json in matches:
             try:
                 action_data = json.loads(action_json.strip())
-                
+
                 # 验证指令格式
                 if not isinstance(action_data, dict) or 'action' not in action_data:
                     execution_logs.append("❌ 指令解析失败: 缺少 'action' 字段")
                     continue
-                
+
                 # 执行指令
                 log = self._execute_action(action_data)
                 execution_logs.append(log)
-                
+
             except json.JSONDecodeError as e:
                 execution_logs.append(f"❌ 指令解析失败: 无效的 JSON 格式 - {str(e)}")
             except Exception as e:
@@ -96,8 +96,8 @@ class ComputerController:
                 # 安全验证
                 safe_path = self.safety_guard.validate_path(app_path)
 
-                # 执行启动
-                return self.action_executor.open_app(safe_path)
+                # 执行启动（AI 打开的窗口默认最大化）
+                return self.action_executor.open_app(safe_path, maximize=True)
 
             elif tool == 'type_text':
                 text = action_data.get('text', '')
@@ -124,25 +124,147 @@ class ComputerController:
             elif tool == 'open_browser':
                 url = action_data.get('url', None)
                 browser_path = action_data.get('browser_path', None)
-                
-                return self.action_executor.open_browser(url, browser_path)
 
-            elif tool == 'ocr_scan':
-                """扫描屏幕上所有可识别的文字并返回清单（JSON 字符串）。"""
-                items = self.action_executor.find_text_on_screen()
-                if items is None:
-                    return "🔍 OCR 未初始化或发生错误，无法扫描屏幕。"
+                # `open_browser` 已移除为独立实现：优先使用 DOM（Playwright）的 `dom_open`。
+                if getattr(self.action_executor, 'dom_available', False):
+                    return self.action_executor.dom_open(url=url, browser_path=browser_path, headless=False)
+                return "❌ `open_browser` 已移除：请使用 `dom_open`（默认使用系统 Edge），或在无 Playwright 环境下直接调用 `webbrowser.open(url)`。"
+
+            # 合并别名：将 `search` / `browse` 视为 `dom_open` 的语义别名（统一由 dom_open 处理）
+            elif tool in ('search', 'browse'):
+                # 支持多种参数名：query / q / url / args / text
+                url_or_q = (
+                    action_data.get('query') or action_data.get('q') or action_data.get('url')
+                    or action_data.get('args') or action_data.get('text')
+                )
+                if not url_or_q:
+                    return "❌ 指令错误: search/browse 缺少 'query'/'url' 参数"
+                # 直接委派给 dom_open；ActionExecutor.dom_open 会把裸词转换为百度搜索 URL
                 try:
-                    return json.dumps(items, ensure_ascii=False)
-                except Exception:
-                    return str(items)
+                    return self.action_executor.dom_open(url=url_or_q, browser_type=None, headless=False, browser_path=None)
+                except Exception as e:
+                    return f"❌ dom_open (via search/browse) 失败: {e}"
 
-            elif tool == 'ocr_click':
-                """在屏幕上查找包含指定文本的项并点击（参数：text）。"""
-                target = action_data.get('text', '')
-                if not target:
-                    return "❌ 指令错误: ocr_click 缺少 'text' 参数"
-                return self.action_executor.click_text(target)
+            # ----------------- DOM（替代 OCR）指令 -----------------
+            elif tool == 'dom_open':
+                url = action_data.get('url', None)
+                browser_type = action_data.get('browser_type', None)
+                headless = bool(action_data.get('headless', False))
+                browser_path = action_data.get('browser_path', None)
+                return self.action_executor.dom_open(url=url, browser_type=browser_type, headless=headless, browser_path=browser_path)
+
+            elif tool == 'dom_navigate':
+                url = action_data.get('url', None)
+                if not url:
+                    return "❌ 指令错误: dom_navigate 缺少 'url' 参数"
+                return self.action_executor.dom_navigate(url)
+
+            elif tool == 'dom_query':
+                selector = action_data.get('selector', '')
+                by = action_data.get('by', 'css')
+                multiple = bool(action_data.get('multiple', False))
+                if not selector:
+                    return "❌ 指令错误: dom_query 缺少 'selector' 参数"
+                try:
+                    res = self.action_executor.dom_query(selector, by=by, multiple=multiple)
+                    return json.dumps(res, ensure_ascii=False)
+                except Exception as e:
+                    return f"❌ dom_query 失败: {e}"
+
+            elif tool == 'dom_preview':
+                selector = action_data.get('selector', '')
+                by = action_data.get('by', 'css')
+                max_results = int(action_data.get('max_results', 6))
+                if not selector:
+                    return "❌ 指令错误: dom_preview 缺少 'selector' 参数"
+                try:
+                    res = self.action_executor.dom_preview(selector, by=by, max_results=max_results)
+                    return json.dumps(res, ensure_ascii=False)
+                except Exception as e:
+                    return f"❌ dom_preview 失败: {e}"
+
+            elif tool == 'dom_click':
+                selector = action_data.get('selector', '')
+                by = action_data.get('by', 'css')
+                index = action_data.get('index', None)
+                timeout = int(action_data.get('timeout', 5))
+                if not selector:
+                    return "❌ 指令错误: dom_click 缺少 'selector' 参数"
+                try:
+                    if index is not None:
+                        return self.action_executor.dom_click(selector, by=by, timeout=timeout*1000, index=int(index))
+                    return self.action_executor.dom_click(selector, by=by, timeout=timeout*1000)
+                except Exception as e:
+                    return f"❌ dom_click 失败: {e}"
+
+            elif tool == 'dom_open_and_click':
+                selector = action_data.get('selector', '')
+                by = action_data.get('by', 'css')
+                timeout = int(action_data.get('timeout', 15))
+                url = action_data.get('url', None)
+                if not selector:
+                    return "❌ 指令错误: dom_open_and_click 缺少 'selector' 参数"
+
+                # 打开页面（若提供 URL）
+                if url:
+                    open_res = self.action_executor.dom_open(url=url, headless=False)
+                    if isinstance(open_res, str) and open_res.startswith('❌'):
+                        return open_res
+
+                # 等待元素出现并点击（不在函数体内重新导入 json，防止局部变量遮蔽）
+                import time
+                deadline = time.time() + max(1, timeout)
+                found = []
+                while time.time() < deadline:
+                    found = self.action_executor.dom_query(selector, by=by, multiple=True)
+                    if found:
+                        break
+                    time.sleep(0.4)
+
+                if not found:
+                    return f"❌ dom_open_and_click 超时未找到元素: {selector}"
+
+                # 支持按索引点击（若传入 index 则优先使用）
+                index = int(action_data.get('index', 0)) if action_data.get('index') is not None else 0
+                # 将 timeout（秒）转换为毫秒以匹配 Playwright 的超时单位
+                click_res = self.action_executor.dom_click(selector, by=by, timeout=timeout * 1000, index=index)
+                status = self.action_executor.dom_status()
+                try:
+                    return json.dumps({'click': click_res, 'found': found[0], 'status': status}, ensure_ascii=False)
+                except Exception:
+                    return str({'click': click_res, 'status': status})
+
+            elif tool == 'dom_fill':
+                selector = action_data.get('selector', '')
+                value = action_data.get('value', '')
+                by = action_data.get('by', 'css')
+                if not selector:
+                    return "❌ 指令错误: dom_fill 缺少 'selector' 参数"
+                return self.action_executor.dom_fill(selector, value, by=by)
+
+            elif tool == 'dom_eval':
+                expr = action_data.get('expression', '')
+                if not expr:
+                    return "❌ 指令错误: dom_eval 缺少 'expression' 参数"
+                try:
+                    res = self.action_executor.dom_eval(expr)
+                    try:
+                        return json.dumps(res, ensure_ascii=False)
+                    except Exception:
+                        return str(res)
+                except Exception as e:
+                    return f"❌ dom_eval 失败: {e}"
+
+            elif tool == 'dom_status':
+                try:
+                    status = self.action_executor.dom_status()
+                    return json.dumps(status, ensure_ascii=False)
+                except Exception as e:
+                    return f"❌ dom_status 失败: {e}"
+
+            # 旧的图像/屏幕识别指令已被废弃（breaking change）
+            elif tool and tool.startswith('ocr_'):
+                return "❌ 已弃用：请改用对应的 dom_* 指令（例如 dom_query / dom_click / dom_open）。"
 
             else:
                 return f"❌ 未知指令: {tool}"

@@ -26,7 +26,7 @@ class ConflictResolver:
     3. 判定 - 调用 ConflictDetector 判断冲突
     4. 覆盖 - 物理删除旧记忆（新记忆由调用方插入）
     """
-    
+
     def __init__(self, collections: list):
         """
         Args:
@@ -34,12 +34,12 @@ class ConflictResolver:
         """
         self.collections = collections
         self.logger = logger
-    
+
     # ==================== Step 2: 检索 ====================
     def _query_by_entity(self, entity: str, n_results: int = 5) -> List[ConflictCandidate]:
         """基于实体关键词检索相关记忆"""
         candidates = []
-        
+
         for collection, layer_name in self.collections:
             try:
                 results = collection.query(
@@ -47,12 +47,12 @@ class ConflictResolver:
                     n_results=n_results,
                     include=["documents", "distances", "metadatas"]
                 )
-                
+
                 docs = results.get('documents', [[]])[0]
                 distances = results.get('distances', [[]])[0]
                 ids = results.get('ids', [[]])[0]
                 metas = results.get('metadatas', [[]])[0]
-                
+
                 for doc, dist, doc_id, meta in zip(docs, distances, ids, metas):
                     candidates.append(ConflictCandidate(
                         doc_id=doc_id,
@@ -64,13 +64,13 @@ class ConflictResolver:
                     ))
             except Exception as e:
                 self.logger.error(f"[检索失败] [{layer_name}] entity={entity} | {e}")
-        
+
         return candidates
-    
+
     def _query_by_content(self, content: str, n_results: int = 5) -> List[ConflictCandidate]:
         """基于完整内容进行语义检索"""
         candidates = []
-        
+
         for collection, layer_name in self.collections:
             try:
                 results = collection.query(
@@ -78,12 +78,12 @@ class ConflictResolver:
                     n_results=n_results,
                     include=["documents", "distances", "metadatas"]
                 )
-                
+
                 docs = results.get('documents', [[]])[0]
                 distances = results.get('distances', [[]])[0]
                 ids = results.get('ids', [[]])[0]
                 metas = results.get('metadatas', [[]])[0]
-                
+
                 for doc, dist, doc_id, meta in zip(docs, distances, ids, metas):
                     candidates.append(ConflictCandidate(
                         doc_id=doc_id,
@@ -95,7 +95,7 @@ class ConflictResolver:
                     ))
             except Exception as e:
                 self.logger.error(f"[检索失败] [{layer_name}] | {e}")
-        
+
         return candidates
 
     def _query_by_category(self, category: str, n_results: int = 5, max_keywords: int = 3) -> List[ConflictCandidate]:
@@ -135,12 +135,12 @@ class ConflictResolver:
                     self.logger.error(f"[检索失败] [{layer_name}] category={category} term={term} | {e}")
 
         return candidates
-    
+
     # ==================== Step 4: 删除 ====================
     def _execute_delete(self, candidates: List[ConflictCandidate]) -> int:
         """物理删除冲突记忆"""
         deleted_count = 0
-        
+
         for candidate in candidates:
             try:
                 candidate.collection.delete(ids=[candidate.doc_id])
@@ -151,9 +151,9 @@ class ConflictResolver:
                 deleted_count += 1
             except Exception as e:
                 self.logger.error(f"[删除失败] [{candidate.layer_name}] | {e}")
-        
+
         return deleted_count
-    
+
     # ==================== 主入口 ====================
     def smart_conflict_override(self, new_content: str, entities: dict) -> int:
         """
@@ -169,22 +169,22 @@ class ConflictResolver:
         # Step 1: 定位
         primary_entities = EntityLocator.get_primary_entities(new_content, top_n=3)
         new_entities_set = set(entities.keys()) if entities else set()
-        
+
         self.logger.debug(f"[定位] 核心实体: {primary_entities}")
-        
+
         user_input = extract_user_input(new_content)
         has_update_intent = ConflictDetector.has_update_intent(user_input)
         has_preference = ConflictDetector.detect_preference_conflict(user_input)
         preference_category = ConflictDetector.get_preference_category(user_input)
-        
+
         # Step 2: 检索
         all_candidates: Dict[str, ConflictCandidate] = {}
-        
+
         for entity in primary_entities:
             for candidate in self._query_by_entity(entity, n_results=5):
                 if candidate.doc_id not in all_candidates:
                     all_candidates[candidate.doc_id] = candidate
-        
+
         for candidate in self._query_by_content(new_content, n_results=5):
             if candidate.doc_id not in all_candidates:
                 all_candidates[candidate.doc_id] = candidate
@@ -194,25 +194,25 @@ class ConflictResolver:
             for candidate in self._query_by_category(preference_category, n_results=5):
                 if candidate.doc_id not in all_candidates:
                     all_candidates[candidate.doc_id] = candidate
-        
+
         self.logger.debug(f"[检索] 共找到 {len(all_candidates)} 条候选记忆")
-        
+
         # Step 3: 判定
         to_delete: List[ConflictCandidate] = []
-        
+
         for doc_id, candidate in all_candidates.items():
             doc = candidate.document
             dist = candidate.distance
             meta = candidate.metadata
-            
+
             if doc.strip() == new_content.strip():
                 continue
-            
+
             try:
                 old_entities = set(json.loads(meta.get('entities', '[]')))
             except Exception:
                 old_entities = TextAnalyzer.extract_noun_entities(extract_user_input(doc))
-            
+
             conflict_reason = ConflictDetector.judge_conflict(
                 new_content=new_content,
                 new_entities=new_entities_set,
@@ -222,13 +222,13 @@ class ConflictResolver:
                 has_update_intent=has_update_intent,
                 has_preference=has_preference
             )
-            
+
             if conflict_reason:
                 candidate.conflict_reason = conflict_reason
                 to_delete.append(candidate)
-        
+
         self.logger.debug(f"[判定] {len(to_delete)} 条记忆存在冲突")
-        
+
         # Step 4: 覆盖
         return self._execute_delete(to_delete)
 
@@ -318,14 +318,14 @@ class ConflictResolver:
                 self.logger.error(f"[全量矛盾清理失败] [{old_layer}] | {e}")
 
         return deleted_count
-    
+
     def quick_conflict_check(self, new_content: str, entity: str, threshold: float = None) -> int:
         """快速冲突检测 - 基于单个实体"""
         if threshold is None:
             threshold = ENTITY_CONFLICT_THRESHOLD
-            
+
         deleted_count = 0
-        
+
         for collection, layer_name in self.collections:
             try:
                 results = collection.query(
@@ -336,27 +336,27 @@ class ConflictResolver:
                 docs = results.get('documents', [[]])[0]
                 distances = results.get('distances', [[]])[0]
                 ids = results.get('ids', [[]])[0]
-                
+
                 to_delete = [
                     doc_id for doc, dist, doc_id in zip(docs, distances, ids)
                     if dist < threshold and doc.strip() != new_content.strip()
                 ]
-                
+
                 if to_delete:
                     collection.delete(ids=to_delete)
                     deleted_count += len(to_delete)
                     self.logger.info(f"[快速冲突检测] 删除[{layer_name}] {len(to_delete)} 条 | entity={entity}")
             except Exception as e:
                 self.logger.error(f"[快速冲突检测失败] [{layer_name}] | {e}")
-        
+
         return deleted_count
-    
+
     def override_memory(self, new_content: str, target_entity: str) -> int:
         """显式覆盖记忆 - 删除关于特定实体的所有旧记忆"""
         self.logger.info(f"[显式覆盖] entity={target_entity} | 新内容: {new_content[:50]}...")
-        
+
         candidates = self._query_by_entity(target_entity, n_results=10)
-        
+
         to_delete = []
         for candidate in candidates:
             if candidate.document.strip() == new_content.strip():
@@ -364,5 +364,5 @@ class ConflictResolver:
             if candidate.distance < SAME_CATEGORY_THRESHOLD:
                 candidate.conflict_reason = "显式覆盖"
                 to_delete.append(candidate)
-        
+
         return self._execute_delete(to_delete)

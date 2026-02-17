@@ -17,7 +17,7 @@ class ConflictCandidate:
     conflict_reason: str = ""
 
 
-@dataclass 
+@dataclass
 class LocatedEntity:
     """定位到的实体信息"""
     entity: str              # 实体词

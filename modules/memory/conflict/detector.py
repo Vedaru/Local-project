@@ -4,8 +4,8 @@
 from typing import Set, Optional
 
 from ..config import (
-    UPDATE_INDICATORS, 
-    PREFERENCE_PATTERNS, 
+    UPDATE_INDICATORS,
+    PREFERENCE_PATTERNS,
     PREFERENCE_PAIRS,
     PREFERENCE_CATEGORIES
 )
@@ -14,8 +14,7 @@ from ..logger import get_logger
 from .constants import (
     EXACT_DUPLICATE_THRESHOLD,
     ENTITY_CONFLICT_THRESHOLD,
-    PREFERENCE_CONFLICT_THRESHOLD,
-    SAME_CATEGORY_THRESHOLD
+    PREFERENCE_CONFLICT_THRESHOLD
 )
 from .utils import extract_user_input, is_question
 
@@ -34,12 +33,12 @@ class ConflictDetector:
     3. 同一对象的矛盾偏好（喜欢 vs 不喜欢）-> 偏好冲突
     4. 同类别偏好更新（喜欢苹果 -> 喜欢香蕉）-> 同类偏好覆盖
     """
-    
+
     @staticmethod
     def has_update_intent(text: str) -> bool:
         """检测文本是否包含更新/更正意图"""
         return any(indicator in text for indicator in UPDATE_INDICATORS)
-    
+
     @staticmethod
     def detect_preference_conflict(text: str) -> bool:
         """
@@ -52,15 +51,15 @@ class ConflictDetector:
         """
         if is_question(text):
             return False
-        
+
         if '我' not in text:
             return False
-        
+
         for patterns in PREFERENCE_PATTERNS.values():
             if any(p in text for p in patterns):
                 return True
         return False
-    
+
     @staticmethod
     def get_preference_category(text: str) -> Optional[str]:
         """获取文本涉及的偏好类别"""
@@ -68,7 +67,7 @@ class ConflictDetector:
             if any(kw in text for kw in keywords):
                 return category
         return None
-    
+
     @staticmethod
     def is_same_category_preference(new_text: str, old_text: str) -> bool:
         """
@@ -77,27 +76,27 @@ class ConflictDetector:
         """
         new_user_input = extract_user_input(new_text)
         old_user_input = extract_user_input(old_text)
-        
+
         # 排除疑问句
         if is_question(new_user_input) or is_question(old_user_input):
             return False
-        
+
         # 都必须包含偏好表达
         if not ConflictDetector.detect_preference_conflict(new_user_input):
             return False
         if not ConflictDetector.detect_preference_conflict(old_user_input):
             return False
-        
+
         # 检查是否同一偏好类别
         new_category = ConflictDetector.get_preference_category(new_user_input)
         old_category = ConflictDetector.get_preference_category(old_user_input)
-        
+
         if new_category and old_category and new_category == old_category:
             logger.info(f"[同类偏好检测] 类别={new_category} | 新: {new_user_input[:30]}... | 旧: {old_user_input[:30]}...")
             return True
-        
+
         return False
-    
+
     @staticmethod
     def is_preference_contradiction(new_text: str, old_text: str) -> bool:
         """
@@ -106,23 +105,23 @@ class ConflictDetector:
         """
         new_user_input = extract_user_input(new_text)
         old_user_input = extract_user_input(old_text)
-        
+
         # 排除疑问句
         if is_question(new_user_input) or is_question(old_user_input):
             return False
-        
+
         # 必须都包含主语"我"
         if '我' not in new_user_input or '我' not in old_user_input:
             return False
-        
+
         # 提取共同对象词
         new_words = TextAnalyzer.extract_noun_entities(new_user_input)
         old_words = TextAnalyzer.extract_noun_entities(old_user_input)
         common_objects = new_words & old_words
-        
+
         if not common_objects:
             return False
-        
+
         # 检查偏好矛盾
         for pos, neg in PREFERENCE_PAIRS:
             if neg in new_user_input and pos in old_user_input and neg not in old_user_input:
@@ -131,9 +130,9 @@ class ConflictDetector:
             if pos in new_user_input and neg in old_user_input and neg not in new_user_input:
                 logger.info(f"[偏好矛盾检测] 新:'{pos}' vs 旧:'{neg}' | 共同对象: {common_objects}")
                 return True
-        
+
         return False
-    
+
     @staticmethod
     def judge_conflict(
         new_content: str,
@@ -162,21 +161,21 @@ class ConflictDetector:
         # 条件1：极高相似度（几乎完全重复）
         if distance < EXACT_DUPLICATE_THRESHOLD:
             return "重复"
-        
+
         common_entities = new_entities & old_entities
-        
+
         # 条件2：有更新意图 + 有共同核心实体 + 较高相似度
         if has_update_intent and common_entities and distance < ENTITY_CONFLICT_THRESHOLD:
             return "更新"
-        
+
         # 条件3：偏好冲突检测
         if has_preference and distance < PREFERENCE_CONFLICT_THRESHOLD:
             if ConflictDetector.is_preference_contradiction(new_content, old_doc):
                 return "偏好矛盾"
-        
+
         # 条件4：同类偏好更新检测（不依赖距离，避免漏判）
         if has_preference:
             if ConflictDetector.is_same_category_preference(new_content, old_doc):
                 return "同类偏好更新"
-        
+
         return None

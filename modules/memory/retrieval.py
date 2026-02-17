@@ -15,14 +15,14 @@ logger = get_logger()
 
 class MemoryRetriever:
     """记忆检索器"""
-    
+
     def __init__(self, storage):
         """
         Args:
             storage: MemoryStorage 实例
         """
         self.storage = storage
-    
+
     def retrieve_memories(self, query: str, short_term_context: str, n_results: int = 3) -> str:
         """
         并行检索记忆（低延迟）
@@ -34,7 +34,7 @@ class MemoryRetriever:
         """
         if not self.storage.enabled:
             return ""
-        
+
         logger.debug(f"[检索] 查询: {query[:50]}...")
 
         def is_review_question(text: str) -> bool:
@@ -54,7 +54,7 @@ class MemoryRetriever:
             return self._is_preference_memory(text)
 
         review_question = is_review_question(query)
-        
+
         # 并行查询所有集合
         all_memories = []
         futures = []
@@ -65,19 +65,19 @@ class MemoryRetriever:
         if review_question:
             user_input = extract_user_input(query)
             category = ConflictDetector.get_preference_category(user_input)
-            
+
             # 1. 先尝试按类别检索偏好（如果有明确类别）
             if category:
                 metadata_results = self._query_preference_metadata(category=category, n_results=30)
                 if metadata_results:
                     all_memories.extend(metadata_results)
-            
+
             # 2. 若无结果，检索所有偏好记忆（不限类别）
             if not all_memories:
                 metadata_results = self._query_preference_metadata(category=None, n_results=30)
                 if metadata_results:
                     all_memories.extend(metadata_results)
-            
+
             # 3. 最后兜底：基础向量检索
             if not all_memories:
                 for collection, layer_name in collections:
@@ -93,7 +93,7 @@ class MemoryRetriever:
                     self._query_collection, collection, layer_name, query, n_results
                 )
                 futures.append(future)
-        
+
         # 等待所有查询完成
         try:
             for future in as_completed(futures, timeout=5.0):
@@ -111,10 +111,10 @@ class MemoryRetriever:
                         all_memories.extend(memories)
                     except Exception:
                         pass
-        
+
         if not all_memories:
             return short_term_context if short_term_context else ""
-        
+
         # 去重（包括偏好矛盾检测）
         all_memories = self._deduplicate_memories(all_memories)
 
@@ -126,7 +126,7 @@ class MemoryRetriever:
             else:
                 # 回顾性提问但没有相关偏好记忆，返回空
                 return short_term_context if short_term_context else ""
-        
+
         # 排序：优先新记忆与最新同类偏好
         category_latest_ts = {}
         for mem in all_memories:
@@ -148,32 +148,32 @@ class MemoryRetriever:
                 if category and mem['timestamp'] >= category_latest_ts.get(category, 0):
                     preference_bonus += 0.2
             mem['final_score'] = mem['strength'] * 0.45 + time_score * 0.25 + (1 - mem['distance']) * 0.2 + preference_bonus
-        
+
         all_memories.sort(key=lambda x: -x['final_score'])
         top_memories = all_memories[:n_results]
-        
+
         # 记录检索结果
         if top_memories:
             logger.debug(f"[检索结果] 找到 {len(top_memories)} 条相关记忆")
             for mem in top_memories:
                 logger.debug(f"  - [{mem['layer']}] {mem['content'][:40]}... | 距离={mem['distance']:.3f}")
-        
+
         # 异步更新访问计数
         update_queue = self.storage.get_update_queue()
         for mem in top_memories:
             update_queue.put((mem['id'], mem['collection']))
-        
+
         # 组装结果
         parts = []
         if short_term_context:
             parts.append(f"【最近对话】\n{short_term_context}")
-        
+
         main_contents = [m['content'] for m in top_memories]
         if main_contents:
-            parts.append(f"【相关记忆】\n" + "\n".join(main_contents))
-        
+            parts.append("【相关记忆】\n" + "\n".join(main_contents))
+
         return "\n\n".join(parts)
-    
+
     def _query_collection(self, collection, layer_name: str, query: str, n_results: int) -> list:
         """查询单个集合"""
         memories = []
@@ -183,12 +183,12 @@ class MemoryRetriever:
                 n_results=n_results,
                 include=["documents", "metadatas", "distances"]
             )
-            
+
             docs = results.get('documents', [[]])[0]
             metas = results.get('metadatas', [[]])[0]
             distances = results.get('distances', [[]])[0]
             ids = results.get('ids', [[]])[0]
-            
+
             for doc, meta, dist, doc_id in zip(docs, metas, distances, ids):
                 if dist < SIMILARITY_THRESHOLD:
                     memories.append({
@@ -207,7 +207,7 @@ class MemoryRetriever:
     def _query_preference_metadata(self, category: str = None, n_results: int = 30) -> list:
         """基于偏好元数据检索记忆（用于回顾性提问）"""
         memories = []
-        
+
         # ChromaDB where 语法：多条件需要 $and
         if category:
             where = {"$and": [{"preference": True}, {"preference_category": category}]}
@@ -225,7 +225,7 @@ class MemoryRetriever:
                 docs = results.get('documents', [])
                 metas = results.get('metadatas', [])
                 ids = results.get('ids', [])
-                
+
                 logger.debug(f"[元数据检索] collection={layer_name} | where={where} | 命中={len(docs)}条")
 
                 for doc, meta, doc_id in zip(docs, metas, ids):
@@ -242,7 +242,7 @@ class MemoryRetriever:
                 logger.debug(f"[元数据检索异常] {layer_name}: {e}")
 
         return memories
-    
+
     def _deduplicate_memories(self, memories: list) -> list:
         """
         去重：相似记忆只保留最新的
@@ -250,27 +250,27 @@ class MemoryRetriever:
         """
         if len(memories) <= 1:
             return memories
-        
+
         # 按时间戳降序排列（新的在前）
         memories.sort(key=lambda x: -x['timestamp'])
-        
+
         result = []
         seen_contents = []
-        
+
         for mem in memories:
             content = mem['content']
             is_duplicate = False
-            
+
             for seen in seen_contents:
                 # 先检查完全相同
                 if content == seen:
                     is_duplicate = True
                     break
-                
+
                 # 检查字符相似度（快速过滤）
                 common = len(set(content) & set(seen))
                 similarity = common / max(len(set(content)), len(set(seen)), 1)
-                
+
                 if similarity > 0.9:
                     # 极高相似度，直接跳过
                     is_duplicate = True
@@ -279,23 +279,23 @@ class MemoryRetriever:
                     # 中等相似度，可能是重复
                     is_duplicate = True
                     break
-                
+
                 # 检查1：偏好矛盾（同一对象的矛盾偏好）
                 if ConflictDetector.is_preference_contradiction(content, seen):
                     is_duplicate = True
                     logger.debug(f"[去重] 偏好矛盾，保留新记忆: {seen[:30]}... vs {content[:30]}...")
                     break
-                
+
                 # 检查2：同类偏好更新（不同对象但同一类别的偏好）
                 if ConflictDetector.is_same_category_preference(seen, content):
                     is_duplicate = True
                     logger.debug(f"[去重] 同类偏好更新，保留新记忆: {seen[:30]}... vs {content[:30]}...")
                     break
-            
+
             if not is_duplicate:
                 result.append(mem)
                 seen_contents.append(content)
-        
+
         # 偏好记忆按实体 + 类别去重（优先保留否定偏好）
         return self._deduplicate_preference_entities(result)
 

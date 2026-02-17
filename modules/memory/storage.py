@@ -11,7 +11,7 @@ import chromadb
 from concurrent.futures import ThreadPoolExecutor
 
 from ..config import data_dir
-from .config import STRONG_SIMILARITY_THRESHOLD, PREFERENCE_PATTERNS
+from .config import PREFERENCE_PATTERNS
 from .logger import get_logger, get_log_path
 from .analyzers import TextAnalyzer
 from .conflict import ConflictResolver, ConflictDetector, extract_user_input
@@ -21,7 +21,7 @@ logger = get_logger()
 
 class MemoryStorage:
     """记忆存储管理器"""
-    
+
     def __init__(self):
         self.enabled = False
         self.long_term = None
@@ -29,26 +29,26 @@ class MemoryStorage:
         self.working = None
         self._collections = []
         self._conflict_resolver = None
-        
+
         # 异步存储队列
         self._store_queue = queue.Queue()
         self._update_queue = queue.Queue()
-        
+
         # 线程池（增加worker数量以支持并行查询）
         self._executor = ThreadPoolExecutor(max_workers=10)
-        
+
         self._initialize_storage()
-    
+
     def _initialize_storage(self):
         """初始化 ChromaDB 存储"""
         os.makedirs(data_dir, exist_ok=True)
-        
+
         logger.info("=" * 50)
         logger.info("人类化记忆系统 正在初始化（低延迟模式）")
-        
+
         try:
             self.client = chromadb.PersistentClient(path=data_dir)
-            
+
             self.long_term = self.client.get_or_create_collection(
                 name="long_term_memory",
                 metadata={"description": "巩固后的长期记忆"}
@@ -61,37 +61,37 @@ class MemoryStorage:
                 name="working_memory",
                 metadata={"description": "待巩固的工作记忆"}
             )
-            
+
             self._collections = [
                 (self.emotional, "情感记忆"),
                 (self.long_term, "长期记忆"),
                 (self.working, "工作记忆")
             ]
-            
+
             self._conflict_resolver = ConflictResolver(self._collections)
             self.enabled = True
-            
+
             logger.info(f"存储路径: {data_dir}")
             logger.info(f"长期记忆: {self.long_term.count()} | 情感记忆: {self.emotional.count()} | 工作记忆: {self.working.count()}")
             logger.info(f"日志文件: {get_log_path()}")
             logger.info("记忆系统已就绪")
-            
+
             self._start_background_workers()
-            
+
         except Exception as e:
             logger.error(f"记忆系统初始化失败: {e}")
             self.enabled = False
-        
+
         logger.info("=" * 50)
-    
+
     def _start_background_workers(self):
         """启动后台工作线程"""
         self._store_thread = threading.Thread(target=self._store_worker, daemon=True)
         self._store_thread.start()
-        
+
         self._update_thread = threading.Thread(target=self._update_worker, daemon=True)
         self._update_thread.start()
-    
+
     def _store_worker(self):
         """后台存储线程"""
         while True:
@@ -104,12 +104,12 @@ class MemoryStorage:
                 self._store_queue.task_done()
             except Exception as e:
                 logger.error(f"存储线程异常: {e}")
-    
+
     def _update_worker(self):
         """批量更新线程"""
         pending_updates = []
         last_flush = time.time()
-        
+
         while True:
             try:
                 try:
@@ -120,15 +120,15 @@ class MemoryStorage:
                     self._update_queue.task_done()
                 except queue.Empty:
                     pass
-                
+
                 if pending_updates and (len(pending_updates) >= 10 or time.time() - last_flush > 1.0):
                     self._flush_updates(pending_updates)
                     pending_updates = []
                     last_flush = time.time()
-                    
+
             except Exception:
                 pass
-    
+
     def _flush_updates(self, updates):
         """批量执行更新"""
         for memory_id, collection in updates:
@@ -141,7 +141,7 @@ class MemoryStorage:
                     collection.update(ids=[memory_id], metadatas=[meta])
             except Exception:
                 pass
-    
+
     def _is_review_question(self, text: str) -> bool:
         """
         检测是否为回顾性提问，如“你还记得我喜欢…吗”“我之前说过…”等
@@ -186,7 +186,7 @@ class MemoryStorage:
 
         self._store_queue.put((clean_conv, entities, emotion_type, emotion_intensity, importance))
         return new_emotion
-    
+
     def _do_store_memory(self, clean_conv, entities, emotion_type, emotion_intensity, importance):
         """实际存储操作（后台线程）"""
         memory_id = str(uuid.uuid4())
@@ -214,12 +214,12 @@ class MemoryStorage:
             "preference_polarity": preference_polarity or "",
             "preference_entities": json.dumps(list(TextAnalyzer.extract_noun_entities(user_input))) if has_preference else "[]"
         }
-        
+
         try:
             # 智能冲突检测与覆盖
             if self._conflict_resolver:
                 self._conflict_resolver.smart_conflict_override(clean_conv, entities)
-            
+
             # 根据重要性和情感存储到不同集合
             if emotion_intensity >= 2 or emotion_type == 'important':
                 self.emotional.add(documents=[clean_conv], metadatas=[metadata], ids=[memory_id])
@@ -231,27 +231,27 @@ class MemoryStorage:
             else:
                 self.long_term.add(documents=[clean_conv], metadatas=[metadata], ids=[memory_id])
                 logger.debug(f"[存储] 工作记忆 | {clean_conv[:50]}... | 重要度={importance:.2f}")
-                
+
         except Exception as e:
             logger.error(f"[存储失败] {clean_conv[:30]}... | 错误: {e}")
-    
+
     def get_collections(self):
         """获取所有集合"""
         return self._collections
-    
+
     def get_executor(self):
         """获取线程池"""
         return self._executor
-    
+
     def get_update_queue(self):
         """获取更新队列"""
         return self._update_queue
-    
+
     def cleanup_old_memories(self):
         """清理旧记忆"""
         if not self.enabled:
             return
-        
+
         total_deleted = 0
         for collection, name in [(self.working, "工作记忆"), (self.long_term, "长期记忆")]:
             try:
@@ -266,13 +266,13 @@ class MemoryStorage:
                     logger.info(f"[清理] [{name}] 删除 {len(to_delete)} 条低强度记忆")
             except Exception as e:
                 logger.error(f"[清理失败] [{name}] {e}")
-        
+
         if total_deleted > 0:
             logger.info(f"[清理完成] 共删除 {total_deleted} 条记忆")
 
         # 全量语义矛盾检测与覆盖
         self.resolve_all_contradictions()
-    
+
     def get_stats(self):
         """获取存储统计信息"""
         return {
@@ -288,14 +288,14 @@ class MemoryStorage:
         if not self.enabled or not self._conflict_resolver:
             return
         self._conflict_resolver.resolve_all_semantic_conflicts()
-    
+
     def force_update_memory(self, old_info: str, new_info: str) -> bool:
         """强制更新记忆"""
         if not self.enabled:
             return False
-        
+
         logger.info(f"[强制更新] 旧: {old_info} -> 新: {new_info}")
-        
+
         deleted_count = 0
         for collection, layer_name in self._collections:
             try:
@@ -307,7 +307,7 @@ class MemoryStorage:
                 docs = results.get('documents', [[]])[0]
                 distances = results.get('distances', [[]])[0]
                 ids = results.get('ids', [[]])[0]
-                
+
                 to_delete = [
                     doc_id for doc, dist, doc_id in zip(docs, distances, ids)
                     if dist < 0.8
@@ -319,22 +319,22 @@ class MemoryStorage:
                     print(f"   ├─ 从[{layer_name}]删除 {len(to_delete)} 条")
             except Exception as e:
                 logger.error(f"[强制更新失败] [{layer_name}] {e}")
-        
+
         # 存储新信息
         self.store_memory(f"用户更正: {new_info}", 'neutral')
-        logger.info(f"[强制更新] 新记忆已存储")
-        print(f"   └─ 新记忆已存储")
-        
+        logger.info("[强制更新] 新记忆已存储")
+        print("   └─ 新记忆已存储")
+
         return deleted_count > 0
-    
+
     def clear_about(self, keyword: str) -> int:
         """清除关于某个关键词的所有记忆"""
         if not self.enabled:
             return 0
-        
+
         logger.info(f"[清除记忆] 关键词: {keyword}")
         print(f"\n[🗑️ 清除记忆] 关键词: {keyword}")
-        
+
         deleted_count = 0
         for collection, layer_name in self._collections:
             try:
@@ -345,7 +345,7 @@ class MemoryStorage:
                 )
                 ids = results.get('ids', [[]])[0]
                 distances = results.get('distances', [[]])[0]
-                
+
                 to_delete = [doc_id for doc_id, dist in zip(ids, distances) if dist < 0.7]
                 if to_delete:
                     collection.delete(ids=to_delete)
@@ -354,22 +354,22 @@ class MemoryStorage:
                     print(f"   ├─ 从[{layer_name}]删除 {len(to_delete)} 条")
             except Exception as e:
                 logger.error(f"[清除失败] [{layer_name}] {e}")
-        
+
         logger.info(f"[清除记忆] 共删除 {deleted_count} 条")
         print(f"   └─ 共删除 {deleted_count} 条记忆")
         return deleted_count
-    
+
     def close(self):
         """关闭存储系统"""
         logger.info("[关闭] 正在保存未完成的记忆...")
         print(" [记忆系统] 正在保存未完成的记忆...")
-        
+
         self._store_queue.join()
         self._store_queue.put(None)
         self._update_queue.join()
         self._update_queue.put(None)
         self._executor.shutdown(wait=True)
-        
+
         logger.info("[关闭] 所有记忆已保存完毕")
         logger.info(f"[关闭] 日志文件位置: {get_log_path()}")
         print(" [记忆系统] 所有记忆已保存完毕")

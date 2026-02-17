@@ -6,8 +6,6 @@ modules/_patch_ctranslate2.py
 """
 
 import os
-import sys
-from pathlib import Path
 
 # 立即修补 os.add_dll_directory 以处理不存在的 ROCm 路径
 _original_add_dll_directory = os.add_dll_directory
@@ -18,17 +16,17 @@ def _patched_add_dll_directory(path):
     """
     if not path or not isinstance(path, str):
         return _original_add_dll_directory(path)
-    
+
     # 过滤 ROCm 相关路径（ctranslate2 不需要 ROCm）
     if "rocm" in path.lower():
         print(f"[PATCH] 忽略 ROCm 路径: {path}")
         return None
-    
+
     # 过滤不存在的路径
     if not os.path.exists(path):
         print(f"[PATCH] 忽略不存在的路径: {path}")
         return None
-    
+
     # 如果路径有效，添加到 DLL 搜索路径
     try:
         return _original_add_dll_directory(path)
