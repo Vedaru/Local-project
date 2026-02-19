@@ -1,6 +1,7 @@
 """
-安全模块 - 白名单检查
-防止 AI 执行恶意操作
+安全模块 - 白名单检查（从 modules.controller.safety 迁移）
+
+保留原实现，供 Agent 内部直接使用并对外导出。
 """
 
 import os

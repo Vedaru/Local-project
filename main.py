@@ -25,7 +25,7 @@ from modules.memory import MemoryManager
 from modules.memory.logger import get_logger as get_memory_logger
 from modules.voice import VoiceManager
 from modules.ear import Ear
-from modules.controller import ComputerController, SafetyGuard, ActionExecutor
+from modules.agent import ComputerController, SafetyGuard, ActionExecutor
 from modules.llm import call_llm
 # Agent 模块（Manus 风格的 ReAct 智能体）
 from modules.agent.core import ManusAgent
@@ -117,6 +117,8 @@ class AIWorker(threading.Thread):
         self.controller = controller
         self.agent = agent
         self._running = True
+        # 当模型因“人设/拒绝”而中断任务时，在下一轮强制提醒它继续未完成的任务
+        self._force_continue_next = False
     
     def run(self):
         """线程主循环"""
@@ -168,6 +170,11 @@ class AIWorker(threading.Thread):
                 # 开始思考时可以切换表情
                 self.signals.expression_change.emit(Emotion.THINKING)
                 
+                # 在下一轮若需强制继续未完成任务，则把提示插入到用户输入前
+                if getattr(self, '_force_continue_next', False) and cleaned_input and cleaned_input.lower() not in ('status','exit','quit'):
+                    cleaned_input = "请继续执行未完成的任务，发送指令标签。\n\n" + cleaned_input
+                    self._force_continue_next = False
+
                 # 调用 LLM 生成响应
                 ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, cleaned_input, memory_context)
 
@@ -201,7 +208,14 @@ class AIWorker(threading.Thread):
                     # 阻塞地调用本地 Agent 执行任务（如果已初始化）
                     agent_result = "⚠️ Agent 未启用"
                     if self.agent and task_desc:
-                        agent_result = self.agent.run_task(task_desc)
+                        logger = get_logger('AIWorker')
+                        logger.info(f"Invoking ManusAgent.run_task — task_desc={task_desc}")
+                        try:
+                            agent_result = self.agent.run_task(task_desc)
+                            logger.info(f"ManusAgent.run_task completed — result(len)={len(agent_result) if isinstance(agent_result, str) else 'N/A'}")
+                        except Exception as e:
+                            logger.exception(f"ManusAgent.run_task raised exception: {e}")
+                            agent_result = f"❌ Agent 执行异常: {e}"
                     elif task_desc:
                         agent_result = "⚠️ Agent 未初始化或不可用"
 
@@ -221,52 +235,39 @@ class AIWorker(threading.Thread):
 
                 # --- 自动处理 LLM 直接输出的 Agent-style JSON（无须 [SUMMON_AGENT] 标签） ---
                 try:
-                    def _extract_first_json(s: str):
-                        """更稳健的 JSON 提取器：
+                    def _parse_loose(js_text: str):
+                        """尝试多种宽松 JSON 解析策略，返回 dict 或 None（复用）。"""
+                        try:
+                            return json.loads(js_text)
+                        except Exception:
+                            pass
+                        m = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', js_text, re.IGNORECASE)
+                        candidate = m.group(1) if m else js_text
+                        cand = re.sub(r',\s*(\}|\])', r'\1', candidate)
+                        cand = cand.replace('“', '"').replace('”', '"')
+                        try:
+                            return json.loads(cand)
+                        except Exception:
+                            pass
+                        try:
+                            cand2 = cand.replace("'", '"')
+                            return json.loads(cand2)
+                        except Exception:
+                            try:
+                                import ast
+                                obj = ast.literal_eval(candidate)
+                                if isinstance(obj, dict):
+                                    return obj
+                            except Exception:
+                                return None
 
-                        - 优先寻找 [ACTION]...</ACTION> 块并解析其中 JSON（Agent 风格）
-                        - 否则做一次平衡花括号扫描（支持字符串/转义），逐个尝试解析
-                        - 解析时使用宽容策略（去除代码围栏、移除尾随逗号、单引号 -> 双引号、ast.literal_eval 回退）
-                        - 优先返回含有 'tool' 或 'action' 字段的对象（若有多个 JSON，则优先选取包含这些键的）
-                        """
+                    def _extract_all_jsons(s: str):
+                        """返回文本中所有可解析为 dict 的 JSON（列表，保持顺序）。"""
                         if not s:
-                            return None
+                            return []
+                        results = []
 
-                        def _parse_loose(js_text: str):
-                            """尝试多种宽松解析策略，返回 dict 或 None。"""
-                            try:
-                                return json.loads(js_text)
-                            except Exception:
-                                pass
-
-                            # 去除常见的代码围栏（```json ... ```）并重试
-                            m = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', js_text, re.IGNORECASE)
-                            candidate = m.group(1) if m else js_text
-
-                            # 基本清洗：移除尾随逗号、规范智能引号
-                            cand = re.sub(r',\s*(\}|\])', r'\1', candidate)
-                            cand = cand.replace('“', '"').replace('”', '"')
-
-                            # 尝试严格 JSON
-                            try:
-                                return json.loads(cand)
-                            except Exception:
-                                pass
-
-                            # 最后手段：把单引号替换为双引号再尝试 / ast.literal_eval 回退
-                            try:
-                                cand2 = cand.replace("'", '"')
-                                return json.loads(cand2)
-                            except Exception:
-                                try:
-                                    import ast
-                                    obj = ast.literal_eval(candidate)
-                                    if isinstance(obj, dict):
-                                        return obj
-                                except Exception:
-                                    return None
-
-                        # 1) 优先查找 [ACTION] 标签内的 JSON（Agent 输出常用）
+                        # 1) 提取所有 [ACTION] 块
                         if '[ACTION]' in s:
                             for block in re.findall(r'\[ACTION\](.*?)\[/ACTION\]', s, re.DOTALL):
                                 txt = block.strip()
@@ -274,10 +275,9 @@ class AIWorker(threading.Thread):
                                     continue
                                 parsed = _parse_loose(txt)
                                 if isinstance(parsed, dict):
-                                    return parsed
+                                    results.append(parsed)
 
-                        # 2) 平衡花括号扫描：逐个 '{' 起点，向前查找到匹配的 '}'（考虑字符串/转义）
-                        candidates = []
+                        # 2) 平衡花括号扫描提取裸 JSON
                         i = 0
                         L = len(s)
                         while True:
@@ -311,24 +311,75 @@ class AIWorker(threading.Thread):
                                         js_text = s[i:j+1]
                                         parsed = _parse_loose(js_text)
                                         if isinstance(parsed, dict):
-                                            # 若包含关键字段，立即返回；否则收集为候选
-                                            if 'tool' in parsed or 'action' in parsed:
-                                                return parsed
-                                            candidates.append(parsed)
+                                            results.append(parsed)
                                         break
                                 j += 1
-                            i = i + 1
+                            i += 1
+                        return results
 
-                        # 3) 若找到候选但无含关键字段的对象，返回第一个候选
-                        if candidates:
-                            return candidates[0]
-
-                        return None
+                    def _extract_first_json(s: str):
+                        objs = _extract_all_jsons(s)
+                        return objs[0] if objs else None
 
                     auto_attempts = 0
                     max_auto_attempts = 3
                     # 如果模型在普通对话里直接输出了工具调用 JSON，则我们自动执行并将观察结果回写给模型，直到模型返回普通文本为止
                     while auto_attempts < max_auto_attempts:
+                        # 优先处理文本中所有 'tool' JSON（一次性按序执行）
+                        parsed_list = _extract_all_jsons(ai_response)
+                        tool_objs = [o for o in parsed_list if isinstance(o, dict) and 'tool' in o]
+
+                        if tool_objs:
+                            observations = []
+                            for parsed_agent in tool_objs:
+                                tool_name = (parsed_agent.get('tool') or '').strip()
+                                tool_args = parsed_agent.get('args')
+
+                                # 选择执行器（优先使用已初始化的 ManusAgent.tools）
+                                tools_executor = None
+                                if self.agent and hasattr(self.agent, 'tools') and self.agent.tools:
+                                    tools_executor = self.agent.tools
+                                else:
+                                    from modules.agent.tools import AgentTools
+                                    tools_executor = AgentTools(controller=self.controller)
+
+                                logger.info(f"检测到 Agent-style 输出，执行工具: {tool_name} args={tool_args}")
+                                observation = tools_executor.execute(tool_name, tool_args)
+                                logger.info(f"工具观察: {observation}")
+
+                                # 若 dom_open 返回 no_page，短期重试一次
+                                try:
+                                    if (str(tool_name).lower() == 'dom_open' and isinstance(observation, str)
+                                            and 'no_page' in observation.lower()):
+                                        logger.info('dom_open 返回 no_page，尝试重试一次')
+                                        retry_obs = tools_executor.execute(tool_name, tool_args)
+                                        logger.info(f'dom_open 重试返回: {retry_obs}')
+                                        observation = retry_obs
+                                except Exception:
+                                    pass
+
+                                if isinstance(observation, str) and (observation.startswith('❌') or observation.startswith('⚠️') or '无法获取' in observation):
+                                    ai_response = observation
+                                    break
+
+                                observations.append({'tool': tool_name, 'args': tool_args, 'observation': observation})
+
+                            if isinstance(ai_response, str) and ai_response.startswith(('❌','⚠️')):
+                                break
+
+                            followup_prompt = (
+                                f"模型此前的输出为: {json.dumps(tool_objs, ensure_ascii=False)}。"
+                                f"\n工具执行后的观察结果: {json.dumps(observations, ensure_ascii=False)}\n"
+                                "请基于观察结果直接给出面向用户的、可读的最终回答（不要返回任何 JSON 或工具调用）。"
+                            )
+                            ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, followup_prompt, memory_context)
+                            if not ai_response:
+                                ai_response = observations[-1]['observation'] if observations else '抱歉，工具执行无返回。'
+
+                            auto_attempts += 1
+                            continue
+
+                        # 回退到单个 tool 解析（保持兼容）
                         parsed_agent = _extract_first_json(ai_response)
                         if not parsed_agent or not isinstance(parsed_agent, dict) or 'tool' not in parsed_agent:
                             break
@@ -336,7 +387,6 @@ class AIWorker(threading.Thread):
                         tool_name = (parsed_agent.get('tool') or '').strip()
                         tool_args = parsed_agent.get('args')
 
-                        # 选择执行器（优先使用已初始化的 ManusAgent.tools）
                         tools_executor = None
                         if self.agent and hasattr(self.agent, 'tools') and self.agent.tools:
                             tools_executor = self.agent.tools
@@ -348,23 +398,18 @@ class AIWorker(threading.Thread):
                         observation = tools_executor.execute(tool_name, tool_args)
                         logger.info(f"工具观察: {observation}")
 
-                        # 若 dom_open 返回 no_page，重试一次（短期容错）
                         try:
                             if (str(tool_name).lower() == 'dom_open' and isinstance(observation, str)
                                     and 'no_page' in observation.lower()):
-                                logger.info('dom_open 返回 no_page，尝试重试一次')
                                 retry_obs = tools_executor.execute(tool_name, tool_args)
-                                logger.info(f'dom_open 重试返回: {retry_obs}')
                                 observation = retry_obs
                         except Exception:
                             pass
 
-                        # 若工具返回失败类型的字符串，则把失败直接作为最终回复
                         if isinstance(observation, str) and (observation.startswith('❌') or observation.startswith('⚠️') or '无法获取' in observation):
                             ai_response = observation
                             break
 
-                        # 否则把观察结果提供回模型，要求给出可读的最终回答（不要再返回 JSON）
                         followup_prompt = (
                             f"模型此前的输出为: {json.dumps(parsed_agent, ensure_ascii=False)}。"
                             f"\n工具执行后的观察结果: {observation}\n"
@@ -392,7 +437,18 @@ class AIWorker(threading.Thread):
 
                 # 发送响应到主线程
                 self.signals.response_ready.emit(clean_response)
-                
+
+                # 检测：若模型以“人设/拒绝”中断了进行中的操作且未给出 [ACTION] 指令，标记在下一轮强制提醒模型继续
+                try:
+                    import re
+                    persona_pattern = r'\b(作为|我不能|我无法|我不应该|无法执行|不能执行|不便于|抱歉，我|抱歉我)\b'
+                    action_keywords = r'搜索|打开|点击|填写|登录|播放|查找|在 B 站|bilibili|搜索视频'
+                    if self.controller and '[ACTION]' not in ai_response and re.search(persona_pattern, ai_response, re.I) and re.search(action_keywords, cleaned_input or '', re.I):
+                        self._force_continue_next = True
+                        logger.info("检测到任务可能被人设中断；将在下一轮强制提醒模型继续执行未完成任务。")
+                except Exception:
+                    pass
+
                 # 处理记忆
                 if clean_response != "抱歉，我现在有点卡住了。":
                     self.memory_manager.add_to_short_term("AI", clean_response)

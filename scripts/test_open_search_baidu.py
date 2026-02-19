@@ -1,4 +1,4 @@
-from modules.controller.executor import ActionExecutor
+from modules.agent.executor import ActionExecutor
 import time
 
 print('=== test_open_search_baidu ===')

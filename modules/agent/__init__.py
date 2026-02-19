@@ -8,5 +8,8 @@ modules.agent — Manus 风格的本地智能体模块包
 from .core import ManusAgent
 from .tools import AgentTools
 from .browser import WebSurfer
+from .controller import ComputerController
+from .executor import ActionExecutor
+from .safety import SafetyGuard
 
-__all__ = ["ManusAgent", "AgentTools", "WebSurfer"]
+__all__ = ["ManusAgent", "AgentTools", "WebSurfer", "ComputerController", "ActionExecutor", "SafetyGuard"]

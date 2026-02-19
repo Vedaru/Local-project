@@ -1,6 +1,7 @@
 """
-核心调度模块 - 指令解析与调度
-负责解析 AI 响应中的控制指令并执行
+ComputerController — 将原 modules.controller.core.py 迁移到 modules.agent
+
+此模块保存原有的指令解析与调度逻辑，供 Agent 内部直接使用。
 """
 
 import json
@@ -76,14 +77,28 @@ class ComputerController:
         return execution_log, clean_text
 
     def _execute_action(self, action_data: dict) -> str:
-        """
-        执行具体动作
+        """执行单条控制指令并返回可读的执行日志。
 
-        Args:
-            action_data: 解析后的指令数据
+        支持的 action 及参数说明（摘要）：
+        - open_app: {app_path}
+        - type_text: {text}
+        - press_key: {key}
+        - save_note: {content, filename?}
+        - dom_open: {url, browser_type?, headless?, browser_path?}
+        - dom_navigate: {url}
+        - dom_query: {selector, by?, multiple?}
+        - dom_preview: {selector, by?, max_results?}
+        - dom_scan: (无参数，返回页面元素地图)
+        - dom_click: {selector, by?, index?, timeout?}
+        - dom_click_text: {selector, text, timeout?}
+        - dom_open_and_click: {url, selector, by?, timeout?, index?}
+        - dom_fill: {selector, value, by?}
+        - dom_eval: {expression}
+        - dom_status: (无参数)
+        - dom_click_id: {id} — 基于 scan_page_elements 生成的语义 id 点击元素
 
-        Returns:
-            str: 执行结果日志
+        返回格式：大多数操作返回人类可读的字符串，失败以 ❌ 开头并包含简短诊断。
+        注意：Agent 层会对失败响应做二次增强以提供可执行建议。
         """
         tool = action_data.get('action')
 
@@ -191,6 +206,7 @@ class ComputerController:
                     return f"❌ dom_scan 失败: {e}"
 
             elif tool == 'dom_click_id':
+                # 按先前 scan 生成的语义 id 点击元素
                 sid = action_data.get('id', None)
                 if sid is None:
                     return "❌ 指令错误: dom_click_id 缺少 'id' 参数"
@@ -213,42 +229,30 @@ class ComputerController:
                 except Exception as e:
                     return f"❌ dom_click 失败: {e}"
 
+            elif tool == 'dom_click_text':
+                selector = action_data.get('selector', '')
+                text = action_data.get('text', '')
+                timeout = int(action_data.get('timeout', 10))
+                if not selector or not text:
+                    return "❌ 指令错误: dom_click_text 缺少 'selector' 或 'text' 参数"
+                try:
+                    return self.action_executor.dom_click_text(selector, text, timeout=timeout)
+                except Exception as e:
+                    return f"❌ dom_click_text 失败: {e}"
+
             elif tool == 'dom_open_and_click':
                 selector = action_data.get('selector', '')
                 by = action_data.get('by', 'css')
                 timeout = int(action_data.get('timeout', 15))
                 url = action_data.get('url', None)
+                index = int(action_data.get('index', 0)) if action_data.get('index') is not None else 0
                 if not selector:
                     return "❌ 指令错误: dom_open_and_click 缺少 'selector' 参数"
-
-                # 打开页面（若提供 URL）
-                if url:
-                    open_res = self.action_executor.dom_open(url=url, headless=False)
-                    if isinstance(open_res, str) and open_res.startswith('❌'):
-                        return open_res
-
-                # 等待元素出现并点击（不在函数体内重新导入 json，防止局部变量遮蔽）
-                import time
-                deadline = time.time() + max(1, timeout)
-                found = []
-                while time.time() < deadline:
-                    found = self.action_executor.dom_query(selector, by=by, multiple=True)
-                    if found:
-                        break
-                    time.sleep(0.4)
-
-                if not found:
-                    return f"❌ dom_open_and_click 超时未找到元素: {selector}"
-
-                # 支持按索引点击（若传入 index 则优先使用）
-                index = int(action_data.get('index', 0)) if action_data.get('index') is not None else 0
-                # 将 timeout（秒）转换为毫秒以匹配 Playwright 的超时单位
-                click_res = self.action_executor.dom_click(selector, by=by, timeout=timeout * 1000, index=index)
-                status = self.action_executor.dom_status()
                 try:
-                    return json.dumps({'click': click_res, 'found': found[0], 'status': status}, ensure_ascii=False)
-                except Exception:
-                    return str({'click': click_res, 'status': status})
+                    # 将 timeout（秒）转换为毫秒再委派给 ActionExecutor.dom_open_and_click（runner 以 ms 为单位）
+                    return self.action_executor.dom_open_and_click(url=url, selector=selector, by=by, timeout=timeout * 1000, index=index)
+                except Exception as e:
+                    return f"❌ dom_open_and_click 失败: {e}"
 
             elif tool == 'dom_fill':
                 selector = action_data.get('selector', '')

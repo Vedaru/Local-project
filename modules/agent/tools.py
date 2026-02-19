@@ -1,372 +1,248 @@
 """
 AgentTools — 为 ManusAgent 提供的工具箱包装
-- 将 ComputerController / ActionExecutor 的能力以“工具”形式暴露给 Agent
-- 重要约束：所有 DOM/本地操作均返回字符串（便于 Agent observation）
+- 联网搜索（duckduckgo-search）
+- 文件读写（read_file / write_file）
+- 本地电脑控制（包装现有的 ComputerController / ActionExecutor）
+- 浏览器访问（包装 WebSurfer）
 
-必须支持 LLM 常用输出名称（大小写/连字符兼容）：
-- click_element_by_id
-- scan_page_elements
-- type_text
-- press_key
-
-实现要点：
-- 优先直接调用 controller.action_executor 的方法（若存在），减小中间层出错面
-- 对 controller 返回的 dict/str 做统一增强与诊断提示
+所有方法均返回字符串（便于在 Agent 的 Observation 中拼接与展示）。
 """
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 import os
-import re
+import json
 
 import pyautogui
 
-from modules.controller import ComputerController
+from .controller import ComputerController
 from .browser import WebSurfer
+from ..logging_config import get_logger
 
+logger = get_logger('AgentTools')
+
+# 使用国内可用的搜索抓取（优先百度 https://www.baidu.com/s）
+# duckduckgo 已被替换为静态爬虫方式（requests + BeautifulSoup），以适配中国大陆网络环境
 import requests
 from bs4 import BeautifulSoup
 
+# ========== 已迁移的 prompt 文本（工具与 DOM 说明） ==========
+DOM_EXPERT_GUIDE = '''
+浏览器与 DOM 操作专家指南
+- 先看后点：始终优先使用 `scan_page_elements` 获取页面元素地图，再按 id 或 selector 精准操作。
+- 禁止盲点：不要在未确认页面元素时使用 index=0、不要用键盘模拟填写网页表单。
+- 标准流程：dom_open -> scan_page_elements -> 读取编号地图 -> click_element_by_id 或 dom_fill。
+- 网页输入须使用 dom_fill，不要使用 type_text/press_key 来填表。
+- 若 scan_page_elements 未返回目标，请说明原因（动态渲染/加载延迟/隐藏元素）并建议重试或改用更宽泛的检索词。
+- 搜索应使用内置 search 工具或 baidu，不要生成 google 链接。
+'''
+
+TOOL_DOCUMENTATION = '''
+工具说明：
+- search(query, max_results=5): 使用百度抓取，返回标题+链接+摘要的文本列表；禁止使用 Google。
+- browse(url): 抓取页面并返回 title/text 摘要（适合快速阅读）。
+- read_file(path): 读取工作区或绝对路径的文本文件。
+- write_file(path, content): 写入文件并创建目录。
+- open_local_app(app_path): 启动本地应用（仅系统级启动）。
+- click_screen(x,y): 屏幕坐标点击（pyautogui）。
+- dom_* 系列: dom_open, dom_query, dom_preview, dom_click, dom_fill, dom_eval, dom_status, click_element_by_id, scan_page_elements 等——优先使用 DOM API 而非键盘/鼠标模拟。
+'''
+
+
 
 class AgentTools:
-    """Agent 可调用的工具集包装器。
-
-    - 所有方法应返回字符串（Agent observation-friendly）
-    - 对于需要转发给 ComputerController 的操作，使用 _call_controller 统一处理
-    """
+    """将若干工具以方法形式暴露给 Agent 使用。可接受已有的 ComputerController 实例。"""
 
     def __init__(self, controller: Optional[ComputerController] = None, browser: Optional[WebSurfer] = None):
         self.controller = controller
+        # WebSurfer 使用 prefer_drission 与 timeout 参数；移除不存在的 headless 参数
         self.browser = browser or WebSurfer()
 
-    # ---------------- 基本辅助工具 ----------------
+    # ---------------- 网络搜索 ----------------
     def search(self, query: str, max_results: int = 5) -> str:
+        """使用百度静态抓取来返回简短的搜索结果摘要（国内可直连）。
+
+        返回值与原 ddg 相似：列表文本，每条包含标题、链接与简要描述。
+        如百度无结果，直接返回“未找到相关结果”（不回退到 Bing）。
+        """
+        logger.debug(f"search() called with query={query!r}, max_results={max_results}")
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                              '(KHTML, like Gecko) Chrome/115.0 Safari/537.36'
+            }
+            # 直接使用百度作为默认抓取目标（不再修改 mkt/Accept-Language）
             resp = requests.get('https://www.baidu.com/s', params={'wd': query}, headers=headers, timeout=8)
             resp.raise_for_status()
+
             soup = BeautifulSoup(resp.text, 'html.parser')
             items = []
             for i, div in enumerate(soup.select('div.result')[:max_results], start=1):
                 title_tag = div.find('h3') or div.find('a')
                 title = title_tag.get_text(strip=True) if title_tag else ''
+                href = ''
                 snippet_tag = div.find('div', class_='c-abstract') or div.find('p')
                 body = snippet_tag.get_text(strip=True) if snippet_tag else ''
-                items.append(f"{i}. {title}\n   {body}")
-            return "\n".join(items) if items else "🔍 未找到相关结果。"
-        except Exception as e:
-            return f"❌ 搜索错误: {e}"
+                items.append(f"{i}. {title} — {href}\n   {body}")
 
+            if not items:
+                logger.info(f"search() no results for query={query!r}")
+                return "🔍 未找到相关结果。"
+
+            result = "\n".join(items)
+            logger.debug(f"search() returning {len(items)} results for query={query!r}")
+            return result
+        except Exception as e:
+            logger.error(f"search() error for query={query!r}: {e}", exc_info=True)
+            return f"❌ 搜索错误: {str(e)}"
+
+    # ---------------- 浏览器 ----------------
     def browse(self, url: str) -> str:
+        """调用 WebSurfer.browse 并返回文本摘要（使用 requests + BeautifulSoup，适合国内环境）"""
+        logger.debug(f"browse() called url={url}")
         try:
             page = self.browser.browse(url)
             text = page.get('text') if isinstance(page, dict) else str(page)
             title = page.get('title', '') if isinstance(page, dict) else ''
             snippet = (text or '')[:400].replace('\n', ' ')
-            return f"🔗 {title} — {url}\n{snippet}{'...' if len(text or '')>400 else ''}"
+            logger.debug(f"browse() success url={url} title={title}")
+            return f"🔗 {title} — {url}\n{snippet}{'...' if len(text or '') > 400 else ''}"
         except Exception as e:
-            return f"❌ 浏览失败: {e}"
+            logger.error(f"browse() failed url={url}: {e}", exc_info=True)
+            return f"❌ 浏览失败: {str(e)}"
 
+    # ---------------- 文件操作 ----------------
     def read_file(self, path: str) -> str:
+        logger.debug(f"read_file() path={path}")
         try:
             if not os.path.exists(path):
+                logger.warning(f"read_file(): file not found: {path}")
                 return f"❌ 文件不存在: {path}"
             with open(path, 'r', encoding='utf-8') as f:
-                return f.read()
+                data = f.read()
+            logger.debug(f"read_file() success path={path} size={len(data)}")
+            return data
         except Exception as e:
-            return f"❌ 读取文件失败: {e}"
+            logger.error(f"read_file() error path={path}: {e}", exc_info=True)
+            return f"❌ 读取文件失败: {str(e)}"
 
     def write_file(self, path: str, content: str) -> str:
+        logger.debug(f"write_file() path={path} content_len={len(content) if content is not None else 0}")
         try:
-            d = os.path.dirname(path)
-            if d:
-                os.makedirs(d, exist_ok=True)
+            dirp = os.path.dirname(path)
+            if dirp:
+                os.makedirs(dirp, exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(content)
+            logger.info(f"write_file() wrote {path}")
             return f"✅ 已写入: {path}"
         except Exception as e:
-            return f"❌ 写入文件失败: {e}"
+            logger.error(f"write_file() failed path={path}: {e}", exc_info=True)
+            return f"❌ 写入文件失败: {str(e)}"
 
+    # ---------------- 电脑控制（包装现有 ComputerController） ----------------
     def open_local_app(self, app_path: str) -> str:
+        """通过 ComputerController 执行打开应用；若 controller 不可用，尝试直接调用 pyautogui / os 启动"""
+        logger.debug(f"open_local_app() app_path={app_path}")
         try:
             if self.controller:
-                return self._call_controller({'action': 'open_app', 'app_path': app_path}, tool='open_app')
+                payload = {'action': 'open_app', 'app_path': app_path}
+                logger.debug(f"open_local_app() delegating to ComputerController: {payload}")
+                res = self.controller._execute_action(payload)
+                logger.info(f"open_local_app() controller response: {res}")
+                return res
+            # 兜底：直接使用 os.startfile（仅 Windows）
             if os.name == 'nt':
                 os.startfile(app_path)
+                logger.info(f"open_local_app() launched directly: {app_path}")
                 return f"✅ 成功启动应用（直接）：{app_path}"
-            os.system(f'"{app_path}" &')
-            return f"✅ 成功尝试启动应用（直接）：{app_path}"
+            else:
+                os.system(f'"{app_path}" &')
+                logger.info(f"open_local_app() launched directly (non-windows): {app_path}")
+                return f"✅ 成功尝试启动应用（直接）：{app_path}"
         except Exception as e:
-            return f"❌ 启动应用失败: {e}"
+            logger.error(f"open_local_app() failed app_path={app_path}: {e}", exc_info=True)
+            return f"❌ 启动应用失败: {str(e)}"
 
     def click_screen(self, x: Optional[int] = None, y: Optional[int] = None, button: str = 'left') -> str:
+        """模拟鼠标点击（直接使用 pyautogui）"""
+        logger.debug(f"click_screen() x={x} y={y} button={button}")
         try:
             if x is None or y is None:
                 pyautogui.click(button=button)
             else:
                 pyautogui.click(x=x, y=y, button=button)
+            logger.info(f"click_screen() clicked ({x},{y}) button={button}")
             return f"✅ 点击屏幕: ({x},{y}) button={button}"
         except Exception as e:
-            return f"❌ 点击失败: {e}"
+            logger.error(f"click_screen() failed: {e}", exc_info=True)
+            return f"❌ 点击失败: {str(e)}"
 
-    # ---------------- 页面语义扫描 / id 点击（必须与 LLM 输出名称一致） ----------------
-    def scan_page_elements(self) -> str:
-        if not self.controller:
-            return "❌ 未提供 ComputerController，无法执行 scan_page_elements"
-        # 优先通过 action_executor（少一层封装）
-        try:
-            if hasattr(self.controller, 'action_executor') and hasattr(self.controller.action_executor, 'dom_scan'):
-                return self.controller.action_executor.dom_scan()
-        except Exception:
-            pass
-        return self._call_controller({'action': 'dom_scan'}, tool='dom_scan')
-
-    def click_element_by_id(self, id: int) -> str:
-        if not self.controller:
-            return "❌ 未提供 ComputerController，无法执行 click_element_by_id"
-        try:
-            if hasattr(self.controller, 'action_executor') and hasattr(self.controller.action_executor, 'dom_click_id'):
-                return self.controller.action_executor.dom_click_id(int(id))
-        except Exception:
-            pass
-        return self._call_controller({'action': 'dom_click_id', 'id': int(id)}, tool='dom_click_id')
-
-    # ---------------- Controller helpers ----------------
-    def _format_controller_result(self, tool: str, res: Any, args: Any = None) -> str:
-        try:
-            if isinstance(res, dict):
-                if res.get('ok') is True:
-                    if 'text' in res and isinstance(res['text'], str):
-                        return res['text']
-                    if 'result' in res:
-                        return res['result'] if isinstance(res['result'], str) else str(res['result'])
-                    return '✅ 操作成功'
-                err = res.get('error') or res.get('detail') or 'unknown error'
-                base = f"❌ {tool} 失败: {err}"
-                if err == 'no_page':
-                    base += '；可能未调用 dom_open 或页面尚未加载完成，请先调用 dom_open 并重试。'
-                if err == 'no_match':
-                    base += '；未找到匹配元素，请先调用 scan_page_elements 检查元素编号或使用更宽泛的 selector。'
-                return base
-            if not isinstance(res, str):
-                return str(res)
-            s = res.strip()
-            if not s.startswith('❌'):
-                return s
-            low = s.lower()
-            if 'no_page' in low:
-                return s + ' 建议：先调用 dom_open 打开页面再执行 DOM 操作。'
-            if 'no_match' in low:
-                return s + ' 建议：调用 scan_page_elements 检查可交互元素并使用对应 id，或尝试更宽泛的 selector。'
-            if 'timeout' in low:
-                return s + ' 建议：增加超时时间或检查页面是否需要更多时间加载。'
-            return s + ' 建议：检查参数是否正确，或重试以获取更多信息。'
-        except Exception:
-            return str(res)
-
-    def _call_controller(self, payload: dict, tool: str | None = None, args: Any = None) -> str:
-        if not self.controller:
-            return f"❌ 未提供 ComputerController，无法执行 {tool or payload.get('action')}"
-        try:
-            raw = self.controller._execute_action(payload)
-            return self._format_controller_result(tool or payload.get('action'), raw, args)
-        except Exception as e:
-            return f"❌ 控制器调用异常: {e}"
-
-    # ---------------- Execute 调度（对 LLM 友好） ----------------
+    # ---------------- 通用执行接口 ----------------
     def execute(self, tool: str, args: Any) -> str:
-        """将 LLM 提供的 tool 名映射到具体实现；支持 camelCase / snake_case / kebab-case。"""
+        """高层调度：将 tool 名和 args 映射到具体方法并返回字符串结果
+
+        - 详细日志：记录入参、派发的 payload、Controller 返回及异常
+        """
+        logger.debug(f"execute() called tool={tool!r} args={args!r}")
         try:
-            def _normalize(name: str) -> str:
-                s = str(name or '').strip()
-                s = s.replace('-', '_')
-                s = re.sub(r'(.)([A-Z][a-z]+)', r'\1_\2', s)
-                s = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s)
-                return s.lower()
-
-            tool = _normalize(tool)
-
-            # 基本工具
+            tool = (tool or '').lower()
+            # 基本工具派发（各方法内部已记录详细日志）
             if tool == 'search':
-                q = args if isinstance(args, str) else (args or {}).get('query', '')
+                q = args if isinstance(args, str) else args.get('query', '')
                 return self.search(q)
             if tool == 'browse':
-                url = args if isinstance(args, str) else (args or {}).get('url', '')
+                url = args if isinstance(args, str) else args.get('url', '')
                 return self.browse(url)
             if tool == 'read_file':
-                path = args if isinstance(args, str) else (args or {}).get('path', '')
+                path = args if isinstance(args, str) else args.get('path', '')
                 return self.read_file(path)
             if tool == 'write_file':
                 if isinstance(args, str):
+                    logger.warning("write_file called with string arg (invalid)")
                     return "❌ write_file 需要提供 path 与 content 的对象格式"
-                path = (args or {}).get('path')
-                content = (args or {}).get('content', '')
+                path = args.get('path')
+                content = args.get('content', '')
                 return self.write_file(path, content)
             if tool == 'open_local_app':
-                path = args if isinstance(args, str) else (args or {}).get('app_path')
+                path = args if isinstance(args, str) else args.get('app_path')
                 return self.open_local_app(path)
+
             if tool == 'click_screen':
                 if isinstance(args, dict):
                     return self.click_screen(args.get('x'), args.get('y'), args.get('button', 'left'))
                 return self.click_screen()
 
-            # 键盘输入（优先直接调用 action_executor）
-            if tool == 'type_text':
-                if not self.controller:
-                    return "❌ 未提供 ComputerController，无法执行 type_text"
-                text = args if isinstance(args, str) else (args or {}).get('text', '')
-                if not text:
-                    return "❌ type_text 需要提供 text 字符串参数"
+            # ------------- DOM（替代 OCR）工具（委派到 modules.agent.dom_tools） -------------
+            if tool in ('dom_open','dom_navigate','dom_status','dom_fill','dom_eval','dom_query','dom_preview','dom_click','dom_open_and_click'):
+                from .dom_tools import (
+                    dom_open as _dom_open, dom_navigate as _dom_navigate, dom_status as _dom_status,
+                    dom_fill as _dom_fill, dom_eval as _dom_eval, dom_query as _dom_query,
+                    dom_preview as _dom_preview, dom_click as _dom_click, dom_open_and_click as _dom_open_and_click,
+                )
                 try:
-                    if hasattr(self.controller, 'action_executor') and hasattr(self.controller.action_executor, 'type_text'):
-                        return self.controller.action_executor.type_text(text)
-                except Exception:
-                    pass
-                return self._call_controller({'action': 'type_text', 'text': text}, tool='type_text', args=args)
+                    mapper = {
+                        'dom_open': _dom_open,
+                        'dom_navigate': _dom_navigate,
+                        'dom_status': _dom_status,
+                        'dom_fill': _dom_fill,
+                        'dom_eval': _dom_eval,
+                        'dom_query': _dom_query,
+                        'dom_preview': _dom_preview,
+                        'dom_click': _dom_click,
+                        'dom_open_and_click': _dom_open_and_click,
+                    }
+                    return mapper[tool](self.controller, args)
+                except Exception as e:
+                    logger.exception(f"DOM 工具执行异常: {e}")
+                    return f"❌ DOM 工具异常: {e}"
 
-            if tool == 'press_key':
-                if not self.controller:
-                    return "❌ 未提供 ComputerController，无法执行 press_key"
-                if isinstance(args, str):
-                    key = args
-                else:
-                    key = (args or {}).get('key') or (args or {}).get('keys') or (args or {}).get('combo') or (args or {}).get('combination')
-                if not key:
-                    return "❌ press_key 需要提供 key/keys 参数"
-                try:
-                    if hasattr(self.controller, 'action_executor') and hasattr(self.controller.action_executor, 'press_key'):
-                        return self.controller.action_executor.press_key(key)
-                except Exception:
-                    pass
-                return self._call_controller({'action': 'press_key', 'key': key}, tool='press_key')
-
-            # DOM 专用工具（与 ComputerController/ActionExecutor 协作）
-            if tool == 'dom_open':
-                if not self.controller:
-                    return "❌ 未提供 ComputerController，无法执行 dom_open"
-                if isinstance(args, str):
-                    url = args
-                    browser_type = None
-                    headless = False
-                    browser_path = None
-                else:
-                    url = (args or {}).get('url')
-                    browser_type = (args or {}).get('browser_type')
-                    headless = bool((args or {}).get('headless', False))
-                    browser_path = (args or {}).get('browser_path')
-                return self._call_controller({'action': 'dom_open', 'url': url, 'browser_type': browser_type, 'headless': headless, 'browser_path': browser_path}, tool='dom_open')
-
-            if tool == 'scan_page_elements':
-                return self.scan_page_elements()
-
-            if tool == 'click_element_by_id':
-                sid = args if isinstance(args, (str, int)) else (args or {}).get('id')
-                if sid is None:
-                    return "❌ click_element_by_id 需要提供 id 参数"
-                return self.click_element_by_id(int(sid))
-
-            if tool == 'dom_navigate':
-                url = args if isinstance(args, str) else (args or {}).get('url')
-                if not url:
-                    return "❌ dom_navigate 需要提供 url 参数"
-                return self._call_controller({'action': 'dom_navigate', 'url': url}, tool='dom_navigate')
-
-            if tool == 'dom_status':
-                return self._call_controller({'action': 'dom_status'}, tool='dom_status')
-
-            if tool == 'dom_fill':
-                if isinstance(args, str):
-                    return "❌ dom_fill 需要提供对象格式：{selector, value}"
-                selector = (args or {}).get('selector')
-                value = (args or {}).get('value', '')
-                by = (args or {}).get('by', 'css')
-                if not selector:
-                    return "❌ dom_fill 需要提供 selector 参数"
-                return self._call_controller({'action': 'dom_fill', 'selector': selector, 'value': value, 'by': by}, tool='dom_fill')
-
-            if tool == 'dom_eval':
-                expr = args if isinstance(args, str) else (args or {}).get('expression')
-                if not expr:
-                    return "❌ dom_eval 需要提供 expression/字符串参数"
-                return self._call_controller({'action': 'dom_eval', 'expression': expr}, tool='dom_eval')
-
-            if tool == 'dom_query':
-                if isinstance(args, str):
-                    selector = args
-                    by = 'css'
-                    multiple = False
-                else:
-                    selector = (args or {}).get('selector', 'body')
-                    by = (args or {}).get('by', 'css')
-                    multiple = bool((args or {}).get('multiple', False))
-                return self._call_controller({'action': 'dom_query', 'selector': selector, 'by': by, 'multiple': multiple}, tool='dom_query')
-
-            if tool == 'dom_preview':
-                if isinstance(args, str):
-                    selector = args
-                    by = 'css'
-                    max_results = 6
-                else:
-                    selector = (args or {}).get('selector')
-                    by = (args or {}).get('by', 'css')
-                    max_results = int((args or {}).get('max_results', 6))
-                if not selector:
-                    return "❌ dom_preview 需要提供 selector 参数"
-                return self._call_controller({'action': 'dom_preview', 'selector': selector, 'by': by, 'max_results': max_results}, tool='dom_preview')
-
-            if tool == 'dom_click':
-                if isinstance(args, str):
-                    selector = args
-                    by = 'css'
-                    index = None
-                    timeout = 5
-                else:
-                    selector = (args or {}).get('selector')
-                    by = (args or {}).get('by', 'css')
-                    index = (args or {}).get('index', None)
-                    timeout = int((args or {}).get('timeout', 5))
-                if not selector:
-                    return "❌ dom_click 需要提供 selector 参数"
-                payload = {'action': 'dom_click', 'selector': selector, 'by': by, 'timeout': timeout}
-                if index is not None:
-                    payload['index'] = int(index)
-                return self._call_controller(payload, tool='dom_click', args=args)
-
-            if tool == 'dom_open_and_click':
-                if isinstance(args, str):
-                    return "❌ dom_open_and_click 需要提供对象格式：{url, selector, timeout?}"
-                selector = (args or {}).get('selector')
-                url = (args or {}).get('url')
-                by = (args or {}).get('by', 'css')
-                timeout = int((args or {}).get('timeout', 15))
-                index = (args or {}).get('index', None)
-                if not selector:
-                    return "❌ dom_open_and_click 需要提供 selector 参数"
-                payload = {'action': 'dom_open_and_click', 'url': url, 'selector': selector, 'by': by, 'timeout': timeout}
-                if index is not None:
-                    payload['index'] = int(index)
-                return self._call_controller(payload, tool='dom_open_and_click')
-
-            if tool == 'dom_click_text':
-                if isinstance(args, str):
-                    return "❌ dom_click_text 需要提供对象格式：{selector, text, timeout?}"
-                selector = (args or {}).get('selector')
-                text = (args or {}).get('text') or (args or {}).get('keyword')
-                timeout = int((args or {}).get('timeout', 10))
-                if not selector or not text:
-                    return "❌ dom_click_text 需要提供 selector 和 text 参数"
-                return self._call_controller({'action': 'dom_click_text', 'selector': selector, 'text': text, 'timeout': timeout}, tool='dom_click_text')
-
-            if tool.startswith('dom_'):
-                payload = {'action': tool}
-                if isinstance(args, dict):
-                    payload.update(args)
-                elif args is not None:
-                    payload['value'] = args
-                return self._call_controller(payload, tool=tool, args=args)
 
             if tool in ('final_answer', 'final'):
+                # Agent 自身不再调用此工具；上层将识别 tool 为 final_answer 并结束循环
+                logger.debug(f"execute() final/answer called; returning args type={type(args)}")
                 return str(args)
 
+            logger.warning(f"execute() unknown tool: {tool}")
             return f"❌ 未知工具: {tool}"
         except Exception as e:
-            return f"❌ 工具执行异常: {e}"
-
+            logger.exception(f"execute() exception for tool={tool}: {e}")
+            return f"❌ 工具执行异常: {str(e)}"

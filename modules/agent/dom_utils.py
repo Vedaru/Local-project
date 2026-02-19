@@ -1,7 +1,6 @@
-"""dom_utils.py
+"""dom_utils — URL 规范化与 selector 候选生成（从 controller/dom_utils 迁移）
 
-帮助函数：URL 规范化与 dom_click 候选 selector 生成。
-将这些辅助逻辑提取到独立模块以缩短 `executor.py` 的体积。
+这些工具函数被用于 DOM 操作的规范化与回退候选生成，便于将 DOM 逻辑从大文件中拆分出来。
 """
 from urllib.parse import urlparse, parse_qs, urlencode
 from typing import List, Optional

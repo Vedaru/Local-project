@@ -1,6 +1,6 @@
-from modules.controller.executor import ActionExecutor
-from modules.controller.core import ComputerController
-from modules.controller.safety import SafetyGuard
+from modules.agent.executor import ActionExecutor
+from modules.agent.controller import ComputerController
+from modules.agent.safety import SafetyGuard
 
 ae = ActionExecutor(failsafe=False)
 cc = ComputerController(SafetyGuard({}), ae)

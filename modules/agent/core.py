@@ -9,9 +9,12 @@ ManusAgent — 基于 ReAct 的简单智能体主循环实现
 
 注意：该模块为同步实现，适合在主线程或阻塞 worker 中运行。
 """
-from typing import Optional, List
+from typing import Any, Optional, List
 import re
 import json
+from ..logging_config import get_logger
+
+logger = get_logger('ManusAgent')
 
 
 class ManusAgent:
@@ -28,6 +31,7 @@ class ManusAgent:
         self.model_name = model_name
         self.system_prompt = (system_prompt or "")
         self.max_iterations = max_iterations
+        logger.info(f"ManusAgent initialized (model={model_name}, max_iterations={max_iterations}, tools={getattr(tools, '__class__', tools)})")
 
         # 为 Agent 专门准备的 system prompt 片段（强制 LLM 严格只输出 JSON）
         self.agent_system_prompt = (
@@ -35,11 +39,13 @@ class ManusAgent:
             "【强制规则】当你作为 Agent 响应时，**必须且只能输出一个 JSON 对象**，不得包含任何额外文字、注释、解释、或 Markdown/代码围栏。\n"
             "输出必须严格遵循下列 JSON 模式（字段顺序不限）：\n"
             "{" + '"thought": "<解释你的下一步思路>", "tool": "<工具名>", "args": <字符串或对象>' + "}\n"
-            "可用工具（严格）：search, browse, read_file, write_file, open_local_app, click_screen, dom_open, dom_query, dom_preview, dom_click, dom_open_and_click, dom_fill, dom_eval, dom_status, final_answer。\n"            "重要：**绝对不要**在 thought 或 args 中提及或使用 Google 搜索（google.com / google.*）。如需检索，请使用 `search` 工具或 `https://www.baidu.com/s?wd=...`（默认使用百度）。\n"            "此外：**不要使用或生成 `open_browser` 指令**——该指令已从系统移除；遇到网页交互请使用 `dom_open`（Playwright）。\n"            "重要规则：在未收到 `scan_page_elements` 或其他 DOM 工具的返回结果之前，**禁止凭空编造或引用页面元素 ID/selector/文本**。你必须先调用 `scan_page_elements` 来获取页面的语义元素映射，并仅使用返回的 `id` 或 selector 来定位元素；若无法获得元素，请返回合适的工具调用而不是随意编造元素信息。\n"            "示例（严格，输出中不得有其他任何字符）：\n"
+            "可用工具（严格）：search, browse, read_file, write_file, open_local_app, click_screen, dom_open, dom_query, dom_preview, dom_click, dom_open_and_click, dom_fill, dom_eval, dom_status, final_answer。\n"            "重要：**绝对不要**在 thought 或 args 中提及或使用 Google 搜索（google.com / google.*）。如需检索，请使用 `search` 工具或 `https://www.baidu.com/s?wd=...`（默认使用百度）。\n"            "此外：**不要使用或生成 `open_browser` 指令**——该指令已从系统移除；遇到网页交互请使用 `dom_open`（Playwright）。\n"            "示例（严格，输出中不得有其他任何字符）：\n"
             "{\"thought\":\"我要先搜索相关新闻\",\"tool\":\"search\",\"args\":\"DeepSeek 新闻\"}\n"
             "完成任务时请使用 tool=\"final_answer\" 并在 args 中放最终结果（字符串或 JSON 对象）。\n"
             "如果你无法完成某步，请仍然返回符合格式的 JSON（例如使用 tool=\"search\" 或返回空的 args），不要返回纯文本解释。"
         )
+        # 迁移的动作执行准则（也保存在 agent_system_prompt 中）
+        self.agent_system_prompt += "\n动作执行准则：如果你在回复中表示要执行本地或浏览器操作，回复的最后一行必须包含对应的 [ACTION] 或 Agent JSON 指令（否则不要声明动作已执行）。"
 
     def _clean_markdown(self, text: str) -> str:
         """清洗 LLM 输出中的 Markdown 包装符号，保留代码块内的原始内容。
@@ -200,10 +206,12 @@ class ManusAgent:
 
     def run_task(self, task_description: str) -> str:
         """执行给定任务（同步、阻塞）并返回最终结果字符串。"""
+        logger.info(f"ManusAgent.run_task called — task_description={task_description[:200]}")
         history: List[str] = []
         system_prompt = (self.system_prompt + "\n\n" + self.agent_system_prompt).strip()
 
         for step in range(1, self.max_iterations + 1):
+            logger.debug(f"Agent iteration {step}/{self.max_iterations} — task='{task_description[:80]}'")
             # 构造 prompt：包含任务、历史与当前要求
             prompt_parts = [f"任务: {task_description}", "\n历史记录（最近动作 -> 观察）："]
             if history:
@@ -213,39 +221,50 @@ class ManusAgent:
             )
             prompt = '\n'.join(prompt_parts)
 
+            logger.debug(f"Sending prompt to LLM (truncated): {prompt[:800].replace('\n','\\n')}")
             raw = self.llm_fn(system_prompt, self.model_name, prompt)
+            logger.debug(f"LLM raw response (len={len(raw) if raw else 0}): { (raw or '')[:1600].replace('\n','\\n') }")
             if not raw:
+                logger.error("LLM returned empty response")
                 return "❌ LLM 未返回内容"
 
             parsed = self._extract_json(raw)
+            logger.debug(f"Parsed JSON from LLM: {parsed}")
             if not parsed:
-                # 如果首次解析失败，允许有限次数的格式修正尝试：提示 LLM 只输出纯 JSON
-                correction_attempts = 2
-                corrected_raw = raw
-                for attempt in range(correction_attempts):
-                    correction_prompt = (
-                        "上一条回复不是一个有效的纯 JSON 对象（请不要包含任何额外文本或 Markdown）。\n"
-                        "请**仅**返回一个严格的 JSON 对象，格式为：{\"thought\":\"...\",\"tool\":\"<tool>\",\"args\":<string|object>}。\n"
-                        "下面是模型的原始输出，请从中直接返回合法 JSON：\n" + corrected_raw
-                    )
-                    corrected_raw = self.llm_fn(system_prompt, self.model_name, correction_prompt)
-                    if not corrected_raw:
-                        break
-                    parsed = self._extract_json(corrected_raw)
-                    if parsed:
-                        raw = corrected_raw
-                        break
+                    logger.warning("首次解析 LLM 输出为 JSON 失败，尝试进行有限次格式修正。")
+                    # 如果首次解析失败，允许有限次数的格式修正尝试：提示 LLM 只输出纯 JSON
+                    correction_attempts = 2
+                    corrected_raw = raw
+                    for attempt in range(correction_attempts):
+                        logger.debug(f"格式修正尝试 #{attempt+1}")
+                        correction_prompt = (
+                            "上一条回复不是一个有效的纯 JSON 对象（请不要包含任何额外文本或 Markdown）。\n"
+                            "请**仅**返回一个严格的 JSON 对象，格式为：{\"thought\":\"...\",\"tool\":\"<tool>\",\"args\":<string|object>}。\n"
+                            "下面是模型的原始输出，请从中直接返回合法 JSON：\n" + corrected_raw
+                        )
+                        corrected_raw = self.llm_fn(system_prompt, self.model_name, correction_prompt)
+                        logger.debug(f"修正后原始返回 (truncated): {(corrected_raw or '')[:800].replace('\n','\\n')}")
+                        if not corrected_raw:
+                            logger.error("修正尝试未收到 LLM 响应")
+                            break
+                        parsed = self._extract_json(corrected_raw)
+                        if parsed:
+                            raw = corrected_raw
+                            logger.info("格式修正成功：已从 LLM 响应中提取到 JSON")
+                            break
 
-                if not parsed:
-                    # 最终失败：记录原始响应并返回错误
-                    return f"❌ LLM 未返回可解析 JSON（尝试修正失败），原始内容：{raw}"
-
+                    if not parsed:
+                        logger.error(f"LLM 输出无法解析为 JSON，原始内容(截断): { (raw or '')[:800].replace('\n','\\n') }")
+                        # 最终失败：记录原始响应并返回错误
+                        return f"❌ LLM 未返回可解析 JSON（尝试修正失败），原始内容：{raw}"
             thought = parsed.get('thought', '')
             tool = (parsed.get('tool') or '').strip()
             args = parsed.get('args')
 
             # 兼容回退：若模型仍然使用已移除的 `open_browser`，自动改写为 `dom_open`（保留 url 参数）
+            logger.debug(f"LLM produced tool='{tool}' with args={args}")
             if tool == 'open_browser':
+                logger.info("LLM 使用已弃用的 'open_browser'，自动改写为 'dom_open' 并记录在 history。")
                 tool = 'dom_open'
                 # 保持 args 的形式（字符串或对象），并在 history 中记录改写
                 history.append(f"NOTE: 将已弃用的 open_browser 自动改写为 dom_open，args={args}")
@@ -279,11 +298,13 @@ class ManusAgent:
                         thought = (thought or '').replace('Google', 'Baidu').replace('google', 'baidu')
 
             # 记录思考
+            logger.debug(f"LLM thought='{thought[:200]}' tool='{tool}' args={str(args)[:400]}")
             history.append(f"Thought: {thought} | Action: {tool} | Args: {args}")
 
             # 处理终结条件
             if tool in ('final_answer', 'final', 'done'):
                 # 直接返回 args（如果是对象则转换为 JSON 字符串，字符串直接返回）
+                logger.info(f"Agent 返回 final_answer，args 类型={type(args)}")
                 if isinstance(args, str):
                     return args
                 try:
@@ -292,20 +313,31 @@ class ManusAgent:
                     return str(args)
 
             # 否则调用工具执行 action
-            observation = self.tools.execute(tool, args)
+            logger.debug(f"Calling tool: {tool} with args={args}")
+            try:
+                observation = self.tools.execute(tool, args)
+            except Exception as e:
+                logger.error(f"工具执行抛出异常: {e}", exc_info=True)
+                return f"❌ 工具执行异常：{e}"
+
+            logger.debug(f"Tool '{tool}' returned observation (type={type(observation)}): {str(observation)[:800]}")
 
             # 如果工具返回明显的失败/网络错误或空响应，立即作为最终结果返回，避免 Agent 无输出
             if isinstance(observation, str):
                 lower_obs = observation.lower()
                 if observation.startswith('❌') or observation.startswith('⚠️') or observation.startswith('🔍') \
                    or '无法获取' in observation or '未提供' in observation or 'connection' in lower_obs:
+                    logger.error(f"工具执行失败或网络不可用，停止 Agent：{observation}")
                     return f"❌ 工具执行失败或网络不可用：{observation}"
                 if observation.strip() == '':
+                    logger.warning(f"工具返回空响应：{tool}")
                     return f"⚠️ 工具返回空响应：{tool}"
 
             # 记录观察结果并继续下轮
+            logger.debug(f"Appending observation to history: {str(observation)[:400]}")
             history.append(f"Observation: {observation}")
 
         # 达到最大迭代次数仍未结束
         last_obs = history[-1] if history else "无观察结果"
+        logger.warning(f"达到最大迭代次数（{self.max_iterations}），返回最近观察：{last_obs}")
         return f"⚠️ 达到最大迭代次数（{self.max_iterations}），最近观察：{last_obs}"

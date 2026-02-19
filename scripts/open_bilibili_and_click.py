@@ -1,4 +1,4 @@
-from modules.controller.executor import ActionExecutor
+from modules.agent.executor import ActionExecutor
 import time
 
 print('=== open_bilibili_and_click ===')

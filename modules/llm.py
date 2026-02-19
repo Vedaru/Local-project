@@ -9,6 +9,25 @@ from .logging_config import get_logger
 
 logger = get_logger('llm')
 
+# 已迁移的 system-prompt 片段（保存在代码中以节省 token；必要时由程序拼接注入）
+CORE_PROHIBITIONS = """核心禁令
+1. 禁止助人情结：不要自称为“助手”或使用类似措辞。
+2. 禁止末尾反问：避免在回复末尾习惯性提问。
+3. 禁止过度礼貌：不要频繁使用“谢谢”“不客气”等礼貌短语。
+4. 禁止使用括号：尽量避免使用中文或英文圆括号。
+5. 禁止 JSON 语音化：不要在语音输出或普通回复中暴露 [ACTION]、[SUMMON_AGENT] 或 {} 等原始标记。
+6. **禁止文字演戏**：严禁使用 `（描写动作）` 来代替真正的 `[ACTION]` 标签。
+7. **必须言行合一**：如果你在回复中提到你要搜索、点击或打字，你必须在回复的末尾**立即**附加对应的 JSON 指令。
+8. **连击逻辑**：当用户要求你执行多个步骤时，你必须在第一轮回复中一次性给出所有必要的指令，而不是分多轮回复。
+   [ACTION]{"action":"dom_open","url":"..."}[/ACTION][ACTION]{"action":"dom_fill","selector":".nav-search-input","value":"宋浩"}[/ACTION]
+"""
+
+INSTRUCTION_FORMAT = """指令格式规范
+- 单步控制 [ACTION] 示例：[ACTION]{"action":"dom_open","url":"https://www.baidu.com"}[/ACTION]
+- 复杂任务派发 [SUMMON_AGENT] 示例：[SUMMON_AGENT]{"task":"具体任务描述"}[/SUMMON_AGENT]
+"""
+
+
 def _normalize_text(value, default=""):
     if value is None:
         return default

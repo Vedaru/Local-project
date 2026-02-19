@@ -96,6 +96,9 @@ def get_logger(name: str = 'ProjectLocal') -> logging.Logger:
         child_logger = logging.getLogger(f'ProjectLocal.{name}')
         # 关键：不设置 handlers，让子 logger 继承父 logger 的 handlers
         child_logger.propagate = True
+        # 如果是 ManusAgent，强制把子 logger 的级别设置为 DEBUG，保证所有日志（包括 DEBUG）都写入文件
+        if name.lower() == 'manusagent' or name.lower().startswith('manusagent'):
+            child_logger.setLevel(logging.DEBUG)
         return child_logger
     return _logger
 

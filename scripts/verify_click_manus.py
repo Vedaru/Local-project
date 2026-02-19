@@ -1,4 +1,4 @@
-from modules.controller.executor import ActionExecutor
+from modules.agent.executor import ActionExecutor
 
 if __name__ == '__main__':
     ae = ActionExecutor()
