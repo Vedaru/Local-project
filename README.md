@@ -87,6 +87,44 @@
   - `notes_path`: 笔记保存目录
   - `safety_enabled`: 是否启用安全检查
 
+### 日志（重构说明）
+
+日志系统已重构为统一、模块化、结构化输出：
+
+- 存放位置：`data/logs/project_local.log`（每日轮转，保留多日历史）。
+- 文件格式：JSON（便于搜索/告警/上报）。
+- 控制台：人类可读的彩色输出（默认 INFO 及以上）。
+- 模块命名空间：每个模块使用 `ProjectLocal.<ModuleName>`（例如 `ProjectLocal.Ear`、`ProjectLocal.AgentTools`），方便按模块过滤和排查。
+- 上下文支持：支持为当前执行上下文注入 `trace_id` / `request_id` / `user_id` 等字段，自动写入到结构化日志中。
+
+如何使用（示例）：
+
+- 获取模块 logger：
+
+```py
+from modules.logging_config import get_logger
+logger = get_logger('Ear')          # -> ProjectLocal.Ear
+logger.info('started')
+```
+
+- 为当前任务注入上下文（便于在日志中定位相关调用）：
+
+```py
+from modules.logging_config import set_context, clear_context
+set_context(trace_id='abc123', user_id=42)
+# 执行操作（日志将包含 trace_id）
+clear_context()
+```
+
+- 修改日志级别 / 配置：
+  - 在需要的启动点调用 `modules.logging_config.setup_logging(level=logging.DEBUG)`。
+
+- 日志定位建议：
+  - 使用 `jq` / ELK / Splunk 等工具按 `logger` 字段或 `context.trace_id` 聚合查询。
+
+此次重构目标：模块分明、结构化、长期可搜索与可监控 — 有问题请查看 `data/logs/project_local.log` 或在控制台中查看实时输出。
+
+
 ## 使用方法
 
 启动程序后，可以通过文本输入或语音输入与AI对话。AI将生成智能响应并可选输出语音。
@@ -177,11 +215,6 @@ Local-project/
 │   │   ├── webengine.py       # WebEngine 集成
 │   │   └── widget.py          # 主窗口组件
 │   ├── config.py              # 配置加载
-│   ├── controller/            # 电脑控制模块
-│   │   ├── __init__.py
-│   │   ├── core.py            # 控制核心
-│   │   ├── executor.py        # 动作执行器
-│   │   └── safety.py          # 安全守卫
 │   ├── ear.py                 # 语音识别模块
 │   ├── llm.py                 # LLM 接口
 │   ├── logging_config.py      # 日志配置

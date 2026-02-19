@@ -171,6 +171,56 @@ class PlaywrightRunner:
                     detail = f"handles_click_error: {e_click}; locator_force_error: {e_force}; js_error: {e_js}"
                     return {'ok': False, 'error': 'click_error', 'detail': detail}
 
+    async def _fill(self, selector: str, value: str, by: str = 'css'):
+        """Fill input element identified by selector (supports css/xpath)."""
+        if not self._page:
+            return {'ok': False, 'error': 'no_page'}
+        sel = selector if by == 'css' else f'xpath={selector}'
+        try:
+            await self._page.fill(sel, value)
+            return {'ok': True}
+        except Exception:
+            try:
+                # try locator fallback
+                await self._page.locator(sel).first.fill(value)
+                return {'ok': True}
+            except Exception:
+                try:
+                    # final fallback: set value via JS
+                    js_sel = json.dumps(selector)
+                    if by == 'css':
+                        js = (
+                            f"(function(){{ const el = document.querySelector({js_sel}); if(!el) return false; el.value = {json.dumps(value)}; el.dispatchEvent(new Event('input', {str({'bubbles': True}).lower()})); return true; }})()"
+                        )
+                    else:
+                        js = (
+                            f"(function(){{ var res = document.evaluate({js_sel}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null); var el = res && res.singleNodeValue; if(!el) return false; el.value = {json.dumps(value)}; el.dispatchEvent(new Event('input', {str({'bubbles': True}).lower()})); return true; }})()"
+                        )
+                    ok = await self._page.evaluate(js)
+                    if ok:
+                        return {'ok': True}
+                    return {'ok': False, 'error': 'fill_js_failed'}
+                except Exception as e_js:
+                    return {'ok': False, 'error': 'fill_error', 'detail': str(e_js)}
+
+    async def _eval(self, expression: str):
+        """Evaluate a JS expression in page context and return standardized result dict."""
+        if not self._page:
+            return {'ok': False, 'error': 'no_page'}
+        try:
+            # Playwright accepts raw JS expressions / function bodies — delegate directly.
+            res = await self._page.evaluate(expression)
+            return {'ok': True, 'result': res}
+        except Exception as e:
+            return {'ok': False, 'error': 'evaluate_error', 'detail': str(e)}
+
+    async def _status(self):
+        """Return simple runner/page status used by `dom_status()`."""
+        return {
+            'has_page': bool(self._page),
+            'current_url': (self._page.url if self._page else None)
+        }
+
     # --- sync wrappers exposed to caller thread ---
     def open(self, bt: str, url: str | None, headless: bool, executable_path: str | None):
         return self._run(self._open(bt, url, headless, executable_path))

@@ -5,7 +5,7 @@ import json
 from typing import List, Dict, Set, Tuple
 
 from ..analyzers import TextAnalyzer
-from ..logger import get_logger
+from ...logging_config import get_logger
 from ..config import PREFERENCE_CATEGORIES
 from .constants import ENTITY_CONFLICT_THRESHOLD, SAME_CATEGORY_THRESHOLD
 from .models import ConflictCandidate
@@ -13,7 +13,7 @@ from .locator import EntityLocator
 from .detector import ConflictDetector
 from .utils import extract_user_input
 
-logger = get_logger()
+logger = get_logger('Memory.Conflict.Resolver')
 
 
 class ConflictResolver:

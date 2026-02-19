@@ -14,7 +14,7 @@ import os
 import time
 import wave
 import re
-import logging
+from .logging_config import get_logger
 
 import numpy as np
 try:
@@ -39,8 +39,8 @@ from faster_whisper import WhisperModel
 # 检查 CUDA 可用性
 CUDA_AVAILABLE = torch.cuda.is_available()
 
-# 获取 logger（自动配置好的）
-logger = logging.getLogger('ProjectLocal.Ear')
+# 获取统一的模块化 logger
+logger = get_logger('Ear')
 
 
 class Ear:

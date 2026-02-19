@@ -5,11 +5,12 @@ import time
 from collections import deque
 
 from .config import SHORT_TERM_CAPACITY
-from .logger import get_logger, get_log_path, get_log_dir
+from ..logging_config import get_logger
+from .logger import get_log_path, get_log_dir
 from .storage import MemoryStorage
 from .retrieval import MemoryRetriever
 
-logger = get_logger()
+logger = get_logger('Memory.Core')
 
 
 class HumanLikeMemory:

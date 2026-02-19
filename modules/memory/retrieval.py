@@ -6,11 +6,11 @@ from concurrent.futures import as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 from .config import SIMILARITY_THRESHOLD, PREFERENCE_PATTERNS
-from .logger import get_logger
+from ..logging_config import get_logger
 from .analyzers import TextAnalyzer
 from .conflict import ConflictDetector
 
-logger = get_logger()
+logger = get_logger('Memory.Retriever')
 
 
 class MemoryRetriever:

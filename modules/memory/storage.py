@@ -12,11 +12,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ..config import data_dir
 from .config import PREFERENCE_PATTERNS
-from .logger import get_logger, get_log_path
+from ..logging_config import get_logger
+from .logger import get_log_path
 from .analyzers import TextAnalyzer
 from .conflict import ConflictResolver, ConflictDetector, extract_user_input
 
-logger = get_logger()
+logger = get_logger('Memory.Storage')
 
 
 class MemoryStorage:

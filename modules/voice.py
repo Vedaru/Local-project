@@ -24,6 +24,15 @@ class VoiceManager:
         self.audio_queue = queue.Queue()
         self.session = requests.Session()
 
+        # 验证参考音频是否存在 —— GPT-SoVITS 要求必须提供 `ref_audio_path`，若文件缺失会导致 400 错误。
+        self._ref_audio_missing = False
+        try:
+            if not self.ref_audio or not os.path.exists(self.ref_audio):
+                logger.warning(f"TTS reference audio not found: {self.ref_audio!r}. TTS requests will fail with 400 until this is fixed.")
+                self._ref_audio_missing = True
+        except Exception:
+            self._ref_audio_missing = True
+
         # 低延迟音频配置
         self.sample_rate = 32000
         self.chunk_size = 256  # 更小的chunk降低延迟
@@ -83,13 +92,24 @@ class VoiceManager:
 
             # 收集所有音频数据
             audio_data = b''
+            if self._ref_audio_missing:
+                logger.error(f"TTS aborted: reference audio missing ({self.ref_audio}). Place the file or update `REF_AUDIO` in config.")
+                return False
+
             with self.session.post(
                 f"{self.sovits_url}/tts",
                 json=tts_data,
                 stream=True,
                 timeout=(5, 60)
             ) as resp:
-                resp.raise_for_status()
+                try:
+                    resp.raise_for_status()
+                except requests.exceptions.HTTPError as he:
+                    # log server error body for easier debugging
+                    body = getattr(he.response, 'text', None)
+                    logger.error(f"TTS service returned HTTP {resp.status_code}: {body}")
+                    raise
+
                 for chunk in resp.iter_content(chunk_size=4096):
                     if chunk:
                         audio_data += chunk
@@ -217,13 +237,21 @@ class VoiceManager:
                 "parallel_infer": True,
                 "speed_factor": 1.0,
             }
+            if self._ref_audio_missing:
+                # 预热时若参考音频缺失，直接返回以避免 400
+                return
+
             with self.session.post(
                 f"{self.sovits_url}/tts",
                 json=tts_data,
                 stream=True,
                 timeout=(2, 10)
             ) as resp:
-                resp.raise_for_status()
+                try:
+                    resp.raise_for_status()
+                except requests.exceptions.HTTPError as he:
+                    logger.warning(f"TTS warmup failed: {getattr(he.response, 'text', None)}")
+                    return
                 for _ in resp.iter_content(chunk_size=512):
                     break
         except Exception:
@@ -264,13 +292,26 @@ class VoiceManager:
                 }
 
                 # 使用更小的chunk和更短的超时
+                if self._ref_audio_missing:
+                    logger.error(f"TTS request skipped: missing reference audio ({self.ref_audio}).")
+                    # 发送结束标记以避免播放线程卡住
+                    self.audio_queue.put(b'__START__')
+                    self.audio_queue.put(b'__END__')
+                    continue
+
                 with self.session.post(
                     f"{self.sovits_url}/tts",
                     json=tts_data,
                     stream=True,
                     timeout=(2, 20)  # (连接超时, 读取超时)
                 ) as resp:
-                    resp.raise_for_status()
+                    try:
+                        resp.raise_for_status()
+                    except requests.exceptions.HTTPError as he:
+                        logger.error(f"TTS service returned HTTP {resp.status_code}: {getattr(he.response, 'text', None)}")
+                        # 发送结束标记并继续循环
+                        self.audio_queue.put(b'__END__')
+                        continue
 
                     # 通知播放线程新流开始，首包即播
                     self.audio_queue.put(b'__START__')

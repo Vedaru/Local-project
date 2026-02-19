@@ -1,129 +1,227 @@
 """
-统一的日志配置模块
-将所有日志输出重定向到文件，同时在控制台显示重要信息
+Centralized logging configuration for ProjectLocal.
+
+Features:
+- Structured JSON file logs (daily rotation + retention)
+- Colored human-readable console logs
+- Per-module child loggers under the `ProjectLocal.*` namespace
+- Context propagation via contextvars (trace_id / request_id / user_id)
+- Helper API: get_logger(name), set_context(), clear_context()
+
+This module is the single source of truth for logging in the application; other modules
+should call `from modules.logging_config import get_logger` and use
+`get_logger('MyModule')` to obtain a logger that writes to the centralized handlers.
 """
+
 import os
-import logging
 import sys
+import json
+import logging
+import logging.handlers
 from datetime import datetime
+from typing import Any, Dict, Optional
+import contextvars
+
+# Context var for structured logging (per-task / per-thread)
+_log_context: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("log_context", default={})
+
+
+class JSONFormatter(logging.Formatter):
+    """Format log records as compact JSON for machine parsing and storage."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: Dict[str, Any] = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "module": getattr(record, "module", None),
+            "funcName": getattr(record, "funcName", None),
+            "lineno": getattr(record, "lineno", None),
+            "thread": getattr(record, "threadName", None),
+            "process": getattr(record, "process", None),
+            "message": record.getMessage(),
+        }
+
+        # Attach exception information if present
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+
+        # Merge explicit contextvars (trace_id, request_id, user_id, etc.)
+        ctx = _log_context.get({})
+        if ctx:
+            payload["context"] = ctx
+
+        # Include extra attributes set on the LogRecord (avoid duplicates)
+        extras = {
+            k: v
+            for k, v in record.__dict__.items()
+            if k not in logging.LogRecord.__dict__ and k not in ("msg", "args")
+        }
+        if extras:
+            payload.setdefault("extra", {}).update(extras)
+
+        return json.dumps(payload, ensure_ascii=False)
 
 
 class ColoredFormatter(logging.Formatter):
-    """日志格式化器（控制台输出）"""
+    """Human-friendly console formatter with minimal coloring when supported."""
 
-    def format(self, record):
-        # 简单格式：不使用颜色代码，直接输出
-        return super().format(record)
+    COLOR_MAP = {
+        "DEBUG": "\u001b[37m",   # white
+        "INFO": "\u001b[32m",    # green
+        "WARNING": "\u001b[33m", # yellow
+        "ERROR": "\u001b[31m",   # red
+        "CRITICAL": "\u001b[41m",# red background
+    }
+    RESET = "\u001b[0m"
+
+    def format(self, record: logging.LogRecord) -> str:
+        level = record.levelname
+        color = self.COLOR_MAP.get(level, "")
+        ts = datetime.now().strftime('%H:%M:%S')
+        name = record.name
+        location = f"{record.module}:{record.lineno}"
+        msg = record.getMessage()
+        s = f"{ts} [{name}] {level}: {msg} ({location})"
+        if color and sys.stdout.isatty():
+            return f"{color}{s}{self.RESET}"
+        return s
 
 
-def setup_logging(log_dir: str = None, level: int = logging.DEBUG) -> logging.Logger:
+class ContextFilter(logging.Filter):
+    """Inject contextvars into LogRecord so formatters can render them."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        ctx = _log_context.get({})
+        for k, v in ctx.items():
+            # attach only simple types to avoid serialization surprises
+            try:
+                setattr(record, k, v)
+            except Exception:
+                pass
+        return True
+
+
+# Internal global logger instance for the application namespace
+_global_logger: Optional[logging.Logger] = None
+
+
+def set_context(**kwargs: Any) -> None:
+    """Set or update the structured logging context for the current execution context.
+
+    Example: set_context(trace_id='abc123', user_id=42)
     """
-    设置统一的日志系统
-    
-    Args:
-        log_dir: 日志文件存储目录，默认为 data/logs
-        level: 日志级别
-    
-    Returns:
-        配置好的 logger 对象
+    ctx = dict(_log_context.get())
+    ctx.update({k: v for k, v in kwargs.items() if v is not None})
+    _log_context.set(ctx)
+
+
+def clear_context() -> None:
+    """Clear logging context for current execution context."""
+    _log_context.set({})
+
+
+def setup_logging(
+    log_dir: Optional[str] = None,
+    level: int = logging.DEBUG,
+    console_level: int = logging.INFO,
+    retention_days: int = 7,
+) -> logging.Logger:
+    """Configure centralized logging for ProjectLocal.
+
+    - JSON file logs (rotated daily, kept for `retention_days`)
+    - Colored console output for humans
+    - Project namespace root logger `ProjectLocal`
     """
-    # 确定日志目录
+    global _global_logger
+    if _global_logger is not None:
+        return _global_logger
+
     if log_dir is None:
-        log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'logs')
-
-    # 创建日志目录
+        # default: <repo>/data/logs
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "logs")
     os.makedirs(log_dir, exist_ok=True)
 
-    # 日志文件路径
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_file = os.path.join(log_dir, f'project_local_{timestamp}.log')
+    # file name with date (rotate by midnight)
+    base_filename = os.path.join(log_dir, "project_local.log")
 
-    # 创建或获取 logger
-    logger = logging.getLogger('ProjectLocal')
+    logger = logging.getLogger("ProjectLocal")
     logger.setLevel(level)
-    logger.propagate = False  # 禁用日志传播
+    logger.propagate = False
 
-    # 清除已有的处理器（避免重复）
+    # remove existing handlers to avoid duplication during re-imports
     logger.handlers.clear()
 
-    # 文件处理器 - 记录所有日志
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    # Timed rotating JSON file handler (daily)
+    file_handler = logging.handlers.TimedRotatingFileHandler(
+        filename=base_filename,
+        when="midnight",
+        backupCount=max(1, retention_days),
+        encoding="utf-8",
+        utc=False,
+    )
     file_handler.setLevel(logging.DEBUG)
-    file_formatter = logging.Formatter(
-        fmt='[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(file_formatter)
+    file_handler.setFormatter(JSONFormatter())
+    file_handler.addFilter(ContextFilter())
 
-    # 控制台处理器 - 仅记录 INFO 及以上级别
+    # Console handler (human readable)
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_formatter = ColoredFormatter(
-        fmt='[%(name)s] %(levelname)s %(message)s'
-    )
-    console_handler.setFormatter(console_formatter)
+    console_handler.setLevel(console_level)
+    console_fmt = ColoredFormatter()
+    console_handler.setFormatter(console_fmt)
+    console_handler.addFilter(ContextFilter())
 
-    # 添加处理器
+    # Add handlers to root ProjectLocal logger
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
-    # 记录日志文件位置
-    logger.info(f"日志文件已创建: {log_file}")
+    # also route warnings module to logging
+    logging.captureWarnings(True)
 
+    # Save global
+    _global_logger = logger
+
+    # initial info message
+    logger.info(f"Logging initialized — dir={log_dir} level={logging.getLevelName(level)}")
     return logger
 
 
-# 全局 logger 实例
-_logger = None
+def get_logger(name: str = "ProjectLocal") -> logging.Logger:
+    """Return a logger in the `ProjectLocal` namespace.
 
-
-def get_logger(name: str = 'ProjectLocal') -> logging.Logger:
+    Usage:
+        logger = get_logger('Ear')  # => ProjectLocal.Ear
     """
-    获取或创建 logger
-    
-    Args:
-        name: logger 名称
-    
-    Returns:
-        logger 对象
-    """
-    global _logger
-    if _logger is None:
-        _logger = setup_logging()
+    global _global_logger
+    if _global_logger is None:
+        _global_logger = setup_logging()
 
-    # 为子模块创建独立的 logger
-    if name != 'ProjectLocal':
-        child_logger = logging.getLogger(f'ProjectLocal.{name}')
-        # 关键：不设置 handlers，让子 logger 继承父 logger 的 handlers
-        child_logger.propagate = True
-        # 如果是 ManusAgent，强制把子 logger 的级别设置为 DEBUG，保证所有日志（包括 DEBUG）都写入文件
-        if name.lower() == 'manusagent' or name.lower().startswith('manusagent'):
-            child_logger.setLevel(logging.DEBUG)
-        return child_logger
-    return _logger
+    if not name or name == "ProjectLocal":
+        return _global_logger
+
+    child = logging.getLogger(f"ProjectLocal.{name}")
+    # ensure child uses parent's handlers via propagation
+    child.propagate = True
+    # do not lower the child's level by default; it inherits effective level from parent
+    return child
 
 
-# 便捷函数
-def log_debug(msg: str, **kwargs):
-    """记录 DEBUG 级别日志"""
+# convenience wrappers
+def log_debug(msg: str, **kwargs: Any) -> None:
     get_logger().debug(msg, **kwargs)
 
 
-def log_info(msg: str, **kwargs):
-    """记录 INFO 级别日志"""
+def log_info(msg: str, **kwargs: Any) -> None:
     get_logger().info(msg, **kwargs)
 
 
-def log_warning(msg: str, **kwargs):
-    """记录 WARNING 级别日志"""
+def log_warning(msg: str, **kwargs: Any) -> None:
     get_logger().warning(msg, **kwargs)
 
 
-def log_error(msg: str, **kwargs):
-    """记录 ERROR 级别日志"""
+def log_error(msg: str, **kwargs: Any) -> None:
     get_logger().error(msg, **kwargs)
 
 
-def log_critical(msg: str, **kwargs):
-    """记录 CRITICAL 级别日志"""
-    get_logger().critical(msg, **kwargs)
+def log_exception(msg: str, **kwargs: Any) -> None:
+    get_logger().exception(msg, **kwargs)

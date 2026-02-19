@@ -10,7 +10,7 @@ from ..config import (
     PREFERENCE_CATEGORIES
 )
 from ..analyzers import TextAnalyzer
-from ..logger import get_logger
+from ...logging_config import get_logger
 from .constants import (
     EXACT_DUPLICATE_THRESHOLD,
     ENTITY_CONFLICT_THRESHOLD,
@@ -18,7 +18,7 @@ from .constants import (
 )
 from .utils import extract_user_input, is_question
 
-logger = get_logger()
+logger = get_logger('Memory.Conflict.Detector')
 
 
 class ConflictDetector:
