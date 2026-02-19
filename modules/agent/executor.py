@@ -152,86 +152,30 @@ class ActionExecutor:
             return f"❌ 按键失败: {key}, 错误: {str(e)}"
 
     def save_note(self, content: str, filename: str = None) -> str:
-        """
-        保存笔记到桌面
-
-        Args:
-            content: 笔记内容
-            filename: 文件名（可选，默认使用时间戳）
-
-        Returns:
-            str: 执行结果日志
-        """
+        """保存笔记（委派到 modules.agent.file_tools.save_note_to_desktop）。"""
         try:
-            import os
-            from datetime import datetime
-            
-            # 获取桌面路径
-            desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
-            
-            # 生成文件名
-            if not filename:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f'note_{timestamp}.txt'
-            
-            # 确保文件名有.txt扩展
-            if not filename.endswith('.txt'):
-                filename += '.txt'
-            
-            file_path = os.path.join(desktop_path, filename)
-            
-            # 写入文件
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            
-            return f"✅ 成功保存笔记到桌面: {filename}"
-
+            from .file_tools import save_note_to_desktop
+            return save_note_to_desktop(content, filename)
         except Exception as e:
-            return f"❌ 保存笔记失败, 错误: {str(e)}"
+            return f"❌ 保存笔记失败, 错误: {e}"
 
 
     # ----------------- 窗口管理工具 -----------------
     def _capture_window_titles(self):
-        """返回当前可见窗口标题集合（用于比较新打开的窗口）"""
+        """委派到 `modules.agent.window.capture_window_titles`。"""
         try:
-            import pygetwindow as gw
-            return set([w.title for w in gw.getAllWindows() if w.title and w.title.strip()])
+            from .window import capture_window_titles
+            return capture_window_titles()
         except Exception:
-            # 回退为空集合，比较时将无法识别新增窗口
             return set()
 
     def _maximize_new_windows(self, before_titles: set, title_hint: str = None, timeout: float = 3.0) -> int:
-        """查找在 before_titles 之后新出现的窗口并尝试最大化。返回最大化窗口数量。"""
+        """委派到 `modules.agent.window.maximize_new_windows`。"""
         try:
-            import time
-            import pygetwindow as gw
-            end = time.time() + timeout
-            maximized = 0
-            while time.time() < end:
-                all_windows = [w for w in gw.getAllWindows() if w.title and w.title.strip()]
-                new_windows = [w for w in all_windows if w.title not in before_titles]
-                if title_hint:
-                    new_windows = [w for w in new_windows if title_hint.lower() in w.title.lower()]
-                if new_windows:
-                    for w in new_windows:
-                        try:
-                            w.maximize()
-                            maximized += 1
-                            logger.info(f"已最大化窗口: {w.title}")
-                        except Exception as e:
-                            logger.debug(f"最大化窗口失败: {w.title} -> {e}")
-                    break
-                time.sleep(0.2)
-            return maximized
-        except Exception as e:
-            logger.debug(f"_maximize_new_windows 失败: {e}")
-            # 退回到发送快捷键（尝试最大化当前活动窗口）
-            try:
-                import pyautogui
-                pyautogui.hotkey('win', 'up')
-                return 1
-            except Exception:
-                return 0
+            from .window import maximize_new_windows
+            return maximize_new_windows(before_titles, title_hint=title_hint, timeout=timeout)
+        except Exception:
+            return 0
 
     # ---- 已删除: refresh_ocr ----
     # 项目已弃用 OCR；refresh_ocr 的实现已移除。
@@ -246,252 +190,8 @@ class ActionExecutor:
 
 
     # ----------------- DOM（Playwright）网页操作 -----------------
-    class _PlaywrightRunner:
-        """在后台线程中运行 Playwright 的 asyncio event loop，提供线程安全的同步接口。"""
-        def __init__(self):
-            import threading, asyncio
-            self._thread = None
-            self._loop = None
-            self._apw = None
-            self._browser = None
-            self._context = None
-            self._page = None
-            self.started = threading.Event()
-            self._start_thread()
-
-        def _start_thread(self):
-            import asyncio, threading
-            def _main():
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
-                try:
-                    self._loop.run_until_complete(self._init_playwright())
-                except Exception:
-                    pass
-                self.started.set()
-                try:
-                    self._loop.run_forever()
-                finally:
-                    try:
-                        self._loop.run_until_complete(self._shutdown())
-                    except Exception:
-                        pass
-                    self._loop.close()
-
-            self._thread = threading.Thread(target=_main, daemon=True)
-            self._thread.start()
-            self.started.wait(timeout=6)
-
-        async def _init_playwright(self):
-            from playwright.async_api import async_playwright
-            self._apw = await async_playwright().start()
-
-        async def _shutdown(self):
-            try:
-                if self._page:
-                    await self._page.close()
-                if self._context:
-                    await self._context.close()
-                if self._browser:
-                    await self._browser.close()
-                if self._apw:
-                    await self._apw.stop()
-            except Exception:
-                pass
-
-        def _run(self, coro):
-            import asyncio
-            if not self._loop or self._loop.is_closed():
-                raise RuntimeError('Playwright runner 未启动')
-            fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
-            return fut.result()
-
-        # --- async operations ---
-        async def _open(self, bt: str, url: str | None, headless: bool, executable_path: str | None):
-            # 若传入的 url 看起来不是完整 URL（例如是搜索词），则将其转为百度搜索 URL
-            if url:
-                try:
-                    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-                    p = urlparse(url)
-                    # 非完整 URL（搜索词） -> 转为百度搜索
-                    if not p.scheme or not p.netloc:
-                        url = 'https://www.baidu.com/s?' + urlencode({'wd': url})
-                    else:
-                        hostname = (p.hostname or '').lower()
-                        path = p.path or ''
-                        # 若为 Google 搜索链接，重写为百度搜索（保留 q 参数）
-                        if 'google.' in hostname and path.startswith('/search'):
-                            qs = parse_qs(p.query)
-                            qval = qs.get('q', [''])[0]
-                            url = 'https://www.baidu.com/s?' + urlencode({'wd': qval}) if qval else 'https://www.baidu.com'
-                except Exception:
-                    from urllib.parse import urlencode
-                    # 出错时回退到百度搜索
-                    url = 'https://www.baidu.com/s?' + urlencode({'wd': url})
-
-            bt_attr = getattr(self._apw, bt)
-            launch_kwargs = { 'headless': headless }
-            if executable_path:
-                launch_kwargs['executable_path'] = executable_path
-            browser = await bt_attr.launch(**launch_kwargs)
-            context = await browser.new_context()
-
-            page = await context.new_page()
-            if url:
-                await page.goto(url, timeout=15000)
-            # store
-            self._browser = browser
-            self._context = context
-            self._page = page
-            return {'ok': True, 'url': url}
-
-        async def _navigate(self, url: str, timeout: int = 15000):
-            if not self._page:
-                return {'ok': False, 'error': 'no_page'}
-            # 若是 Google search 链接，则重写为百度搜索（保留 q 参数）。
-            # 不再对 bing/mkt 或 Accept-Language 做特殊修改
-            try:
-                from urllib.parse import urlparse, parse_qs, urlencode
-                p = urlparse(url)
-                hostname = (p.hostname or '').lower()
-                path = p.path or ''
-                if 'google.' in hostname and path.startswith('/search'):
-                    qs = parse_qs(p.query)
-                    qval = qs.get('q', [''])[0]
-                    url = 'https://www.baidu.com/s?' + urlencode({'wd': qval}) if qval else 'https://www.baidu.com'
-            except Exception:
-                pass
-            await self._page.goto(url, timeout=timeout)
-            return {'ok': True, 'url': url}
-
-        async def _query(self, selector: str, by: str, multiple: bool):
-            if not self._page:
-                return []
-            sel = f'xpath={selector}' if by == 'xpath' else selector
-            if multiple:
-                handles = await self._page.query_selector_all(sel)
-            else:
-                h = await self._page.query_selector(sel)
-                handles = [h] if h else []
-            results = []
-            for el in handles:
-                try:
-                    text = await el.inner_text()
-                except Exception:
-                    text = ''
-                try:
-                    inner = await el.inner_html()
-                except Exception:
-                    inner = ''
-                try:
-                    attrs = await el.evaluate("e => { const a={}; for(const at of e.attributes) a[at.name]=at.value; return a }")
-                except Exception:
-                    attrs = {}
-                try:
-                    bbox = await el.bounding_box() or {}
-                    bbox = {k: int(v) for k, v in bbox.items()} if bbox else {}
-                except Exception:
-                    bbox = {}
-                results.append({'text': text, 'innerHTML': inner, 'attributes': attrs, 'box': bbox})
-            return results
-
-        async def _click(self, selector: str, by: str, timeout: int = 5000):
-            if not self._page:
-                return {'ok': False, 'error': 'no_page'}
-            sel = selector if by == 'css' else f'xpath={selector}'
-            try:
-                await self._page.locator(sel).first.click(timeout=timeout)
-                return {'ok': True}
-            except Exception as e:
-                # 返回结构化错误给调用者，避免抛出到同步线程
-                return {'ok': False, 'error': 'click_error', 'detail': str(e)}
-
-        async def _click_by_index(self, selector: str, by: str, index: int = 0, timeout: int = 5000):
-            """点击匹配到的第 index 个元素（0-based）。提供多重回退：scrollIntoView -> ElementHandle.click -> locator.nth(...).click(force=True) -> JS dispatch click。"""
-            if not self._page:
-                return {'ok': False, 'error': 'no_page'}
-            sel = selector if by == 'css' else f'xpath={selector}'
-            try:
-                handles = await self._page.query_selector_all(sel)
-            except Exception as e:
-                return {'ok': False, 'error': 'query_failed', 'detail': str(e)}
-            if not handles:
-                return {'ok': False, 'error': 'no_match'}
-            if index < 0 or index >= len(handles):
-                return {'ok': False, 'error': 'index_out_of_range'}
-
-            # Attempt 1: scroll into view (best-effort) then ElementHandle.click
-            try:
-                try:
-                    await handles[index].scroll_into_view_if_needed()
-                except Exception:
-                    # fallback for older playwright versions
-                    try:
-                        await handles[index].evaluate("el => el.scrollIntoView({block:'center', inline:'nearest'})")
-                    except Exception:
-                        pass
-                await handles[index].click(timeout=timeout)
-                return {'ok': True}
-            except Exception as e_click:
-                # Attempt 2: use locator.nth(index).click with force=True
-                try:
-                    await self._page.locator(sel).nth(index).click(timeout=timeout, force=True)
-                    return {'ok': True}
-                except Exception as e_force:
-                    # Attempt 3: dispatch via JS click
-                    try:
-                        js_sel = json.dumps(sel)
-                        js = (
-                            f"(function(){{ const els = document.querySelectorAll({js_sel}); if(!els||!els[{index}]) return false; els[{index}].click(); return true; }})()"
-                        )
-                        await self._page.evaluate(js)
-                        return {'ok': True}
-                    except Exception as e_js:
-                        detail = f"handles_click_error: {e_click}; locator_force_error: {e_force}; js_error: {e_js}"
-                        return {'ok': False, 'error': 'click_error', 'detail': detail}
-        async def _fill(self, selector: str, value: str, by: str = 'css'):
-            if not self._page:
-                return {'ok': False, 'error': 'no_page'}
-            sel = selector if by == 'css' else f'xpath={selector}'
-            await self._page.fill(sel, value)
-            return {'ok': True}
-
-        async def _eval(self, expression: str):
-            if not self._page:
-                return {'ok': False, 'error': 'no_page'}
-            res = await self._page.evaluate(expression)
-            return {'ok': True, 'result': res}
-        async def _status(self):
-            return {
-                'has_page': bool(self._page),
-                'current_url': getattr(self._page, 'url', None) if self._page else None
-            }
-
-        # --- sync wrappers exposed to caller thread ---
-        def open(self, bt: str, url: str | None, headless: bool, executable_path: str | None):
-            return self._run(self._open(bt, url, headless, executable_path))
-
-        def navigate(self, url: str, timeout: int = 15000):
-            return self._run(self._navigate(url, timeout))
-
-        def query(self, selector: str, by: str = 'css', multiple: bool = False):
-            return self._run(self._query(selector, by, multiple))
-
-        def click(self, selector: str, by: str = 'css', timeout: int = 5000):
-            return self._run(self._click(selector, by, timeout))
-
-        def click_index(self, selector: str, by: str = 'css', index: int = 0, timeout: int = 5000):
-            return self._run(self._click_by_index(selector, by, index, timeout))
-
-        def fill(self, selector: str, value: str, by: str = 'css'):
-            return self._run(self._fill(selector, value, by))
-
-        def evaluate(self, expression: str):
-            return self._run(self._eval(expression))
-
-        def status(self):
-            return self._run(self._status())
-
+    # PlaywrightRunner 已抽取为 `modules.agent.playwright_runner.PlaywrightRunner`，
+    # 嵌套实现已移除以减小此文件体积；executor 通过 `_ensure_playwright()` 惰性导入并使用外部 runner。
     def _ensure_playwright(self) -> bool:
         """确保 Playwright 后台 runner 已启动并可用（线程安全）。"""
         if getattr(self, 'dom_available', False) and getattr(self, '_pw_runner', None):
