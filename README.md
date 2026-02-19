@@ -20,6 +20,16 @@
   - 并行检索与低延迟响应
 - **本地运行**：完全本地化，无需依赖云服务
 
+## 重要变更（已同步） 🔀
+- **已完成**：`modules/controller` 的功能已合并到 `modules/agent`，并对 Agent 实现进行了模块化拆分以便维护。
+- **影响**：若你之前直接从 `modules.controller` 导入类（如 `ComputerController` / `ActionExecutor` / `SafetyGuard`），请改为从 `modules.agent` 导入（或使用新的具体模块路径）。
+
+示例迁移：
+- 旧：`from modules.controller import ComputerController, ActionExecutor, SafetyGuard`
+- 新：`from modules.agent import ComputerController, ActionExecutor, SafetyGuard`
+
+> 目的：统一 Agent/Controller 行为、减少单文件体积、提高可测试性与复用性。
+
 ## 环境要求
 
 - Python 3.8+
@@ -145,7 +155,15 @@ Local-project/
 │   │   ├── __init__.py
 │   │   ├── browser.py         # 浏览器 / 网页检索工具
 │   │   ├── core.py            # Agent 核心逻辑（ReAct loop）
-│   │   └── tools.py           # Agent 可用工具封装
+│   │   ├── tools.py           # Agent 可用工具封装（主入口）
+│   │   ├── controller.py      # ComputerController（指令解析与调度，原 modules.controller.core）
+│   │   ├── executor.py        # ActionExecutor（系统/Playwright 操作，原 modules.controller.executor）
+│   │   ├── safety.py          # SafetyGuard（安全白名单校验，原 modules.controller.safety）
+│   │   ├── dom_tools.py       # DOM 操作的委派/适配函数（从 tools 拆分）
+│   │   ├── dom_utils.py       # DOM 辅助函数（URL 规范化 / selector 候选）
+│   │   ├── playwright_runner.py # Playwright 后台 runner（线程安全）
+│   │   ├── window.py          # 窗口管理辅助（拆分自 executor）
+│   │   └── file_tools.py      # 文件/笔记助手（拆分自 executor）
 │   ├── avatar/                # Avatar 子模块
 │   │   ├── __init__.py
 │   │   ├── click_through.py   # 点击穿透
@@ -218,10 +236,7 @@ Local-project/
 
 ### 其他模块
 - **config.py**: 加载和管理项目配置。
-- **controller/**: 实现电脑控制功能。
-  - **core.py**: 控制核心逻辑。
-  - **executor.py**: 执行具体的电脑操作。
-  - **safety.py**: 提供安全守卫功能。
+- **controller/**: （已迁移）电脑控制相关功能现已合并到 `modules.agent`：见 `modules/agent/controller.py`, `modules/agent/executor.py`, `modules/agent/safety.py`。
 - **ear.py**: 语音识别模块。
 - **llm.py**: 与 LLM 的接口。
 - **logging_config.py**: 配置日志记录。
