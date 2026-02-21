@@ -51,16 +51,18 @@
 
 3. **配置环境变量**
 
-   创建 `.env` 文件并设置以下变量：
-   ```
+   创建 `.env` 文件并设置以下变量。例如：
+   ```ini
+   # 本项目依赖多种服务的 API key
    ARK_API_KEY=your_api_key_here
-
    SYSTEM_PROMPT=example
-
    GPT_SOVITS_PATH=example
-
    MODEL_NAME=example
+
+   # 浏览器代理需要 OpenAI API Key
+   OPENAI_API_KEY=sk-xxxxxx
    ```
+   以上内容也可复制到 `.env.example` 供参考。
 
 4. **下载并配置GPT-SoVITS**
 
@@ -197,8 +199,8 @@ Local-project/
 │   │   ├── controller.py      # ComputerController（指令解析与调度，原 modules.controller.core）
 │   │   ├── executor.py        # ActionExecutor（系统/Playwright 操作，原 modules.controller.executor）
 │   │   ├── safety.py          # SafetyGuard（安全白名单校验，原 modules.controller.safety）
-│   │   ├── dom_tools.py       # DOM 操作的委派/适配函数（从 tools 拆分）
-│   │   ├── dom_utils.py       # DOM 辅助函数（URL 规范化 / selector 候选）
+│   │   ├── dom_tools.py       # （已弃用）DOM 操作的委派/适配函数，已被注释停用
+│   │   ├── dom_utils.py       # （已弃用）DOM 辅助函数，已被注释停用
 │   │   ├── playwright_runner.py # Playwright 后台 runner（线程安全）
 │   │   ├── window.py          # 窗口管理辅助（拆分自 executor）
 │   │   └── file_tools.py      # 文件/笔记助手（拆分自 executor）

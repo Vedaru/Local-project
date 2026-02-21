@@ -43,8 +43,11 @@ class JSONFormatter(logging.Formatter):
         }
 
         # Attach exception information if present
+        # exc_info 是一个元组 (type, value, traceback)；不能直接 JSON 序列化
         if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+            import traceback as _tb
+            payload["exception"] = "".join(_tb.format_exception(*record.exc_info))
+            # 如果还想保留原始字符串可在这里添加 payload["exc_info"] = ...
 
         # Merge explicit contextvars (trace_id, request_id, user_id, etc.)
         ctx = _log_context.get({})
@@ -60,7 +63,15 @@ class JSONFormatter(logging.Formatter):
         if extras:
             payload.setdefault("extra", {}).update(extras)
 
-        return json.dumps(payload, ensure_ascii=False)
+        try:
+            return json.dumps(payload, ensure_ascii=False)
+        except TypeError as e:
+            # 兜底：如果 payload 中仍有不可序列化对象，返回简化错误信息
+            return json.dumps({
+                "timestamp": payload.get("timestamp"),
+                "level": "ERROR",
+                "message": f"日志序列化失败: {str(e)} | 原消息: {payload.get('message')}"
+            }, ensure_ascii=False)
 
 
 class ColoredFormatter(logging.Formatter):

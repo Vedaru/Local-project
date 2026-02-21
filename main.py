@@ -26,6 +26,7 @@ from modules.memory.logger import get_logger as get_memory_logger
 from modules.voice import VoiceManager
 from modules.ear import Ear
 from modules.agent import ComputerController, SafetyGuard, ActionExecutor
+from modules.agent.browser import BrowserAgent
 from modules.llm import call_llm
 # Agent 模块（Manus 风格的 ReAct 智能体）
 from modules.agent.core import ManusAgent
@@ -852,6 +853,31 @@ class MainApplication:
                 pass  # 忽略输入错误
 
 
+
+
+def simple_browser_demo():
+    """简单演示 BrowserAgent 的 Observe->Think->Act 循环"""
+    agent = BrowserAgent()
+    goal = "Navigate to https://www.baidu.com, type 'DeepSeek' into the search box, and click the '百度一下' button."
+    max_steps = 10
+    print("开始浏览器代理演示...")
+    for i in range(max_steps):
+        dom = agent.observe()
+        print(f"DOM 内容 ({len(dom)} 元素)")
+        action_text = agent.think(goal, dom)
+        print("LLM 返回:", action_text)
+        result = agent.act(action_text)
+        print("执行结果:", result)
+        # 结束条件：模型指示结束或搜索结果已出现
+        if isinstance(result, str) and 'finished' in result:
+            print("代理决定完成任务。")
+            break
+        if 'wd=' in agent.page.url or 'DeepSeek' in agent.page.url:
+            print("检测到搜索结果页面，任务完成。 url=", agent.page.url)
+            break
+    agent.close()
+
+
 def signal_handler(sig, frame):
     """处理 Ctrl+C 信号"""
     print("\n正在退出...")
@@ -881,6 +907,13 @@ def main():
 
 if __name__ == "__main__":
     import sys
+    # 支持命令行参数：
+    #   --browser-demo 运行简化的 BrowserAgent 演示
+    #   --ear-demo     启动听觉模块演示（原有代码）
+    if "--browser-demo" in sys.argv:
+        simple_browser_demo()
+        sys.exit(0)
+
     # 提供一个可选的命令行参数: --ear-demo ，用于快速本地测试 modules/ear.py 的听觉功能 - 暂时禁用
     # if "--ear-demo" in sys.argv:
     #     print("[main] 启动 Ear 模块演示 (--ear-demo)。按 Ctrl+C 退出。")

@@ -39,13 +39,31 @@ class ManusAgent:
             "【强制规则】当你作为 Agent 响应时，**必须且只能输出一个 JSON 对象**，不得包含任何额外文字、注释、解释、或 Markdown/代码围栏。\n"
             "输出必须严格遵循下列 JSON 模式（字段顺序不限）：\n"
             "{" + '"thought": "<解释你的下一步思路>", "tool": "<工具名>", "args": <字符串或对象>' + "}\n"
-            "可用工具（严格）：search, browse, read_file, write_file, open_local_app, click_screen, dom_open, dom_query, dom_preview, dom_click, dom_open_and_click, dom_fill, dom_eval, dom_status, final_answer。\n"            "重要：**绝对不要**在 thought 或 args 中提及或使用 Google 搜索（google.com / google.*）。如需检索，请使用 `search` 工具或 `https://www.baidu.com/s?wd=...`（默认使用百度）。\n"            "此外：**不要使用或生成 `open_browser` 指令**——该指令已从系统移除；遇到网页交互请使用 `dom_open`（Playwright）。\n"            "示例（严格，输出中不得有其他任何字符）：\n"
+            "可用工具（严格）：search, browse, read_file, write_file, open_local_app, click_screen, final_answer。\n"            "重要：**绝对不要**在 thought 或 args 中提及或使用 Google 搜索（google.com / google.*）。如需检索，请使用 `search` 工具或 `https://www.baidu.com/s?wd=...`（默认使用百度）。\n"            "示例（严格，输出中不得有其他任何字符）：\n"
             "{\"thought\":\"我要先搜索相关新闻\",\"tool\":\"search\",\"args\":\"DeepSeek 新闻\"}\n"
             "完成任务时请使用 tool=\"final_answer\" 并在 args 中放最终结果（字符串或 JSON 对象）。\n"
             "如果你无法完成某步，请仍然返回符合格式的 JSON（例如使用 tool=\"search\" 或返回空的 args），不要返回纯文本解释。"
         )
         # 迁移的动作执行准则（也保存在 agent_system_prompt 中）
-        self.agent_system_prompt += "\n动作执行准则：如果你在回复中表示要执行本地或浏览器操作，回复的最后一行必须包含对应的 [ACTION] 或 Agent JSON 指令（否则不要声明动作已执行）。"
+        self.agent_system_prompt += (
+            "\n动作执行准则：如果你在回复中表示要执行本地或浏览器操作，回复的最后一行必须包含对应的 [ACTION] 或 Agent JSON 指令（否则不要声明动作已执行）。"
+            # add core browser knowledge and search workflow hints
+            "\n\n【浏览器操作 - 核心网站知识库 (背诵)】"
+            "\n1. B站 (Bilibili)"
+            "\n   - 搜索框: `.nav-search-input` (顶部导航栏)"
+            "\n   - 搜索按钮: `.nav-search-btn`"
+            "\n   - 技巧: 输入完成后可直接按回车或 click 搜索按钮。"
+            "\n   - 视频标题一般用 `h3` 标签。"
+            "\n2. 百度 (Baidu)"
+            "\n   - 搜索框: `#kw`"
+            "\n   - 搜索按钮: `#su`"
+            "\n3. 必应 (Bing)"
+            "\n   - 搜索框: `#sb_form_q`"
+            "\n\n【任务执行严令】"
+            "\n- 当用户要求 \"搜索 xxx\" 时，严禁只打开首页就结束任务！"
+            "\n- 必须执行完整的：打开 → 填词 → 回车/点按钮 → 确认结果页加载，"
+            "\n  只有看到搜索结果列表才可调用 final_answer。"
+        )
 
     def _clean_markdown(self, text: str) -> str:
         """清洗 LLM 输出中的 Markdown 包装符号，保留代码块内的原始内容。

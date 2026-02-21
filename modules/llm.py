@@ -27,6 +27,24 @@ INSTRUCTION_FORMAT = """指令格式规范
 - 复杂任务派发 [SUMMON_AGENT] 示例：[SUMMON_AGENT]{"task":"具体任务描述"}[/SUMMON_AGENT]
 """
 
+# --- 工具知识库（供系统 prompt 注入） ---
+# 此段描述当前可用的 AgentTools 函数及其原理，帮助 LLM 理解何时调用它们。
+TOOLS_KNOWLEDGE = """
+可用工具及使用说明：
+
+3. read_file(path) / write_file(path, content)
+   - 原理：直接在磁盘上读写文本文件。
+   - 用法：读取项目文件或保存生成内容到指定路径。
+   - 注意：路径必须合法且不越权。
+
+4. open_local_app(app_path)
+   - 原理：调用系统 API 启动本地程序（Windows 使用 os.startfile）。
+   - 用法：在安全白名单内启动应用，如记事本、浏览器等。
+
+> 以上工具都是可被 LLM 直接调用的，并在 AgentTools.execute 中进行调度。
+> 不再存在旧的 dom_* 系列方法；不要在提示词中提及它们，也不要生成类似指令。
+"""
+
 
 def _normalize_text(value, default=""):
     if value is None:
@@ -62,14 +80,15 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
     if "[SUMMON_AGENT]" not in system_prompt:
         system_prompt = system_prompt + "\n\n" + agent_trigger_hint
 
-    # --- DOM 优先（已弃用 OCR）使用说明 ---
-    dom_guidance = (
-        "项目已改为直接操作网页 DOM（通过 dom_* 指令和 Playwright）。"
-        "若需要点击或读取网页内容，请使用 DOM 工具：例如 `dom_open` 打开页面，`dom_query` 查找元素，`dom_click` 点击元素，或 `dom_eval` 执行 JS。"
-        "示例：要点击页面第一个视频 -> 发送 [ACTION]{\"action\": \"dom_eval\", \"expression\": \"document.querySelector('a').click()\"}[/ACTION]。"
+
+    # --- 工具使用指导 ---
+    tool_guidance = (
+        "当前可用的工具已在 TOOLS_KNOWLEDGE 中列出。" 
+        "在生成回答时，如需执行网络搜索、读取/写入文件或启动本地程序，" 
+        "请直接调用对应工具。"
     )
     if "盲人神探" not in system_prompt:
-        system_prompt = system_prompt + "\n\n" + dom_guidance
+        system_prompt = system_prompt + "\n\n" + tool_guidance + "\n\n" + TOOLS_KNOWLEDGE
 
     if not model_name:
         logger.error("未配置 MODEL_NAME，请检查 .env 文件")

@@ -194,10 +194,11 @@ class ActionExecutor:
     # 嵌套实现已移除以减小此文件体积；executor 通过 `_ensure_playwright()` 惰性导入并使用外部 runner。
     def _ensure_playwright(self) -> bool:
         """确保 Playwright 后台 runner 已启动并可用（线程安全）。"""
+        # fast path: already available
         if getattr(self, 'dom_available', False) and getattr(self, '_pw_runner', None):
             return True
         try:
-            # 先检测包是否存在
+            # ensure package exists
             try:
                 from playwright.async_api import async_playwright  # noqa: F401
             except Exception as ie:
@@ -205,16 +206,15 @@ class ActionExecutor:
                 self.dom_available = False
                 return False
 
-            # 启动后台 runner（若尚未启动）。优先使用独立的 PlaywrightRunner 模块作为实现。
+            # start runner if not there
             if not getattr(self, '_pw_runner', None):
                 try:
                     from .playwright_runner import PlaywrightRunner as _ExternalPlaywrightRunner
                     self._pw_runner = _ExternalPlaywrightRunner()
                 except Exception:
-                    # 回退到类内嵌实现（兼容历史代码）
                     self._pw_runner = self._PlaywrightRunner() if hasattr(self, '_PlaywrightRunner') else None
 
-            # 简单检查是否已启动
+            # check startup flag
             if not getattr(self._pw_runner, 'started', None) or not self._pw_runner.started.is_set():
                 logger.warning('Playwright runner 无法启动或超时。')
                 self.dom_available = False
@@ -228,8 +228,33 @@ class ActionExecutor:
             self.dom_available = False
             return False
 
+    def _auto_recover_page(self):
+        """如果页面不存在，自动打开一个空白页或百度。
+
+        发生 no_page 错误时调用它可以避免后续操作因为空页面失败。
+        """
+        # runner 可能为 None 或尚未初始化
+        runner = getattr(self, '_pw_runner', None)
+        if not runner:
+            return False
+        page_attr = getattr(runner, '_page', None)
+        if not page_attr:
+            logger.warning("检测到页面丢失 (no_page)，正在尝试自动恢复...")
+            # 默认打开一个常见的页面，避免 AI 对空气操作
+            try:
+                self.dom_open("https://www.baidu.com")
+                # 给一点时间让页加载
+                import time
+                time.sleep(2)
+                return True
+            except Exception:
+                return False
+        return False
+
     def dom_open(self, url: str = None, browser_type: str = None, headless: bool = False, browser_path: str = None) -> str:
         """使用 Playwright 打开浏览器并导航（线程安全）。"""
+        # DEPRECATED: DOM operations disabled
+        return "❌ DOM 操作已弃用: dom_open"
         if not self._ensure_playwright():
             return "❌ DOM 操作不可用：Playwright 未安装或初始化失败。请执行 `pip install playwright` 并运行 `playwright install`。"
         try:
@@ -276,6 +301,11 @@ class ActionExecutor:
             return f"❌ dom_open 失败: {e}"
 
     def dom_navigate(self, url: str, timeout: int = 15000) -> str:
+        # DEPRECATED: DOM operations disabled
+        return "❌ DOM 操作已弃用: dom_navigate"
+        # 🔥 ensure runner exists
+        if not self._ensure_playwright() or not getattr(self, '_pw_runner', None):
+            return "❌ dom_navigate 失败: Playwright 服务未启动"
         try:
             res = self._pw_runner.navigate(url, timeout)
             if res.get('ok'):
@@ -285,6 +315,13 @@ class ActionExecutor:
             return f"❌ 导航失败: {e}"
 
     def dom_query(self, selector: str, by: str = 'css', multiple: bool = False, timeout: int = 5000):
+        # DEPRECATED: DOM operations disabled
+        return []
+        # 🔥 ensure runner exists
+        if not self._ensure_playwright() or not getattr(self, '_pw_runner', None):
+            return []
+        # 自动恢复页面若丢失
+        self._auto_recover_page()
         try:
             results = self._pw_runner.query(selector, by=by, multiple=multiple)
             # 清洗 attributes，避免把裸数字 id（如 HTML id="163"）等直接返回给 LLM
@@ -309,6 +346,8 @@ class ActionExecutor:
 
     def dom_preview(self, selector: str, by: str = 'css', max_results: int = 6, timeout: int = 5000):
         """列出匹配 selector 的候选元素（用于让用户/Agent 先确认再点击）。
+        # DEPRECATED: DOM operations disabled
+        return []
 
         返回：候选元素列表（每项包含 index, text, attributes, box, summary）。不执行点击。
         """
@@ -348,9 +387,28 @@ class ActionExecutor:
 
     def dom_click(self, selector: str, by: str = 'css', timeout: int = 5000, index: Optional[int] = None) -> str:
         """在 DOM 页面上点击元素 — **仅使用回退策略**（query -> click_index / 候选 selector）。
+        # DEPRECATED: DOM operations disabled
+        return "❌ DOM 操作已弃用: dom_click"
 
-        说明：根据你的要求，删除了对 locator.click 的直接尝试，始终通过查询匹配集合并按索引点击（更稳定、可控）。
+        首先尝试自动恢复页面以避免 no_page 情况。
+        根据你的要求，删除了对 locator.click 的直接尝试，始终通过查询匹配集合并按索引点击
+        （更稳定、可控）。
         """
+        # 避免空页面导致操作失败
+        self._auto_recover_page()
+
+        # 安全检查：如果页面上没有任何非空 input/textarea 值，则可能 AI 未输入文本
+        try:
+            has_filled = self._pw_runner.evaluate(
+                "() => Array.from(document.querySelectorAll('input,textarea')).some(e=>e.value && e.value.trim().length>0)"
+            )
+            if not has_filled:
+                logger.warning("页面上没有检测到输入内容，点击可能是误操作")
+                return "❌ dom_click 失败: 页面没有输入内容，避免误触"
+        except Exception:
+            # ignore evaluation errors
+            pass
+
         if not getattr(self, '_pw_runner', None):
             return "❌ DOM runner 未初始化。"
 
@@ -398,6 +456,13 @@ class ActionExecutor:
             return f"❌ dom_click 失败: {e}"
 
     def dom_fill(self, selector: str, value: str, by: str = 'css') -> str:
+        # DEPRECATED: DOM operations disabled
+        return "❌ DOM 操作已弃用: dom_fill"
+        # 🔥 ensure runner exists
+        if not self._ensure_playwright() or not getattr(self, '_pw_runner', None):
+            return "❌ dom_fill 失败: Playwright 服务未启动"
+        # 自动恢复页面若丢失
+        self._auto_recover_page()
         try:
             res = self._pw_runner.fill(selector, value, by=by)
             if res.get('ok'):
@@ -407,14 +472,106 @@ class ActionExecutor:
             logger.error(f"dom_fill 失败: {e}", exc_info=True)
             return f"❌ dom_fill 失败: {e}"
 
-    def dom_eval(self, expression: str):
+    def dom_search(self, selector: str, value: str):
+        """原子化搜索：输入并立即回车
+        # DEPRECATED: DOM operations disabled
+        return "❌ DOM 操作已弃用: dom_search"
+
+        新增 URL 直达拦截：
+        - B 站导航条搜索框 `.nav-search-input` -> 直接打开拼接结果页
+        - 百度 `#kw` 输入框 -> 同理构造百度搜索 URL
+        其他情况沿用原有填表+回车逻辑。
+        """
+        if not self._ensure_playwright():
+            return "❌ 浏览器未启动"
+
+        # 先尝试识别常见站点并使用 URL 跳转
         try:
+            if 'nav-search-input' in selector:
+                # Bilibili 搜索直接构造结果页
+                url = f"https://search.bilibili.com/all?keyword={value}"
+                logger.info(f"dom_search intercepted B站搜索，直接 open URL: {url}")
+                return self.execute('dom_open', url)
+            if '#kw' in selector or 'kw' in selector:
+                # 百度搜索框
+                url = f"https://www.baidu.com/s?wd={value}"
+                logger.info(f"dom_search intercepted 百度搜索，直接 open URL: {url}")
+                return self.execute('dom_open', url)
+        except Exception as e:
+            logger.warning(f"dom_search URL 拦截失败: {e}")
+            # 如果出现异常，回退到正常流程
+
+        try:
+            # 1. 调用刚才优化过的 fill
+            res = self._pw_runner.fill(selector, value)
+            if not res.get('ok'):
+                return f"❌ 输入失败: {res.get('error')}"
+
+            # 2. 再次校验值 (防止被B站自动改回推荐词)
+            # 这是一个同步方法，需要在 runner 里加一个 input_value 的包装，或者直接用 evaluate
+            tmp = self._pw_runner.evaluate(f"document.querySelector('{selector}').value")
+            check_val = tmp.get('result') if isinstance(tmp, dict) and 'result' in tmp else tmp
+
+            if check_val != value:
+                # 最后的挣扎：JS 强行搜索
+                logger.warning(f"值仍不匹配: {check_val} != {value}，尝试 JS 提交")
+                # 这种写法是直接修改 location，最稳
+                # 但为了保持 Agent 逻辑，我们还是尝试再次 JS 注入并回车
+                js_force = f"""
+                    let input = document.querySelector('{selector}');
+                    input.value = '{value}';
+                    input.dispatchEvent(new Event('input', {{bubbles:true}}));
+                    // 找到旁边的搜索按钮点击
+                    let btn = document.querySelector('.nav-search-btn');
+                    if(btn) btn.click();
+                """
+                self._pw_runner.evaluate(js_force)
+                return f"✅ 已通过 JS 强制提交搜索: {value}"
+
+            # 3. 正常回车
+            self._pw_runner.evaluate(f"document.querySelector('{selector}').focus()")
+            self._pw_runner._run(self._pw_runner._page.keyboard.press('Enter'))
+
+            return f"✅ 搜索指令已发送: {value}"
+
+        except Exception as e:
+            return f"❌ 搜索崩溃: {e}"
+
+    def dom_eval(self, expression: str):
+        # DEPRECATED: DOM operations disabled
+        return "❌ DOM 操作已弃用: dom_eval"
+        # 🔥【新增】确保 Runner 已初始化
+        if not self._ensure_playwright() or not getattr(self, '_pw_runner', None):
+            return "❌ dom_eval 失败: Playwright 服务未启动"
+
+        # 自动恢复页面若丢失
+        self._auto_recover_page()
+        # 预检查：若表达式使用 querySelector 访问元素，先确认 selector 存在
+        try:
+            import re, json
+            m = re.search(r"querySelector\(['\"](.*?)['\"]\)", expression)
+            if m:
+                sel = m.group(1)
+                exists = self._pw_runner.evaluate(f"() => !!document.querySelector({json.dumps(sel)})")
+                if not exists:
+                    return f"❌ dom_eval 失败: 选择器 {sel} 未匹配到任何元素"
+        except Exception:
+            # 预检查失败不影响正常流程
+            pass
+        try:
+            # 这里的 _pw_runner 此时一定不是 None
             res = self._pw_runner.evaluate(expression)
             if isinstance(res, dict) and not res.get('ok', True):
-                return f"❌ dom_eval 失败: {res.get('error')}"
+                err = res.get('error')
+                detail = res.get('detail')
+                logger.error(f"dom_eval 错误: {err}, 详情: {detail}")
+                if detail:
+                    return f"❌ dom_eval 失败: {err}: {detail}"
+                return f"❌ dom_eval 失败: {err}"
             return res.get('result') if isinstance(res, dict) and 'result' in res else res
         except Exception as e:
-            logger.error(f"dom_eval 失败: {e}", exc_info=True)
+            # 额外在日志中记录表达式本身，方便排查
+            logger.error(f"dom_eval 异常: {e} (expr={expression})", exc_info=True)
             return f"❌ dom_eval 失败: {e}"
 
     def _canonical_search_url(self, url: str | None) -> str | None:
@@ -443,6 +600,15 @@ class ActionExecutor:
             return url
 
     def dom_status(self) -> dict:
+        # DEPRECATED: DOM operations disabled
+        return {'dom_available': False, 'has_page': False, 'current_url': None}
+        # ensure runner
+        if not self._ensure_playwright() or not getattr(self, '_pw_runner', None):
+            return {
+                'dom_available': False,
+                'has_page': False,
+                'current_url': None
+            }
         try:
             s = self._pw_runner.status() if getattr(self, '_pw_runner', None) else {}
             cur = s.get('current_url')
@@ -459,6 +625,38 @@ class ActionExecutor:
                 'has_page': False,
                 'current_url': None
             }
+
+    # ================= [新增] 语义交互接口 =================
+
+    def dom_scan(self) -> str:
+        """扫描当前页面，返回带 ID 的元素地图"""
+        # DEPRECATED: DOM operations disabled
+        return "❌ DOM 操作已弃用: dom_scan"
+        if not self._ensure_playwright(): return "❌ 浏览器未启动"
+        res = self._pw_runner.scan_page()
+        if not res: return "⚠️ 页面为空或未检测到可交互元素"
+        # 截取前 80 个元素防止 Token 爆炸，通常头部和内容区在前 80 个里
+        return f"【页面元素地图】\n{res}" 
+
+    def dom_click_id(self, id: int) -> str:
+        """点击指定 ID 的元素"""
+        # DEPRECATED: DOM operations disabled
+        return "❌ DOM 操作已弃用: dom_click_id"
+        if not self._ensure_playwright(): return "❌ 浏览器未启动"
+        res = self._pw_runner.interact_id('click', id)
+        if res.get('ok'):
+            return f"✅ 已点击 ID [{id}]"
+        return f"❌ 点击失败: {res.get('error')}"
+
+    def dom_fill_id(self, id: int, value: str) -> str:
+        """在指定 ID 的元素输入文字"""
+        # DEPRECATED: DOM operations disabled
+        return "❌ DOM 操作已弃用: dom_fill_id"
+        if not self._ensure_playwright(): return "❌ 浏览器未启动"
+        res = self._pw_runner.interact_id('fill', id, value)
+        if res.get('ok'):
+            return f"✅ 已在 ID [{id}] 输入: {value}"
+        return f"❌ 输入失败: {res.get('error')}"
 
     def click_text(self, text: str, clicks: int = 1, interval: float = 0.0, button: str = 'left') -> str:
         """

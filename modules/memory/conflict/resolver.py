@@ -63,7 +63,14 @@ class ConflictResolver:
                         layer_name=layer_name
                     ))
             except Exception as e:
-                self.logger.error(f"[检索失败] [{layer_name}] entity={entity} | {e}")
+                # When the ChromaDB folder is empty/corrupted it may raise
+                # "Internal error: Error creating hnsw segment reader: Nothing found on disk".
+                # This isn't critical; treat it as no results rather than a crash.
+                msg = str(e)
+                if "Nothing found on disk" in msg:
+                    self.logger.debug(f"[检索跳过] [{layer_name}] 空数据库: {msg}")
+                else:
+                    self.logger.error(f"[检索失败] [{layer_name}] entity={entity} | {e}")
 
         return candidates
 
@@ -94,7 +101,11 @@ class ConflictResolver:
                         layer_name=layer_name
                     ))
             except Exception as e:
-                self.logger.error(f"[检索失败] [{layer_name}] | {e}")
+                msg = str(e)
+                if "Nothing found on disk" in msg:
+                    self.logger.debug(f"[检索跳过] [{layer_name}] 空数据库: {msg}")
+                else:
+                    self.logger.error(f"[检索失败] [{layer_name}] | {e}")
 
         return candidates
 

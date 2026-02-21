@@ -172,37 +172,41 @@ class PlaywrightRunner:
                     return {'ok': False, 'error': 'click_error', 'detail': detail}
 
     async def _fill(self, selector: str, value: str, by: str = 'css'):
-        """Fill input element identified by selector (supports css/xpath)."""
         if not self._page:
             return {'ok': False, 'error': 'no_page'}
         sel = selector if by == 'css' else f'xpath={selector}'
+        
         try:
-            await self._page.fill(sel, value)
+            # 1. 聚焦元素 (B站的关键：必须先点一下，激活输入框)
+            await self._page.focus(sel)
+            
+            # 2. 模拟真实打字 (type 比 fill 更能触发网页逻辑)
+            # 这里的 delay 模拟人类打字速度，防止被网页判定为脚本瞬间注入而被清空
+            await self._page.fill(sel, "") # 先清空
+            await self._page.type(sel, value, delay=50) 
+            
+            # 3. 【核心步骤】校验填入是否成功
+            current_val = await self._page.input_value(sel)
+            
+            # 如果填入失败（比如变成了推荐词），使用 JS 暴力覆盖
+            if current_val != value:
+                print(f"⚠️ [DOM] 标准输入失效 (当前值: {current_val})，尝试 JS 强制注入...")
+                js_code = f"""
+                    const el = document.querySelector('{sel}');
+                    if(el) {{
+                        el.value = '{value}';
+                        // 必须触发以下事件，B站才会承认这个值
+                        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        el.dispatchEvent(new Event('blur', {{ bubbles: true }})); // 失去焦点锁定值
+                    }}
+                """
+                await self._page.evaluate(js_code)
+            
             return {'ok': True}
-        except Exception:
-            try:
-                # try locator fallback
-                await self._page.locator(sel).first.fill(value)
-                return {'ok': True}
-            except Exception:
-                try:
-                    # final fallback: set value via JS
-                    js_sel = json.dumps(selector)
-                    if by == 'css':
-                        js = (
-                            f"(function(){{ const el = document.querySelector({js_sel}); if(!el) return false; el.value = {json.dumps(value)}; el.dispatchEvent(new Event('input', {str({'bubbles': True}).lower()})); return true; }})()"
-                        )
-                    else:
-                        js = (
-                            f"(function(){{ var res = document.evaluate({js_sel}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null); var el = res && res.singleNodeValue; if(!el) return false; el.value = {json.dumps(value)}; el.dispatchEvent(new Event('input', {str({'bubbles': True}).lower()})); return true; }})()"
-                        )
-                    ok = await self._page.evaluate(js)
-                    if ok:
-                        return {'ok': True}
-                    return {'ok': False, 'error': 'fill_js_failed'}
-                except Exception as e_js:
-                    return {'ok': False, 'error': 'fill_error', 'detail': str(e_js)}
-
+            
+        except Exception as e:
+            return {'ok': False, 'error': f"fill_failed: {str(e)}"}
     async def _eval(self, expression: str):
         """Evaluate a JS expression in page context and return standardized result dict."""
         if not self._page:
@@ -223,25 +227,118 @@ class PlaywrightRunner:
 
     # --- sync wrappers exposed to caller thread ---
     def open(self, bt: str, url: str | None, headless: bool, executable_path: str | None):
-        return self._run(self._open(bt, url, headless, executable_path))
+        # DEPRECATED: DOM operations disabled
+        return {'ok': False, 'error': 'dom_disabled'}
+        # return self._run(self._open(bt, url, headless, executable_path))
 
     def navigate(self, url: str, timeout: int = 15000):
-        return self._run(self._navigate(url, timeout))
+        # DEPRECATED: DOM operations disabled
+        return {'ok': False, 'error': 'dom_disabled'}
+        # return self._run(self._navigate(url, timeout))
 
     def query(self, selector: str, by: str = 'css', multiple: bool = False):
-        return self._run(self._query(selector, by, multiple))
+        # DEPRECATED: DOM operations disabled
+        return []
+        # return self._run(self._query(selector, by, multiple))
 
     def click(self, selector: str, by: str = 'css', timeout: int = 5000):
-        return self._run(self._click(selector, by, timeout))
+        # DEPRECATED: DOM operations disabled
+        return {'ok': False, 'error': 'dom_disabled'}
+        # return self._run(self._click(selector, by, timeout))
 
     def click_index(self, selector: str, by: str = 'css', index: int = 0, timeout: int = 5000):
-        return self._run(self._click_by_index(selector, by, index, timeout))
+        # DEPRECATED: DOM operations disabled
+        return {'ok': False, 'error': 'dom_disabled'}
+        # return self._run(self._click_by_index(selector, by, index, timeout))
 
     def fill(self, selector: str, value: str, by: str = 'css'):
-        return self._run(self._fill(selector, value, by))
+        # DEPRECATED: DOM operations disabled
+        return {'ok': False, 'error': 'dom_disabled'}
+        # return self._run(self._fill(selector, value, by))
 
     def evaluate(self, expression: str):
-        return self._run(self._eval(expression))
+        # DEPRECATED: DOM operations disabled
+        return {'ok': False, 'error': 'dom_disabled'}
+        # return self._run(self._eval(expression))
 
     def status(self):
-        return self._run(self._status())
+        # DEPRECATED: DOM operations disabled
+        return {'has_page': False, 'current_url': None}
+        # return self._run(self._status())
+
+    # ================= [新增] 全页扫描核心逻辑 =================
+
+    async def _scan_page(self):
+        """注入 JS，给所有交互元素打标，并返回列表"""
+        if not self._page: return []
+        
+        # 这一大段 JS 是核心：清洗旧ID -> 寻找可见元素 -> 打新ID -> 提取文本
+        js_script = """
+        () => {
+            // 1. 清理旧标签
+            document.querySelectorAll('[data-seeka-id]').forEach(el => el.removeAttribute('data-seeka-id'));
+            
+            let items = [];
+            let id_counter = 0;
+            
+            // 2. 定义什么是"可交互元素"
+            const selectors = 'a, button, input, textarea, select, [role="button"], [onclick]';
+            
+            document.querySelectorAll(selectors).forEach(el => {
+                // 3. 过滤不可见元素 (面积为0，或样式隐藏)
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0' || rect.width === 0 || rect.height === 0) return;
+                
+                // 4. 提取关键信息
+                let tag = el.tagName.toLowerCase();
+                let text = (el.innerText || el.placeholder || el.value || el.getAttribute('aria-label') || "").replace(/\s+/g, ' ').trim();
+                
+                // 5. 只有有意义的元素才打标 (有文字，或者是输入框)
+                if (text.length > 0 || tag === 'input' || tag === 'textarea') {
+                    el.setAttribute('data-seeka-id', id_counter);
+                    
+                    // 格式化输出: [ID] <标签> "内容"
+                    items.push(`[${id_counter}] <${tag}> "${text.substring(0, 50)}"`);
+                    id_counter++;
+                }
+            });
+            return items.join('\n');
+        }
+        """
+        
+        try:
+            result = await self._page.evaluate(js_script)
+            return result
+        except Exception as e:
+            return f"扫描脚本执行失败: {e}"
+
+    async def _interact_by_id(self, action_type, id, value=None):
+        """根据 data-seeka-id 定位并操作"""
+        if not self._page: return {'ok': False, 'error': 'no_page'}
+        
+        selector = f'[data-seeka-id="{id}"]'
+        try:
+            # 滚动到可见区域
+            locator = self._page.locator(selector).first
+            if await locator.count() == 0:
+                return {'ok': False, 'error': f'ID {id} not found (可能页面已刷新)'}
+                
+            await locator.scroll_into_view_if_needed()
+            
+            if action_type == 'click':
+                # 强制点击，无视遮挡
+                await locator.click(force=True)
+            elif action_type == 'fill':
+                await locator.fill(str(value))
+                
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)}
+
+    # --- 同步包装器 (供 Executor 调用) ---
+    def scan_page(self):
+        return self._run(self._scan_page())
+        
+    def interact_id(self, action_type, id, value=None):
+        return self._run(self._interact_by_id(action_type, id, value))
