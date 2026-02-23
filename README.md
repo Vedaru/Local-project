@@ -22,11 +22,13 @@
 
 ## 重要变更（已同步） 🔀
 - **已完成**：`modules/controller` 的功能已合并到 `modules/agent`，并对 Agent 实现进行了模块化拆分以便维护。
-- **影响**：若你之前直接从 `modules.controller` 导入类（如 `ComputerController` / `ActionExecutor` / `SafetyGuard`），请改为从 `modules.agent` 导入（或使用新的具体模块路径）。
+- **影响**：`ComputerController` 已经与 `AgentTools` 合并。你现在应当从
+  `modules.agent` 导入工具，例如：
 
-示例迁移：
-- 旧：`from modules.controller import ComputerController, ActionExecutor, SafetyGuard`
-- 新：`from modules.agent import ComputerController, ActionExecutor, SafetyGuard`
+示例：
+- 新：`from modules.agent import AgentTools, SafetyGuard`
+  （控制功能已完全移入 `AgentTools` 及 `tools` 子模块；`ActionExecutor`
+  类仅保留为历史兼容，实际代码不应引用或依赖它。）
 
 > 目的：统一 Agent/Controller 行为、减少单文件体积、提高可测试性与复用性。
 
@@ -195,12 +197,10 @@ Local-project/
 │   │   ├── __init__.py
 │   │   ├── browser.py         # 浏览器 / 网页检索工具
 │   │   ├── core.py            # Agent 核心逻辑（ReAct loop）
-│   │   ├── tools.py           # Agent 可用工具封装（主入口）
-│   │   ├── controller.py      # ComputerController（指令解析与调度，原 modules.controller.core）
-│   │   ├── executor.py        # ActionExecutor（系统/Playwright 操作，原 modules.controller.executor）
+│   │   ├── tools.py           # Agent 可用工具封装（主入口，包含原 ActionExecutor 功能）
 │   │   ├── safety.py          # SafetyGuard（安全白名单校验，原 modules.controller.safety）
 │   │   ├── dom_tools.py       # （已弃用）DOM 操作的委派/适配函数，已被注释停用
-│   │   ├── dom_utils.py       # （已弃用）DOM 辅助函数，已被注释停用
+│   │   ├── dom_utils.py       # 已弃用并可删除，原为 BrowserAgent 提供 DOM 提取，现在不再使用
 │   │   ├── playwright_runner.py # Playwright 后台 runner（线程安全）
 │   │   ├── window.py          # 窗口管理辅助（拆分自 executor）
 │   │   └── file_tools.py      # 文件/笔记助手（拆分自 executor）
@@ -271,7 +271,7 @@ Local-project/
 
 ### 其他模块
 - **config.py**: 加载和管理项目配置。
-- **controller/**: （已迁移）电脑控制相关功能现已合并到 `modules.agent`：见 `modules/agent/controller.py`, `modules/agent/executor.py`, `modules/agent/safety.py`。
+- **controller/**: 已不存在（功能已并入 `modules.agent`，相关逻辑现在由 `AgentTools` 提供）。
 - **ear.py**: 语音识别模块。
 - **llm.py**: 与 LLM 的接口。
 - **logging_config.py**: 配置日志记录。

@@ -12,5 +12,6 @@
 """
 
 from .core import HumanLikeMemory, MemoryManager
+from .skills import SkillManager
 
-__all__ = ['HumanLikeMemory', 'MemoryManager']
+__all__ = ['HumanLikeMemory', 'MemoryManager', 'SkillManager']

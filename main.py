@@ -13,7 +13,7 @@ import threading
 import queue
 import tempfile
 import time
-from typing import Optional
+from typing import Optional, Any
 
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication
@@ -25,12 +25,10 @@ from modules.memory import MemoryManager
 from modules.memory.logger import get_logger as get_memory_logger
 from modules.voice import VoiceManager
 from modules.ear import Ear
-from modules.agent import ComputerController, SafetyGuard, ActionExecutor
-from modules.agent.browser import BrowserAgent
+from modules.agent import SafetyGuard, AgentTools
 from modules.llm import call_llm
 # Agent 模块（Manus 风格的 ReAct 智能体）
 from modules.agent.core import ManusAgent
-from modules.agent.tools import AgentTools
 from modules.config import REF_AUDIO, PROMPT_TEXT, SOVITS_URL, GPT_SOVITS_PATH, MODEL_NAME, SYSTEM_PROMPT, CONTROLLER_ENABLED, CONTROLLER_FAILSAFE, CONTROLLER_APP_WHITELIST
 from modules.utils import clean_text, start_gpt_sovits_api, check_sovits_service, filter_emotion_tags
 from modules.logging_config import get_logger
@@ -107,7 +105,7 @@ class AIWorker(threading.Thread):
         input_queue: queue.Queue,
         memory_manager: MemoryManager,
         voice_manager: VoiceManager,
-        controller: Optional[ComputerController] = None,
+        controller: Optional[Any] = None,
         agent: Optional[ManusAgent] = None
     ):
         super().__init__(daemon=True)
@@ -159,7 +157,32 @@ class AIWorker(threading.Thread):
                 # 跳过空输入
                 if not cleaned_input.strip():
                     continue
-                
+
+                # -------- 教学模式触发 --------
+                import re
+                # 识别各种表达“我来教你/我要教你/开始教学”的语句
+                if re.search(r'(?:开始教学|我要教你|我(?:来)?教你|来教你)', cleaned_input):
+                    m = re.search(r'(?:开始教学|我要教你|我(?:来)?教你|来教你)(.*)', cleaned_input)
+                    task_name = m.group(1).strip() if m else ""
+                    if self.agent:
+                        _ = self.agent.start_learning(task_name)
+                        msg = "好的，进入教学模式，请演示一遍给我看。"
+                    else:
+                        msg = "⚠️ Agent 未初始化，无法进入教学模式。"
+                    # 语音 + 文本响应都发出，以便界面恢复可输入状态
+                    self.signals.speak_request.emit(msg)
+                    self.signals.response_ready.emit(msg)
+                    continue
+
+                if any(kw in cleaned_input for kw in ("教学结束", "学会了吗")):
+                    if self.agent:
+                        result = self.agent.stop_learning()
+                    else:
+                        result = "⚠️ Agent 未初始化，无法结束教学。"
+                    self.signals.speak_request.emit(result)
+                    self.signals.response_ready.emit(result)
+                    continue
+
                 # 添加到短期记忆
                 self.memory_manager.add_to_short_term("用户", cleaned_input)
                 
@@ -341,7 +364,7 @@ class AIWorker(threading.Thread):
                                 if self.agent and hasattr(self.agent, 'tools') and self.agent.tools:
                                     tools_executor = self.agent.tools
                                 else:
-                                    from modules.agent.tools import AgentTools
+                                    from modules.agent import AgentTools
                                     tools_executor = AgentTools(controller=self.controller)
 
                                 logger.info(f"检测到 Agent-style 输出，执行工具: {tool_name} args={tool_args}")
@@ -392,7 +415,7 @@ class AIWorker(threading.Thread):
                         if self.agent and hasattr(self.agent, 'tools') and self.agent.tools:
                             tools_executor = self.agent.tools
                         else:
-                            from modules.agent.tools import AgentTools
+                            from modules.agent import AgentTools
                             tools_executor = AgentTools(controller=self.controller)
 
                         logger.info(f"检测到 Agent-style 输出，执行工具: {tool_name} args={tool_args}")
@@ -482,7 +505,7 @@ class MainApplication:
         
         self.memory_manager: Optional[MemoryManager] = None
         self.voice_manager: Optional[VoiceManager] = None
-        self.controller: Optional[ComputerController] = None  # 新增：电脑控制器
+        self.controller: Optional[Any] = None  # 新增：电脑控制器，实际为 AgentTools 实例
         self.sovits_process = None
         self.agent: Optional[ManusAgent] = None  # 本地智能体（ManusAgent）实例
         
@@ -518,25 +541,21 @@ class MainApplication:
             prompt_text=PROMPT_TEXT,
         )
         
-        # 初始化电脑控制器（如果启用）
+        # 初始化电脑控制模块（如果启用）。
         if CONTROLLER_ENABLED:
             safety_guard = SafetyGuard(CONTROLLER_APP_WHITELIST)
-            action_executor = ActionExecutor(failsafe=CONTROLLER_FAILSAFE)
-            self.controller = ComputerController(safety_guard, action_executor)
+            # agent tools 将在需要时自动创建内部的 ActionExecutor；
+            # 上层无需保留那个引用。
+            self.controller = None
             logger.info("电脑控制模块已启用")
 
-            # 尝试在启动时初始化 Playwright（避免启动阶段的假性不可用提示）
+            # Playwright 初始化／可用性也由 tools 暴露
             try:
-                try:
-                    action_executor._ensure_playwright()
-                except Exception as _e:
-                    # 不阻塞启动，仅记录调试信息
-                    logger.debug(f"Playwright 启动时初始化失败（可忽略）：{_e}")
-
-                if getattr(self.controller.action_executor, 'dom_available', False):
+                tools_tmp = AgentTools(safety_guard=safety_guard)
+                tools_tmp.ensure_playwright()
+                if tools_tmp.dom_available:
                     self.signals.status_update.emit("✅ DOM 工具（Playwright）已启用：网页交互可用。")
                 else:
-                    # 更精确的诊断：区分 Playwright 包是否已安装 vs. 浏览器二进制未安装
                     try:
                         import importlib.util
                         spec = importlib.util.find_spec('playwright')
@@ -553,8 +572,10 @@ class MainApplication:
             self.controller = None
             logger.info("电脑控制模块已禁用")
 
-        # 初始化 Agent（Manus 风格 ReAct 智能体）并注入工具集（使用现有 ComputerController）
-        tools = AgentTools(controller=self.controller)
+        # 初始化 Agent（Manus 风格 ReAct 智能体）并注入工具集
+        tools = AgentTools(safety_guard=safety_guard if CONTROLLER_ENABLED else None)
+        # 为旧代码兼容，将 controller 指向同一个对象
+        self.controller = tools
         self.agent = ManusAgent(llm_fn=call_llm, tools=tools, model_name=MODEL_NAME, system_prompt=SYSTEM_PROMPT)
 
         
@@ -855,28 +876,6 @@ class MainApplication:
 
 
 
-def simple_browser_demo():
-    """简单演示 BrowserAgent 的 Observe->Think->Act 循环"""
-    agent = BrowserAgent()
-    goal = "Navigate to https://www.baidu.com, type 'DeepSeek' into the search box, and click the '百度一下' button."
-    max_steps = 10
-    print("开始浏览器代理演示...")
-    for i in range(max_steps):
-        dom = agent.observe()
-        print(f"DOM 内容 ({len(dom)} 元素)")
-        action_text = agent.think(goal, dom)
-        print("LLM 返回:", action_text)
-        result = agent.act(action_text)
-        print("执行结果:", result)
-        # 结束条件：模型指示结束或搜索结果已出现
-        if isinstance(result, str) and 'finished' in result:
-            print("代理决定完成任务。")
-            break
-        if 'wd=' in agent.page.url or 'DeepSeek' in agent.page.url:
-            print("检测到搜索结果页面，任务完成。 url=", agent.page.url)
-            break
-    agent.close()
-
 
 def signal_handler(sig, frame):
     """处理 Ctrl+C 信号"""
@@ -908,11 +907,7 @@ def main():
 if __name__ == "__main__":
     import sys
     # 支持命令行参数：
-    #   --browser-demo 运行简化的 BrowserAgent 演示
     #   --ear-demo     启动听觉模块演示（原有代码）
-    if "--browser-demo" in sys.argv:
-        simple_browser_demo()
-        sys.exit(0)
 
     # 提供一个可选的命令行参数: --ear-demo ，用于快速本地测试 modules/ear.py 的听觉功能 - 暂时禁用
     # if "--ear-demo" in sys.argv:

@@ -7,6 +7,15 @@ from openai import APIConnectionError, APITimeoutError, APIStatusError, RateLimi
 from .config import client
 from .logging_config import get_logger
 
+# dynamic tool descriptions
+# registry resides under the ``agent`` subpackage
+from .agent.registry import registry as tool_registry
+
+
+def _get_tools_knowledge() -> str:
+    """返回目前注册工具的提示字符串，用于 system prompt 注入。"""
+    return "可用工具及使用说明：\n\n" + tool_registry.get_prompt_description() + "\n"
+
 logger = get_logger('llm')
 
 # 已迁移的 system-prompt 片段（保存在代码中以节省 token；必要时由程序拼接注入）
@@ -16,34 +25,16 @@ CORE_PROHIBITIONS = """核心禁令
 3. 禁止过度礼貌：不要频繁使用“谢谢”“不客气”等礼貌短语。
 4. 禁止使用括号：尽量避免使用中文或英文圆括号。
 5. 禁止 JSON 语音化：不要在语音输出或普通回复中暴露 [ACTION]、[SUMMON_AGENT] 或 {} 等原始标记。
-6. **禁止文字演戏**：严禁使用 `（描写动作）` 来代替真正的 `[ACTION]` 标签。
-7. **必须言行合一**：如果你在回复中提到你要搜索、点击或打字，你必须在回复的末尾**立即**附加对应的 JSON 指令。
-8. **连击逻辑**：当用户要求你执行多个步骤时，你必须在第一轮回复中一次性给出所有必要的指令，而不是分多轮回复。
-   [ACTION]{"action":"dom_open","url":"..."}[/ACTION][ACTION]{"action":"dom_fill","selector":".nav-search-input","value":"宋浩"}[/ACTION]
+6. **必须言行合一**：如果你在回复中提到你要搜索、点击或打字，你必须在回复的末尾**立即**附加对应的 JSON 指令。
 """
 
 INSTRUCTION_FORMAT = """指令格式规范
-- 单步控制 [ACTION] 示例：[ACTION]{"action":"dom_open","url":"https://www.baidu.com"}[/ACTION]
+- 单步控制 [ACTION] 示例：[ACTION]{"action":"open_local_app","app_path":"notepad"}[/ACTION]（如果是网页可用 browse）
 - 复杂任务派发 [SUMMON_AGENT] 示例：[SUMMON_AGENT]{"task":"具体任务描述"}[/SUMMON_AGENT]
 """
 
 # --- 工具知识库（供系统 prompt 注入） ---
 # 此段描述当前可用的 AgentTools 函数及其原理，帮助 LLM 理解何时调用它们。
-TOOLS_KNOWLEDGE = """
-可用工具及使用说明：
-
-3. read_file(path) / write_file(path, content)
-   - 原理：直接在磁盘上读写文本文件。
-   - 用法：读取项目文件或保存生成内容到指定路径。
-   - 注意：路径必须合法且不越权。
-
-4. open_local_app(app_path)
-   - 原理：调用系统 API 启动本地程序（Windows 使用 os.startfile）。
-   - 用法：在安全白名单内启动应用，如记事本、浏览器等。
-
-> 以上工具都是可被 LLM 直接调用的，并在 AgentTools.execute 中进行调度。
-> 不再存在旧的 dom_* 系列方法；不要在提示词中提及它们，也不要生成类似指令。
-"""
 
 
 def _normalize_text(value, default=""):
@@ -71,11 +62,17 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
     # 要求 LLM 在需要本地执行复杂联网 / 本地操作时，在回复末尾添加特殊标签：
     # [SUMMON_AGENT]{"task": "<简明任务描述>"}[/SUMMON_AGENT]
     # 标签内必须是 JSON（仅包含 task 字段或其他必要字段），主程序会检测到并启动 modules.agent 执行。
+    # 对于简单的本地命令（例如打开记事本、打开浏览器、运行程序等），请使用 [ACTION] 形式告诉控制器
+    # 示例：
+    #   [ACTION]{"action":"open_local_app","app_path":"notepad"}[/ACTION]
+    # 或者您可以在末尾附加 Agent JSON。
     agent_trigger_hint = (
         "注意：如果用户请求需要联网检索、规划或操作本地电脑的复杂任务，"
         "请在回复末尾以纯 JSON 的形式添加触发标签："
         "[SUMMON_AGENT]{\"task\": \"<简明任务描述>\"}[/SUMMON_AGENT]。"
         "标签内只应包含 JSON，不要包含其他文字。"
+        "对于那些仅需启动本地程序的简单命令，您也可以直接使用 [ACTION] 标签，"
+        "例如 [ACTION]{\"action\":\"open_local_app\",\"app_path\":\"notepad\"}[/ACTION]。"
     )
     if "[SUMMON_AGENT]" not in system_prompt:
         system_prompt = system_prompt + "\n\n" + agent_trigger_hint
@@ -83,12 +80,15 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
 
     # --- 工具使用指导 ---
     tool_guidance = (
-        "当前可用的工具已在 TOOLS_KNOWLEDGE 中列出。" 
-        "在生成回答时，如需执行网络搜索、读取/写入文件或启动本地程序，" 
+        "当前可用的工具已在提示词中列出。"
+        "在生成回答时，如需执行网络搜索、读取/写入文件或启动本地程序，"
         "请直接调用对应工具。"
+        "例如，当用户说“打开笔记本”或“打开记事本”时，应该返回 JSON {\"tool\":\"open_local_app\",\"args\":\"notepad\"}。"
+        "当用户要求写日志或写一段文字到笔记本时，可直接使用 open_local_app 然后 type_text。"
     )
-    if "盲人神探" not in system_prompt:
-        system_prompt = system_prompt + "\n\n" + tool_guidance + "\n\n" + TOOLS_KNOWLEDGE
+    if tool_guidance not in system_prompt:
+        # 插入最新的工具说明，而不是使用静态 TOOLS_KNOWLEDGE
+        system_prompt = system_prompt + "\n\n" + tool_guidance + "\n\n" + _get_tools_knowledge()
 
     if not model_name:
         logger.error("未配置 MODEL_NAME，请检查 .env 文件")

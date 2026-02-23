@@ -1,10 +1,8 @@
-"""file_tools — 文件相关小工具（从 ActionExecutor.save_note 拆分）
-
-导出：save_note_to_desktop(content, filename=None)
-"""
 import os
 from datetime import datetime
+import logging
 
+logger = logging.getLogger('AgentTools.save_note')
 
 def save_note_to_desktop(content: str, filename: str | None = None) -> str:
     """将内容保存到用户桌面，返回结果消息。"""
@@ -21,4 +19,5 @@ def save_note_to_desktop(content: str, filename: str | None = None) -> str:
             f.write(content)
         return f"✅ 成功保存笔记到桌面: {filename}"
     except Exception as e:
+        logger.error(f"save_note_to_desktop failed: {e}", exc_info=True)
         return f"❌ 保存笔记失败, 错误: {e}"
