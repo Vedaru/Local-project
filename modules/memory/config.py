@@ -87,3 +87,31 @@ ENTITY_FLAGS = set(ENTITY_WEIGHTS.keys())
 PUNCTUATION = ['。', '！', '？', '!', '?', '\n', '；', ';', '：', ':', '，', ',']
 CLEAN_PATTERN = re.compile(r'[^\u4e00-\u9fa5a-zA-Z0-9\s。！？!?\n；;：:，,]')
 SPACE_PATTERN = re.compile(r'\s+')
+
+# ==================== 回顾性提问检测 ====================
+REVIEW_PATTERNS = (
+    '你还记得', '还记得我', '我之前说过', '我以前说过', '我刚才说', '我刚刚说',
+    '我曾经说', '我刚才提到', '我刚刚提到', '我之前提到', '我以前提到',
+    '你记得', '记得我', '你能回忆', '你能想起', '你能记得', '你能告诉我我',
+    '我问过', '我说过', '我提过', '我提到过', '我讲过', '我讲到过',
+    '你知道我', '你知道我喜欢', '你知道我讨厌', '你知道我最喜欢', '你知道我最讨厌',
+    '你能猜', '你猜我', '你能想到', '你能想到我', '你能想到我喜欢', '你能想到我讨厌',
+    '你能想到我最喜欢', '你能想到我最讨厌',
+)
+_QUESTION_MARKS = ('吗', '?', '？')
+
+
+def is_review_question(text: str) -> bool:
+    """检测是否为回顾性提问，如"你还记得我喜欢…吗""我之前说过…"等。
+
+    NOTE: storage.py 和 retrieval.py 之前各自维护了一份重复实现，
+    现统一至此处。
+    """
+    has_pattern = any(p in text for p in REVIEW_PATTERNS)
+    if not has_pattern:
+        return False
+    # 有问号时立即命中
+    if any(q in text for q in _QUESTION_MARKS):
+        return True
+    # 明显回顾性提问，即使没问号
+    return True

@@ -15,9 +15,10 @@ logger = get_logger('Memory.Skills')
 
 
 class SkillManager:
-    def __init__(self):
+    def __init__(self, storage: StorageClient = None):
         # 复用记忆存储的 chromadb client，节省资源
-        self.storage = StorageClient()
+        # 如果外部传入 storage 实例则共享连接，否则退化创建新实例
+        self.storage = storage if storage is not None else StorageClient()
         self.client = self.storage.client
         # 获取或创建用于存放技能的 collection
         try:

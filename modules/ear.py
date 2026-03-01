@@ -80,7 +80,7 @@ class Ear:
         self.max_record_seconds = max_record_seconds
 
         # PyAudio / 流
-        if not globals().get('PYAUDIO_AVAILABLE', False):
+        if not PYAUDIO_AVAILABLE:
             raise ImportError("pyaudio is required for Ear but is not installed. Install via your platform's package manager or `pip install pyaudio`.")
         self.pa = pyaudio.PyAudio()
         self.stream = None

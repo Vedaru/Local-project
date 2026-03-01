@@ -9,10 +9,13 @@ import os
 # 必须在导入任何其他模块前设置环境变量（修复 ctranslate2 的 ROCm 路径问题）
 os.environ["CT2_USE_CUDA"] = "0"
 
+import re
+import json
 import threading
 import queue
 import tempfile
 import time
+import wave
 from typing import Optional, Any
 
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
@@ -32,6 +35,7 @@ from modules.agent.core import ManusAgent
 from modules.config import REF_AUDIO, PROMPT_TEXT, SOVITS_URL, GPT_SOVITS_PATH, MODEL_NAME, SYSTEM_PROMPT, CONTROLLER_ENABLED, CONTROLLER_FAILSAFE, CONTROLLER_APP_WHITELIST
 from modules.utils import clean_text, start_gpt_sovits_api, check_sovits_service, filter_emotion_tags
 from modules.logging_config import get_logger
+from modules.json_utils import extract_first_json
 
 
 class AIWorkerSignals(QObject):
@@ -118,6 +122,14 @@ class AIWorker(threading.Thread):
         self._running = True
         # 当模型因“人设/拒绝”而中断任务时，在下一轮强制提醒它继续未完成的任务
         self._force_continue_next = False
+        self._force_lock = threading.Lock()  # 保护 _force_continue_next 的线程安全
+
+    def _get_tools_executor(self):
+        """获取工具执行器（优先使用已初始化的 ManusAgent.tools，否则临时创建）"""
+        if self.agent and hasattr(self.agent, 'tools') and self.agent.tools:
+            return self.agent.tools
+        from modules.agent import AgentTools
+        return AgentTools(controller=self.controller)
     
     def run(self):
         """线程主循环"""
@@ -159,7 +171,7 @@ class AIWorker(threading.Thread):
                     continue
 
                 # -------- 教学模式触发 --------
-                import re
+
                 # 识别各种表达“我来教你/我要教你/开始教学”的语句
                 if re.search(r'(?:开始教学|我要教你|我(?:来)?教你|来教你)', cleaned_input):
                     m = re.search(r'(?:开始教学|我要教你|我(?:来)?教你|来教你)(.*)', cleaned_input)
@@ -195,17 +207,41 @@ class AIWorker(threading.Thread):
                 self.signals.expression_change.emit(Emotion.THINKING)
                 
                 # 在下一轮若需强制继续未完成任务，则把提示插入到用户输入前
-                if getattr(self, '_force_continue_next', False) and cleaned_input and cleaned_input.lower() not in ('status','exit','quit'):
+                with self._force_lock:
+                    should_force = self._force_continue_next
+                    if should_force:
+                        self._force_continue_next = False
+                if should_force and cleaned_input and cleaned_input.lower() not in ('status','exit','quit'):
                     cleaned_input = "请继续执行未完成的任务，发送指令标签。\n\n" + cleaned_input
-                    self._force_continue_next = False
+
+                # --- 注入当前浏览器状态，让 LLM 知道是否已有打开的页面 ---
+                browser_ctx = ""
+                try:
+                    tools_inst = self._get_tools_executor()
+                    if getattr(tools_inst, '_page', None) is not None:
+                        page = tools_inst._page
+                        cur_url = page.url
+                        cur_title = page.title()
+                        browser_ctx = (
+                            f"\n[当前浏览器状态] 已打开页面: {cur_title} ({cur_url})\n"
+                            "你可以直接对这个页面执行 scan_page、click_element、type_text 等操作，无需再次 browse 打开。\n"
+                        )
+                except Exception:
+                    pass
+                # 将浏览器状态拼接到 memory_context 中传给 LLM
+                full_memory_context = (memory_context + browser_ctx) if browser_ctx else memory_context
 
                 # 调用 LLM 生成响应
-                ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, cleaned_input, memory_context)
+                ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, cleaned_input, full_memory_context)
 
                 # --- 语义触发：优先检测是否包含 [SUMMON_AGENT] 标签 ---
-                import re, json
+                # 优先尝试完整的开闭标签
                 summon_pattern = r'\[SUMMON_AGENT\](.*?)\[/SUMMON_AGENT\]'
                 m = re.search(summon_pattern, ai_response, re.DOTALL)
+                # 如果严格匹配失败但包含开始标签（LLM 经常漏写闭合标签），尝试宽松匹配
+                if not m and '[SUMMON_AGENT]' in ai_response:
+                    lenient_pattern = r'\[SUMMON_AGENT\]\s*(\{.*\})'
+                    m = re.search(lenient_pattern, ai_response, re.DOTALL)
                 if m:
                     # 提取标签前的普通回复以及标签内的 JSON 任务
                     pre_text = ai_response[:m.start()].strip()
@@ -214,8 +250,15 @@ class AIWorker(threading.Thread):
                     try:
                         payload = json.loads(tag_json)
                         task_desc = payload.get('task')
+                        # LLM 有时会返回 {"actions":[...]} 而不是 {"task":"..."}
+                        # 在这种情况下，用原始用户输入作为 task_desc
+                        if not task_desc and ('actions' in payload or 'tool' in payload):
+                            task_desc = cleaned_input
+                            logger.info(f"SUMMON_AGENT JSON 无 task 字段，使用用户原始输入作为任务: {task_desc}")
                     except Exception as e:
-                        logger.error(f"解析 SUMMON_AGENT 任务失败: {e}")
+                        # JSON 解析失败时，用用户原始输入作为任务
+                        logger.warning(f"解析 SUMMON_AGENT JSON 失败: {e}，使用用户输入作为 task")
+                        task_desc = cleaned_input
 
                     # 先播放标签前的闲聊文本（非阻塞 TTS）
                     if pre_text:
@@ -259,174 +302,30 @@ class AIWorker(threading.Thread):
 
                 # --- 自动处理 LLM 直接输出的 Agent-style JSON（无须 [SUMMON_AGENT] 标签） ---
                 try:
-                    def _parse_loose(js_text: str):
-                        """尝试多种宽松 JSON 解析策略，返回 dict 或 None（复用）。"""
-                        try:
-                            return json.loads(js_text)
-                        except Exception:
-                            pass
-                        m = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', js_text, re.IGNORECASE)
-                        candidate = m.group(1) if m else js_text
-                        cand = re.sub(r',\s*(\}|\])', r'\1', candidate)
-                        cand = cand.replace('“', '"').replace('”', '"')
-                        try:
-                            return json.loads(cand)
-                        except Exception:
-                            pass
-                        try:
-                            cand2 = cand.replace("'", '"')
-                            return json.loads(cand2)
-                        except Exception:
-                            try:
-                                import ast
-                                obj = ast.literal_eval(candidate)
-                                if isinstance(obj, dict):
-                                    return obj
-                            except Exception:
-                                return None
-
-                    def _extract_all_jsons(s: str):
-                        """返回文本中所有可解析为 dict 的 JSON（列表，保持顺序）。"""
-                        if not s:
-                            return []
-                        results = []
-
-                        # 1) 提取所有 [ACTION] 块
-                        if '[ACTION]' in s:
-                            for block in re.findall(r'\[ACTION\](.*?)\[/ACTION\]', s, re.DOTALL):
-                                txt = block.strip()
-                                if not txt:
-                                    continue
-                                parsed = _parse_loose(txt)
-                                if isinstance(parsed, dict):
-                                    results.append(parsed)
-
-                        # 2) 平衡花括号扫描提取裸 JSON
-                        i = 0
-                        L = len(s)
-                        while True:
-                            try:
-                                i = s.index('{', i)
-                            except ValueError:
-                                break
-                            depth = 0
-                            in_str = False
-                            esc = False
-                            quote_ch = None
-                            j = i
-                            while j < L:
-                                ch = s[j]
-                                if esc:
-                                    esc = False
-                                elif ch == '\\':
-                                    esc = True
-                                elif in_str:
-                                    if ch == quote_ch:
-                                        in_str = False
-                                        quote_ch = None
-                                elif ch == '"' or ch == "'":
-                                    in_str = True
-                                    quote_ch = ch
-                                elif ch == '{':
-                                    depth += 1
-                                elif ch == '}':
-                                    depth -= 1
-                                    if depth == 0:
-                                        js_text = s[i:j+1]
-                                        parsed = _parse_loose(js_text)
-                                        if isinstance(parsed, dict):
-                                            results.append(parsed)
-                                        break
-                                j += 1
-                            i += 1
-                        return results
-
-                    def _extract_first_json(s: str):
-                        objs = _extract_all_jsons(s)
-                        return objs[0] if objs else None
-
                     auto_attempts = 0
-                    max_auto_attempts = 3
-                    # 如果模型在普通对话里直接输出了工具调用 JSON，则我们自动执行并将观察结果回写给模型，直到模型返回普通文本为止
+                    max_auto_attempts = 8
+                    tools_executor = self._get_tools_executor()
+                    action_history = []  # 记录所有已执行的步骤，帮助 LLM 保持上下文
+                    # 逐步执行：每次只提取并执行第一个工具调用，将观察结果回传给 LLM 决定下一步
                     while auto_attempts < max_auto_attempts:
-                        # 优先处理文本中所有 'tool' JSON（一次性按序执行）
-                        parsed_list = _extract_all_jsons(ai_response)
-                        tool_objs = [o for o in parsed_list if isinstance(o, dict) and 'tool' in o]
-
-                        if tool_objs:
-                            observations = []
-                            for parsed_agent in tool_objs:
-                                tool_name = (parsed_agent.get('tool') or '').strip()
-                                tool_args = parsed_agent.get('args')
-
-                                # 选择执行器（优先使用已初始化的 ManusAgent.tools）
-                                tools_executor = None
-                                if self.agent and hasattr(self.agent, 'tools') and self.agent.tools:
-                                    tools_executor = self.agent.tools
-                                else:
-                                    from modules.agent import AgentTools
-                                    tools_executor = AgentTools(controller=self.controller)
-
-                                logger.info(f"检测到 Agent-style 输出，执行工具: {tool_name} args={tool_args}")
-                                observation = tools_executor.execute(tool_name, tool_args)
-                                logger.info(f"工具观察: {observation}")
-
-                                # 若 dom_open 返回 no_page，短期重试一次
-                                try:
-                                    if (str(tool_name).lower() == 'dom_open' and isinstance(observation, str)
-                                            and 'no_page' in observation.lower()):
-                                        logger.info('dom_open 返回 no_page，尝试重试一次')
-                                        retry_obs = tools_executor.execute(tool_name, tool_args)
-                                        logger.info(f'dom_open 重试返回: {retry_obs}')
-                                        observation = retry_obs
-                                except Exception:
-                                    pass
-
-                                if isinstance(observation, str) and (observation.startswith('❌') or observation.startswith('⚠️') or '无法获取' in observation):
-                                    ai_response = observation
-                                    break
-
-                                observations.append({'tool': tool_name, 'args': tool_args, 'observation': observation})
-
-                            if isinstance(ai_response, str) and ai_response.startswith(('❌','⚠️')):
-                                break
-
-                            followup_prompt = (
-                                f"模型此前的输出为: {json.dumps(tool_objs, ensure_ascii=False)}。"
-                                f"\n工具执行后的观察结果: {json.dumps(observations, ensure_ascii=False)}\n"
-                                "请基于观察结果直接给出面向用户的、可读的最终回答（不要返回任何 JSON 或工具调用）。"
-                            )
-                            ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, followup_prompt, memory_context)
-                            if not ai_response:
-                                ai_response = observations[-1]['observation'] if observations else '抱歉，工具执行无返回。'
-
-                            auto_attempts += 1
-                            continue
-
-                        # 回退到单个 tool 解析（保持兼容）
-                        parsed_agent = _extract_first_json(ai_response)
+                        parsed_agent = extract_first_json(ai_response)
                         if not parsed_agent or not isinstance(parsed_agent, dict) or 'tool' not in parsed_agent:
                             break
 
                         tool_name = (parsed_agent.get('tool') or '').strip()
                         tool_args = parsed_agent.get('args')
 
-                        tools_executor = None
-                        if self.agent and hasattr(self.agent, 'tools') and self.agent.tools:
-                            tools_executor = self.agent.tools
-                        else:
-                            from modules.agent import AgentTools
-                            tools_executor = AgentTools(controller=self.controller)
-
-                        logger.info(f"检测到 Agent-style 输出，执行工具: {tool_name} args={tool_args}")
+                        logger.info(f"检测到 Agent-style 输出(步骤{auto_attempts+1})，执行工具: {tool_name} args={tool_args}")
                         observation = tools_executor.execute(tool_name, tool_args)
                         logger.info(f"工具观察: {observation}")
 
+                        # 若 dom_open 返回 no_page，短期重试一次
                         try:
                             if (str(tool_name).lower() == 'dom_open' and isinstance(observation, str)
                                     and 'no_page' in observation.lower()):
-                                retry_obs = tools_executor.execute(tool_name, tool_args)
-                                observation = retry_obs
+                                logger.info('dom_open 返回 no_page，尝试重试一次')
+                                observation = tools_executor.execute(tool_name, tool_args)
+                                logger.info(f'dom_open 重试返回: {observation}')
                         except Exception:
                             pass
 
@@ -434,10 +333,23 @@ class AIWorker(threading.Thread):
                             ai_response = observation
                             break
 
+                        # 记录本步骤到历史
+                        args_str = json.dumps(tool_args, ensure_ascii=False) if tool_args else ''
+                        obs_short = str(observation)[:200]  # 截断过长的 observation
+                        action_history.append(f"步骤{auto_attempts+1}: {tool_name}({args_str}) → {obs_short}")
+
+                        # 构建包含完整历史的 followup，帮助 LLM 保持上下文
+                        history_text = "\n".join(action_history)
                         followup_prompt = (
-                            f"模型此前的输出为: {json.dumps(parsed_agent, ensure_ascii=False)}。"
-                            f"\n工具执行后的观察结果: {observation}\n"
-                            "请基于观察结果直接给出面向用户的、可读的最终回答（不要返回任何 JSON 或工具调用）。"
+                            f"原始用户请求：{cleaned_input}\n\n"
+                            f"已执行的步骤：\n{history_text}\n\n"
+                            f"最新一步的完整观察结果：\n{observation}\n\n"
+                            "请判断用户的请求是否已完成：\n"
+                            "- 如果已完成（例如已经在目标网站上完成了搜索、页面已导航到搜索结果等），"
+                            "请直接给出面向用户的可读回答（纯文本，不要包含 JSON），不要重复执行已完成的操作。\n"
+                            "- 如果尚未完成，请返回下一步的工具调用 JSON："
+                            '{"tool":"<工具名>","args":"<参数>"}。\n'
+                            "注意：每次只返回一个工具调用，不要重复之前已经成功执行的步骤。"
                         )
                         ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, followup_prompt, memory_context)
                         if not ai_response:
@@ -464,11 +376,12 @@ class AIWorker(threading.Thread):
 
                 # 检测：若模型以“人设/拒绝”中断了进行中的操作且未给出 [ACTION] 指令，标记在下一轮强制提醒模型继续
                 try:
-                    import re
                     persona_pattern = r'\b(作为|我不能|我无法|我不应该|无法执行|不能执行|不便于|抱歉，我|抱歉我)\b'
                     action_keywords = r'搜索|打开|点击|填写|登录|播放|查找|在 B 站|bilibili|搜索视频'
                     if self.controller and '[ACTION]' not in ai_response and re.search(persona_pattern, ai_response, re.I) and re.search(action_keywords, cleaned_input or '', re.I):
-                        self._force_continue_next = True
+                        with self._force_lock:
+
+                            self._force_continue_next = True
                         logger.info("检测到任务可能被人设中断；将在下一轮强制提醒模型继续执行未完成任务。")
                 except Exception:
                     pass
@@ -576,7 +489,12 @@ class MainApplication:
         tools = AgentTools(safety_guard=safety_guard if CONTROLLER_ENABLED else None)
         # 为旧代码兼容，将 controller 指向同一个对象
         self.controller = tools
-        self.agent = ManusAgent(llm_fn=call_llm, tools=tools, model_name=MODEL_NAME, system_prompt=SYSTEM_PROMPT)
+        self.agent = ManusAgent(
+            llm_fn=call_llm, tools=tools, model_name=MODEL_NAME,
+            system_prompt=SYSTEM_PROMPT,
+            max_iterations=20,
+            memory_storage=self.memory_manager._storage if self.memory_manager else None,
+        )
 
         
         # 清理旧记忆
@@ -671,7 +589,6 @@ class MainApplication:
         # 优先尝试从可能的 JSON 中抽取 `thought` 字段，仅将其送入 TTS
         speak_text = text
         try:
-            import re, json
             m = re.search(r'(\{(?:.|\n)*?\})', text)
             if m:
                 try:
@@ -716,7 +633,6 @@ class MainApplication:
                         self.signals.play_audio.emit(wav_path)
 
                         # 3. 等待音频时长后清理临时文件
-                        import wave
                         try:
                             with wave.open(wav_path, 'rb') as wf:
                                 frames = wf.getnframes()
@@ -849,7 +765,6 @@ class MainApplication:
     
     def _console_input_loop(self):
         """控制台输入循环（在子线程运行）"""
-        import time
         # 等待一小段时间，确保启动信息打印完成
         time.sleep(0.5)
         

@@ -18,6 +18,7 @@ import sys
 import json
 import logging
 import logging.handlers
+import traceback
 from datetime import datetime
 from typing import Any, Dict, Optional
 import contextvars
@@ -45,8 +46,7 @@ class JSONFormatter(logging.Formatter):
         # Attach exception information if present
         # exc_info 是一个元组 (type, value, traceback)；不能直接 JSON 序列化
         if record.exc_info:
-            import traceback as _tb
-            payload["exception"] = "".join(_tb.format_exception(*record.exc_info))
+            payload["exception"] = "".join(traceback.format_exception(*record.exc_info))
             # 如果还想保留原始字符串可在这里添加 payload["exc_info"] = ...
 
         # Merge explicit contextvars (trace_id, request_id, user_id, etc.)

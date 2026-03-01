@@ -12,7 +12,9 @@ ManusAgent — 基于 ReAct 的简单智能体主循环实现
 from typing import Any, Optional, List
 import re
 import json
+from urllib.parse import urlparse, parse_qs, urlencode
 from ..logging_config import get_logger
+from ..json_utils import _scan_balanced_brace as scan_balanced_brace
 
 # registry provides dynamic tool descriptions and dispatching
 from .registry import registry as tool_registry
@@ -23,6 +25,22 @@ from ..memory.skills import SkillManager
 logger = get_logger('ManusAgent')
 
 
+def _rewrite_google_to_baidu(val: str) -> str:
+    """将 google 搜索/链接改写为百度等价 URL（安全策略）。"""
+    try:
+        if not isinstance(val, str) or 'google.' not in val:
+            return val
+        p = urlparse(val)
+        hostname = (p.hostname or '').lower()
+        path = p.path or ''
+        if 'google.' in hostname and path.startswith('/search'):
+            qval = parse_qs(p.query).get('q', [''])[0]
+            return ('https://www.baidu.com/s?' + urlencode({'wd': qval})) if qval else 'https://www.baidu.com'
+        return 'https://www.baidu.com' + (p.path or '') + (('?' + p.query) if p.query else '')
+    except Exception:
+        return val
+
+
 class ManusAgent:
     """Manus 风格的本地智能体（ReAct loop）
 
@@ -31,7 +49,7 @@ class ManusAgent:
     tools: AgentTools 实例
     """
 
-    def __init__(self, llm_fn, tools, model_name: str, system_prompt: str = "", max_iterations: int = 10):
+    def __init__(self, llm_fn, tools, model_name: str, system_prompt: str = "", max_iterations: int = 10, memory_storage=None):
         self.llm_fn = llm_fn
         self.tools = tools
         self.model_name = model_name
@@ -39,8 +57,8 @@ class ManusAgent:
         self.max_iterations = max_iterations
         logger.info(f"ManusAgent initialized (model={model_name}, max_iterations={max_iterations}, tools={getattr(tools, '__class__', tools)})")
 
-        # 学习状态
-        self.skill_manager = SkillManager()
+        # 学习状态 — 共享 storage 避免 SkillManager 创建额外 ChromaDB 连接
+        self.skill_manager = SkillManager(storage=memory_storage)
         self.is_learning = False
         self.learning_buffer: list = []
         self.learning_task_name: str = ""
@@ -53,15 +71,43 @@ class ManusAgent:
             "【强制规则】当你作为 Agent 响应时，**必须且只能输出一个 JSON 对象**，不得包含任何额外文字、注释、解释、或 Markdown/代码围栏。\n"
             "输出必须严格遵循下列 JSON 模式（字段顺序不限）：\n"
             "{" + '"thought": "<解释你的下一步思路>", "tool": "<工具名>", "args": <字符串或对象>' + "}\n"
-            f"可用工具如下：\n{desc}\n"
-            "示例（严格，输出中不得有其他任何字符）：\n"
-            "{\"thought\":\"我要打开网页\",\"tool\":\"browse\",\"args\":\"https://example.com\"}\n"
-            "完成任务时请使用 tool=\"final_answer\" 并在 args 中放最终结果（字符串或 JSON 对象）。\n"
-            "如果你无法完成某步，请仍然返回符合格式的 JSON（例如使用 tool=\"read_file\" 或返回空的 args），不要返回纯文本解释。"
+            f"可用工具如下：\n{desc}\n\n"
+            "【核心原则：任务拆解与逐步执行】\n"
+            "1. 收到任务后，在第一步的 thought 中将任务拆解为子目标清单（如①②③）\n"
+            "2. 每次只执行一个工具调用，等待 Observation 后再决定下一步\n"
+            "3. 每步的 thought 中标明「已完成 X/Y，下一步做 Z」的进度\n"
+            "4. **只有当所有子目标都已通过工具实际执行并确认成功后**，才使用 final_answer\n"
+            "5. 绝不要在 thought 中描述计划然后直接返回 final_answer！必须真正执行每一步\n"
+            "6. 不要仅凭「我应该点击」就返回 final_answer，必须实际调用 click_element 并确认\n\n"
+            "【通用搜索】使用 web_search 工具可以在百度上搜索：\n"
+            '{"thought":"子目标①搜索天气。用web_search","tool":"web_search","args":"北京天气预报"}\n\n'
+            "【完整示例：在B站搜索并点击视频】\n"
+            "任务：打开B站搜索宋浩然后点击第一个视频\n"
+            "子目标：①打开B站 ②用fill_and_submit一步填入搜索词并提交 ③扫描结果 ④点击第一个视频 ⑤确认\n\n"
+            "第1步:\n"
+            '{"thought":"子目标①打开B站。进度0/5","tool":"browse","args":"https://www.bilibili.com"}\n'
+            "第2步（用 fill_and_submit 一次完成：定位输入框+输入+回车，比分三步更可靠）:\n"
+            '{"thought":"子目标②填入搜索词并提交。进度1/5","tool":"fill_and_submit","args":"宋浩"}\n'
+            "第3步:\n"
+            '{"thought":"子目标③扫描搜索结果，找第一个视频的 el_ID。进度2/5","tool":"scan_page","args":""}\n'
+            "第4步（关键！从 scan_page 输出找到第一个视频的 el_ID 后点击）:\n"
+            '{"thought":"子目标④第一个宋浩视频是 el_XX，点击它。进度3/5","tool":"click_element","args":"el_XX"}\n'
+            "第5步:\n"
+            '{"thought":"子目标⑤扫描确认视频页已打开。进度4/5","tool":"scan_page","args":""}\n'
+            "第6步:\n"
+            '{"thought":"所有子目标已执行完毕。进度5/5","tool":"final_answer","args":"已在B站搜索并打开了第一个宋浩视频"}\n\n'
+            "【重要提醒】\n"
+            "- scan_page 输出中每个元素有 [ID: el_N] 标记，用 click_element 时传入该 ID（如 el_156）\n"
+            "- **绝对禁止**使用 el_X、el_XX 等占位符！必须从 scan_page 的实际输出中找到真实的数字编号\n"
+            "- 如果 scan_page 没有返回可用的视频/链接元素，先尝试其他方式（如滚动页面或重新搜索），不要猜测编号\n"
+            "- 搜索场景优先使用 fill_and_submit（一步完成：定位输入框+输入+回车），比 click+type+Enter 三步更可靠\n"
+            "- 完成任务时使用 tool=\"final_answer\"，在 args 中放最终结果\n"
+            "- 如果某步失败，在 thought 中说明失败原因，然后尝试其他方法，不要返回纯文本\n"
+            "- 不要自己编造 URL，使用 browse 只打开你确定的完整 URL\n"
         )
-        # 迁移的动作执行准则（也保存在 agent_system_prompt 中）
+        # 迁移的动作执行准则
         self.agent_system_prompt += (
-            "\n动作执行准则：如果你在回复中表示要执行本地操作，回复的最后一行必须包含对应的 [ACTION] 或 Agent JSON 指令（否则不要声明动作已执行）。"
+            "\n动作执行准则：回复中表示要执行操作时，必须包含对应的工具调用 JSON。"
         )
 
     # ======= 学习接口 =======
@@ -88,7 +134,8 @@ class ManusAgent:
             logger.error(f"技能学习失败: {e}", exc_info=True)
         return "学习完成，SOP 已归档"
 
-    def _clean_markdown(self, text: str) -> str:
+    @staticmethod
+    def _clean_markdown(text: str) -> str:
         """清洗 LLM 输出中的 Markdown 包装符号，保留代码块内的原始内容。
 
         - 去掉 ```code``` 或 ```json``` 等围栏，但保留围栏内文本（常见于 LLM 将 JSON 放入代码块的情况）
@@ -146,33 +193,7 @@ class ManusAgent:
         if start == -1:
             return None
 
-        i = start
-        depth = 0
-        in_string = False
-        string_char = None
-        escape = False
-        js_text = None
-        while i < len(text):
-            ch = text[i]
-            if escape:
-                escape = False
-            elif ch == '\\':
-                escape = True
-            elif in_string:
-                if ch == string_char:
-                    in_string = False
-                    string_char = None
-            elif ch == '"' or ch == "'":
-                in_string = True
-                string_char = ch
-            elif ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    js_text = text[start:i+1]
-                    break
-            i += 1
+        js_text = scan_balanced_brace(text, start)
 
         if js_text is None:
             # 未找到匹配的闭合花括号，退回到从 start 到末尾的尝试（仍可尝试解析）
@@ -264,11 +285,14 @@ class ManusAgent:
         for step in range(1, self.max_iterations + 1):
             logger.debug(f"Agent iteration {step}/{self.max_iterations} — task='{task_description[:80]}'")
             # 构造 prompt：包含任务、历史与当前要求
-            prompt_parts = [f"任务: {task_description}", "\n历史记录（最近动作 -> 观察）："]
+            prompt_parts = [f"任务: {task_description}"]
+            prompt_parts.append("\n历史记录（已执行的动作与观察）：")
             if history:
-                prompt_parts.append('\n'.join(history[-6:]))
+                prompt_parts.append('\n'.join(history[-16:]))
             prompt_parts.append(
-                "\n请仅以 JSON 格式输出下一步的思考与要执行的工具调用。示例：{\"thought\":\"...\",\"tool\":\"read_file\",\"args\":\"path/to/file.txt\"}"
+                "\n请在 thought 中：1) 列出任务的所有子目标 2) 标记已完成/未完成 3) 确定下一步\n"
+                "然后输出 JSON：{\"thought\":\"...\",\"tool\":\"<工具名>\",\"args\":\"...\"}\n"
+                "只有所有子目标都已实际执行完毕，才能使用 final_answer。"
             )
             prompt = '\n'.join(prompt_parts)
 
@@ -284,32 +308,11 @@ class ManusAgent:
             # if JSON was extracted, also compute trailing text after the object
             remainder = ''
             if parsed and raw:
-                # crude scan for balanced braces to find end position
                 start = raw.find('{')
                 if start != -1:
-                    depth = 0
-                    in_str = False
-                    string_char = None
-                    escape = False
-                    for i,ch in enumerate(raw[start:], start):
-                        if escape:
-                            escape = False
-                        elif ch == '\\':
-                            escape = True
-                        elif in_str:
-                            if ch == string_char:
-                                in_str = False
-                                string_char = None
-                        elif ch == '"' or ch == "'":
-                            in_str = True
-                            string_char = ch
-                        elif ch == '{':
-                            depth += 1
-                        elif ch == '}':
-                            depth -= 1
-                            if depth == 0:
-                                remainder = raw[i+1:].strip()
-                                break
+                    matched = scan_balanced_brace(raw, start)
+                    if matched:
+                        remainder = raw[start + len(matched):].strip()
             # fallback heuristic: if no JSON found or remainder contains action keywords,
             # inject a corresponding JSON so the loop can continue instead of giving up.
 
@@ -346,32 +349,15 @@ class ManusAgent:
 
             logger.debug(f"LLM produced tool='{tool}' with args={args}")
 
-            # 安全策略：若 LLM 在 thought/args 中使用了 google.com / google.*，自动改写为百度（www.baidu.com 优先）
-            def _rewrite_google_to_baidu_in_value(val):
-                try:
-                    from urllib.parse import urlparse, parse_qs, urlencode
-                    if isinstance(val, str) and 'google.' in val:
-                        p = urlparse(val)
-                        hostname = (p.hostname or '').lower()
-                        path = p.path or ''
-                        if 'google.' in hostname and path.startswith('/search'):
-                            qval = parse_qs(p.query).get('q', [''])[0]
-                            return 'https://www.baidu.com/s?' + urlencode({'wd': qval}) if qval else 'https://www.baidu.com'
-                        # 非 search 的 google 链接改写为百度主页加原路径（best-effort）
-                        return 'https://www.baidu.com' + (p.path or '') + (('?' + p.query) if p.query else '')
-                    return val
-                except Exception:
-                    return val
-
-            # 如果 args 是字符串或 dict，递归检查并替换 google URL
+            # 安全策略：若 LLM 在 thought/args 中使用了 google.com / google.*，自动改写为百度
             if isinstance(args, str):
                 if 'google.' in args:
-                    args = _rewrite_google_to_baidu_in_value(args)
+                    args = _rewrite_google_to_baidu(args)
                     thought = (thought or '').replace('Google', 'Baidu').replace('google', 'baidu')
             elif isinstance(args, dict):
                 for k, v in list(args.items()):
                     if isinstance(v, str) and 'google.' in v:
-                        args[k] = _rewrite_google_to_baidu_in_value(v)
+                        args[k] = _rewrite_google_to_baidu(v)
                         thought = (thought or '').replace('Google', 'Baidu').replace('google', 'baidu')
 
             # 记录思考
@@ -380,7 +366,37 @@ class ManusAgent:
 
             # 处理终结条件
             if tool in ('final_answer', 'final', 'done'):
-                # 直接返回 args（如果是对象则转换为 JSON 字符串，字符串直接返回）
+                # 对于多步骤任务，验证所有子目标是否已真正完成
+                multi_kw = ['并', '然后', '接着', '之后', '再', '同时', '且', '并且', '点击', '打开']
+                is_multi = any(kw in task_description for kw in multi_kw)
+                already_verified = any('[已验证]' in h for h in history)
+
+                if is_multi and not already_verified and step < self.max_iterations - 1:
+                    executed_tools = [h for h in history if h.startswith('Thought:')]
+                    verify_prompt = (
+                        f"原始任务: {task_description}\n\n"
+                        f"你即将返回 final_answer: {args}\n\n"
+                        f"已执行的操作:\n" + '\n'.join(executed_tools) + "\n\n"
+                        "请逐一对照任务中的每个要求（用「并」「然后」「再」等词连接的子任务），"
+                        "检查是否都已通过工具调用实际执行了（不是计划执行，而是真的调用了工具）。\n"
+                        "- 如果全部完成: {\"thought\":\"已确认全部完成\",\"tool\":\"final_answer\",\"args\":\"<结果>\"}\n"
+                        "- 如果有遗漏: 返回下一步工具调用 JSON 继续执行。"
+                    )
+                    verify_raw = self.llm_fn(system_prompt, self.model_name, verify_prompt)
+                    verify_parsed = self._extract_json(verify_raw) if verify_raw else None
+                    if verify_parsed:
+                        v_tool = (verify_parsed.get('tool') or '').strip()
+                        if v_tool not in ('final_answer', 'final', 'done'):
+                            v_thought = verify_parsed.get('thought', '')
+                            logger.info(f"任务完成度验证: 发现未完成子目标 — {v_thought[:100]}")
+                            history.append(f"[已验证] 系统发现任务未全部完成: {v_thought}")
+                            continue  # 返回循环继续执行
+                        else:
+                            # 验证确认完成，用验证的 args
+                            v_args = verify_parsed.get('args', args)
+                            if v_args:
+                                args = v_args
+
                 logger.info(f"Agent 返回 final_answer，args 类型={type(args)}")
                 if isinstance(args, str):
                     return args
@@ -391,25 +407,29 @@ class ManusAgent:
 
             # 否则调用工具执行 action
             logger.debug(f"Calling tool: {tool} with args={args}")
+
+            # 空工具名 — LLM输出格式有误，给一次反馈让它重试
+            if not tool or not tool.strip():
+                logger.warning("LLM 返回了空的工具名")
+                observation = "⚠️ 你没有指定工具名。请在 JSON 的 tool 字段中填入一个有效的工具名（如 scan_page、click_element、browse 等）。"
+                history.append(f"Observation: {observation}")
+                continue
+
             try:
                 observation = tool_registry.dispatch_tool(tool, args, instance=self.tools)
             except KeyError:
                 logger.error(f"未知工具请求: {tool}")
-                return f"❌ 未知工具: {tool}"
+                observation = f"⚠️ 未知工具「{tool}」，可用工具请参考系统提示。请在下一步使用正确的工具名。"
             except Exception as e:
                 logger.error(f"工具执行抛出异常: {e}", exc_info=True)
-                return f"❌ 工具执行异常：{e}"
+                observation = f"⚠️ 工具执行异常：{e}。请在 thought 中分析原因后重试。"
 
-            # 如果工具返回明显的失败/网络错误或空响应，立即作为最终结果返回，避免 Agent 无输出
+            # 如果工具返回明显的失败/网络错误或空响应，记录但不立即终止——
+            # 让 Agent 有机会在下一轮尝试其他方式完成任务。
             if isinstance(observation, str):
-                lower_obs = observation.lower()
-                if observation.startswith('❌') or observation.startswith('⚠️') or observation.startswith('🔍') \
-                   or '无法获取' in observation or '未提供' in observation or 'connection' in lower_obs:
-                    logger.error(f"工具执行失败或网络不可用，停止 Agent：{observation}")
-                    return f"❌ 工具执行失败或网络不可用：{observation}"
                 if observation.strip() == '':
                     logger.warning(f"工具返回空响应：{tool}")
-                    return f"⚠️ 工具返回空响应：{tool}"
+                    observation = f"⚠️ 工具 {tool} 返回了空响应，请换一种方式尝试。"
 
             # 记录观察结果并继续下轮
             logger.debug(f"Appending observation to history: {str(observation)[:400]}")

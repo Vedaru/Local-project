@@ -5,7 +5,7 @@ import time
 from concurrent.futures import as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 
-from .config import SIMILARITY_THRESHOLD, PREFERENCE_PATTERNS
+from .config import SIMILARITY_THRESHOLD, PREFERENCE_PATTERNS, is_review_question
 from ..logging_config import get_logger
 from .analyzers import TextAnalyzer
 from .conflict import ConflictDetector
@@ -36,16 +36,6 @@ class MemoryRetriever:
             return ""
 
         logger.debug(f"[检索] 查询: {query[:50]}...")
-
-        def is_review_question(text: str) -> bool:
-            review_patterns = [
-                '你还记得', '还记得我', '我之前说过', '我以前说过', '我刚才说', '我刚刚说',
-                '我曾经说', '我刚才提到', '我刚刚提到', '我之前提到', '我以前提到',
-                '你记得', '记得我', '你能回忆', '你能想起', '你能记得', '你能告诉我我',
-                '我问过', '我说过', '我提过', '我提到过', '我讲过', '我讲到过',
-                '你知道我', '你知道我喜欢', '你知道我讨厌', '你知道我最喜欢', '你知道我最讨厌',
-            ]
-            return any(p in text for p in review_patterns)
 
         def extract_user_input(text: str) -> str:
             return self._extract_user_input(text)

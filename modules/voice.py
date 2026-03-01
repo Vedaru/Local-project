@@ -37,7 +37,7 @@ class VoiceManager:
         self.sample_rate = 32000
         self.chunk_size = 256  # 更小的chunk降低延迟
 
-        if not globals().get('PYAUDIO_AVAILABLE', False):
+        if not PYAUDIO_AVAILABLE:
             raise ImportError("pyaudio is required for VoiceManager but is not installed.")
 
         self.p = pyaudio.PyAudio()
@@ -65,6 +65,21 @@ class VoiceManager:
         # 如果正在播放，可以选择打断
         self.text_queue.put(text)
 
+    def _build_tts_params(self, text: str) -> dict:
+        """构建 TTS 请求参数（消除三处重复构造）"""
+        return {
+            "text": text,
+            "text_lang": "zh",
+            "ref_audio_path": self.ref_audio,
+            "prompt_lang": "zh",
+            "prompt_text": self.prompt_text,
+            "text_split_method": "cut5",
+            "media_type": "raw",
+            "streaming_mode": True,
+            "parallel_infer": True,
+            "speed_factor": 1.0,
+        }
+
     def speak_and_save(self, text: str, wav_path: str) -> bool:
         """
         合成语音并保存到 wav 文件（同步阻塞）
@@ -77,24 +92,14 @@ class VoiceManager:
             是否成功
         """
         try:
-            tts_data = {
-                "text": text,
-                "text_lang": "zh",
-                "ref_audio_path": self.ref_audio,
-                "prompt_lang": "zh",
-                "prompt_text": self.prompt_text,
-                "text_split_method": "cut5",
-                "media_type": "raw",
-                "streaming_mode": True,
-                "parallel_infer": True,
-                "speed_factor": 1.0
-            }
+            tts_data = self._build_tts_params(text)
 
-            # 收集所有音频数据
-            audio_data = b''
             if self._ref_audio_missing:
                 logger.error(f"TTS aborted: reference audio missing ({self.ref_audio}). Place the file or update `REF_AUDIO` in config.")
                 return False
+
+            # 使用 bytearray 收集音频数据，避免 O(n²) 的 bytes += 拼接
+            audio_chunks: list = []
 
             with self.session.post(
                 f"{self.sovits_url}/tts",
@@ -105,17 +110,18 @@ class VoiceManager:
                 try:
                     resp.raise_for_status()
                 except requests.exceptions.HTTPError as he:
-                    # log server error body for easier debugging
                     body = getattr(he.response, 'text', None)
                     logger.error(f"TTS service returned HTTP {resp.status_code}: {body}")
                     raise
 
                 for chunk in resp.iter_content(chunk_size=4096):
                     if chunk:
-                        audio_data += chunk
+                        audio_chunks.append(chunk)
 
-            if not audio_data:
+            if not audio_chunks:
                 return False
+
+            audio_data = b''.join(audio_chunks)
 
             # 确保目录存在
             os.makedirs(os.path.dirname(wav_path) if os.path.dirname(wav_path) else '.', exist_ok=True)
@@ -225,18 +231,7 @@ class VoiceManager:
     def _warmup_tts(self):
         """预热 TTS 服务，触发模型与连接初始化"""
         try:
-            tts_data = {
-                "text": "你好",
-                "text_lang": "zh",
-                "ref_audio_path": self.ref_audio,
-                "prompt_lang": "zh",
-                "prompt_text": self.prompt_text,
-                "text_split_method": "cut5",
-                "media_type": "raw",
-                "streaming_mode": True,
-                "parallel_infer": True,
-                "speed_factor": 1.0,
-            }
+            tts_data = self._build_tts_params("你好")
             if self._ref_audio_missing:
                 # 预热时若参考音频缺失，直接返回以避免 400
                 return
@@ -278,18 +273,7 @@ class VoiceManager:
             self.is_playing = True
 
             try:
-                tts_data = {
-                    "text": text,
-                    "text_lang": "zh",
-                    "ref_audio_path": self.ref_audio,
-                    "prompt_lang": "zh",
-                    "prompt_text": self.prompt_text,
-                    "text_split_method": "cut5",
-                    "media_type": "raw",
-                    "streaming_mode": True,  # 确保流式模式
-                    "parallel_infer": True,
-                    "speed_factor": 1.0
-                }
+                tts_data = self._build_tts_params(text)
 
                 # 使用更小的chunk和更短的超时
                 if self._ref_audio_missing:
@@ -340,8 +324,8 @@ class VoiceManager:
 
         while True:
             try:
-                # 非阻塞获取，超时后检查buffer
-                chunk = self.audio_queue.get(timeout=0.01)
+                # 非阻塞获取，适当放大超时以减少 CPU 空转（原 0.01s 过于激进）
+                chunk = self.audio_queue.get(timeout=0.05)
 
                 if chunk is None:
                     break
