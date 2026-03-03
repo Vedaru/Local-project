@@ -7,6 +7,8 @@ analysis reports them as "unused". Do NOT remove these APIs unless you confirm
 there are no dynamic callers.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 

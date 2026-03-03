@@ -196,6 +196,8 @@ ignore = [
     "C901",   # too complex
     "ARG001", # unused function argument
     "ARG002", # unused method argument
+    "UP045",  # use X | None instead of Optional (not supported in Python 3.9)
+    "UP037",  # remove quotes from type annotations (can conflict with TYPE_CHECKING)
 ]
 
 [tool.ruff.lint.per-file-ignores]

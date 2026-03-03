@@ -24,6 +24,7 @@ import os
 import re
 import sys
 import threading
+from typing import Optional
 
 from ..logging_config import get_logger
 
@@ -126,8 +127,8 @@ class ManusAgent:
         self.system_prompt = system_prompt or ""
         self.max_steps = max_steps
         self._agent = None  # 延迟创建（在 async 上下文中初始化）
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._loop_thread: threading.Thread | None = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread: Optional[threading.Thread] = None
         self._initialized = False
 
         # 在任何 OpenManus 模块被导入之前，先将项目 API 设置同步到 config.toml

@@ -2,6 +2,8 @@
 Avatar 管理器 - 用于在子线程中安全地控制 Avatar
 """
 
+from __future__ import annotations
+
 from typing import Callable, Optional
 
 from PyQt6.QtWidgets import QApplication

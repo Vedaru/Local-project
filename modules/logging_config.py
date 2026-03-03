@@ -25,7 +25,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 # Context var for structured logging (per-task / per-thread)
-_log_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("log_context", default=None)
+_log_context: contextvars.ContextVar[Optional[dict[str, Any]]] = contextvars.ContextVar("log_context", default=None)
 
 
 class JSONFormatter(logging.Formatter):
