@@ -8,7 +8,7 @@ import threading
 import time
 import wave
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 from .logger import log_debug, log_info, log_warning
 
@@ -79,9 +79,9 @@ class LipSyncAnalyzer:
     }
 
     def __init__(self):
-        self._frames: List[LipSyncFrame] = []
+        self._frames: list[LipSyncFrame] = []
 
-    def analyze_text(self, text: str, duration_per_char: float = 0.15) -> List[LipSyncFrame]:
+    def analyze_text(self, text: str, duration_per_char: float = 0.15) -> list[LipSyncFrame]:
         """
         基于文本分析生成口型数据
 
@@ -127,7 +127,7 @@ class LipSyncAnalyzer:
         log_debug(f"Generated {len(frames)} lip sync frames for text ({len(text)} chars)")
         return frames
 
-    def analyze_audio(self, audio_path: str, sample_rate: int = 16000) -> List[LipSyncFrame]:
+    def analyze_audio(self, audio_path: str, sample_rate: int = 16000) -> list[LipSyncFrame]:
         """
         基于音频分析生成口型数据
 
@@ -197,10 +197,10 @@ class LipSyncPlayer:
         self._callback = update_callback
         self._playing = False
         self._thread: Optional[threading.Thread] = None
-        self._frames: List[LipSyncFrame] = []
+        self._frames: list[LipSyncFrame] = []
         self._stop_event = threading.Event()
 
-    def play(self, frames: List[LipSyncFrame], blocking: bool = False):
+    def play(self, frames: list[LipSyncFrame], blocking: bool = False):
         """
         播放口型动画
 

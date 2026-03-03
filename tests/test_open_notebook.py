@@ -15,6 +15,8 @@ import sys
 # make sure workspace root is on path so 'modules' package can be resolved
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import contextlib
+
 from modules.agent import agent_tools, core
 
 # prepare a simple fake LLM that returns canned responses
@@ -41,10 +43,8 @@ def fake_llm(system_prompt, model_name, prompt, memory_context=""):
 
 def main():
     # cleanup any previous note file
-    try:
+    with contextlib.suppress(FileNotFoundError):
         os.remove("note.txt")
-    except FileNotFoundError:
-        pass
 
     tools = agent_tools.AgentTools()
     # executor attribute unused under the new implementation

@@ -8,7 +8,7 @@
 import ast
 import json
 import re
-from typing import List, Optional
+from typing import Optional
 
 
 def parse_loose(js_text: str) -> Optional[dict]:
@@ -105,7 +105,7 @@ def _scan_balanced_brace(s: str, start: int) -> Optional[str]:
     return None
 
 
-def extract_all_jsons(s: str) -> List[dict]:
+def extract_all_jsons(s: str) -> list[dict]:
     """返回文本中所有可解析为 dict 的 JSON 对象（列表，保持顺序）。
 
     1. 优先提取 ``[ACTION]...[/ACTION]`` 块中的 JSON
@@ -114,7 +114,7 @@ def extract_all_jsons(s: str) -> List[dict]:
     if not s:
         return []
 
-    results: List[dict] = []
+    results: list[dict] = []
     seen_spans: list = []  # 记录已消费的字符范围，避免重复
 
     # 1) 提取所有 [ACTION] 块

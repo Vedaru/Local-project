@@ -3,9 +3,7 @@ Unit tests for modules/resilience.py
 """
 
 import sys
-import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,7 +19,6 @@ from modules.resilience import (
     RetryStrategy,
     ServiceUnavailableError,
     calculate_delay,
-    exception_handler,
     retry,
     safe_call,
 )

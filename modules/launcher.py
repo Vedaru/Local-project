@@ -9,7 +9,7 @@ import atexit
 import signal
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 
 from .config import (
     GPT_SOVITS_PATH,
@@ -56,8 +56,8 @@ class ApplicationContext:
     保存所有已初始化的服务和组件实例，便于统一管理和清理。
     """
 
-    services: Dict[str, ServiceStatus] = field(default_factory=dict)
-    cleanup_handlers: List[Callable] = field(default_factory=list)
+    services: dict[str, ServiceStatus] = field(default_factory=dict)
+    cleanup_handlers: list[Callable] = field(default_factory=list)
     _shutdown_requested: bool = False
 
     def register_service(self, name: str, instance: Any) -> None:
@@ -229,7 +229,7 @@ def setup_health_checks() -> None:
 def initialize_core_services(
     enable_sovits: bool = True,
     enable_agent: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     初始化核心服务
 
@@ -278,7 +278,7 @@ def initialize_core_services(
     return services
 
 
-def get_startup_info() -> Dict[str, Any]:
+def get_startup_info() -> dict[str, Any]:
     """
     获取启动信息
 

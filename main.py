@@ -13,18 +13,17 @@ os.environ["CT2_USE_CUDA"] = "0"
 import json
 import queue
 import re
-import tempfile
 import threading
 import time
 import wave
-from typing import Any, Optional
+from typing import Optional
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 # Agent 模块（基于 OpenManus 框架的智能体）
 from modules.agent.core import ManusAgent
-from modules.avatar import AvatarManager, AvatarWidget, Emotion, ExpressionManager, LipSyncManager
+from modules.avatar import AvatarWidget, Emotion, ExpressionManager, LipSyncManager
 from modules.avatar.logger import log_info as avatar_log_info
 from modules.config import GPT_SOVITS_PATH, MODEL_NAME, PROMPT_TEXT, REF_AUDIO, SOVITS_URL, SYSTEM_PROMPT
 from modules.ear import Ear
@@ -32,7 +31,7 @@ from modules.json_utils import extract_first_json
 from modules.llm import call_llm
 from modules.logging_config import get_logger
 from modules.memory import MemoryManager
-from modules.utils import check_sovits_service, clean_text, filter_emotion_tags, start_gpt_sovits_api
+from modules.utils import clean_text, filter_emotion_tags, start_gpt_sovits_api
 from modules.voice import VoiceManager
 
 
@@ -176,10 +175,7 @@ class AIWorker(threading.Thread):
                     continue
 
                 if any(kw in cleaned_input for kw in ("教学结束", "学会了吗")):
-                    if self.agent:
-                        result = self.agent.stop_learning()
-                    else:
-                        result = "⚠️ Agent 未初始化，无法结束教学。"
+                    result = self.agent.stop_learning() if self.agent else "⚠️ Agent 未初始化，无法结束教学。"
                     self.signals.speak_request.emit(result)
                     self.signals.response_ready.emit(result)
                     continue
@@ -636,7 +632,7 @@ class MainApplication:
                             try:
                                 os.remove(wav_path)
                                 logger.debug("[TTS] 临时文件已清理")
-                            except:
+                            except Exception:
                                 pass
                         except Exception as e:
                             logger.warning(f"[TTS] 读取 wav 错误: {e}")
@@ -726,9 +722,9 @@ class MainApplication:
         self.ai_worker.start()
 
         # 显示启动信息（单行输出，避免日志混乱）
-        stats = self.memory_manager.get_memory_stats()
+        self.memory_manager.get_memory_stats()
         logger = get_logger("MainApplication")
-        logger.info(f"🤖  Project Local 已启动（带 Avatar 模块）")
+        logger.info("🤖  Project Local 已启动（带 Avatar 模块）")
         logger.info("💬  现在可以直接输入文字进行对话，或通过麦克风说话！")
         logger.info("输入 'exit' 或 'quit' 退出，输入 'status' 查看记忆状态。")
 
@@ -780,7 +776,7 @@ class MainApplication:
                     break
             except EOFError:
                 break
-            except Exception as e:
+            except Exception:
                 pass  # 忽略输入错误
 
 

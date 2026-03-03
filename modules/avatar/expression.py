@@ -8,7 +8,7 @@ external code. Keep public method signatures stable to preserve compatibility.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Optional
 
 from .logger import log_debug, log_info
 
@@ -41,7 +41,7 @@ class ExpressionConfig:
 class EmotionKeywords:
     """情感关键词配置"""
 
-    positive: List[str] = field(
+    positive: list[str] = field(
         default_factory=lambda: [
             "开心",
             "高兴",
@@ -82,7 +82,7 @@ class EmotionKeywords:
             "😘",
         ]
     )
-    negative: List[str] = field(
+    negative: list[str] = field(
         default_factory=lambda: [
             "难过",
             "伤心",
@@ -114,7 +114,7 @@ class EmotionKeywords:
             "💔",
         ]
     )
-    angry: List[str] = field(
+    angry: list[str] = field(
         default_factory=lambda: [
             "生气",
             "愤怒",
@@ -135,7 +135,7 @@ class EmotionKeywords:
             "💢",
         ]
     )
-    surprised: List[str] = field(
+    surprised: list[str] = field(
         default_factory=lambda: [
             "惊讶",
             "震惊",
@@ -158,7 +158,7 @@ class EmotionKeywords:
             "❓",
         ]
     )
-    shy: List[str] = field(
+    shy: list[str] = field(
         default_factory=lambda: [
             "害羞",
             "不好意思",
@@ -176,7 +176,7 @@ class EmotionKeywords:
             "😅",
         ]
     )
-    confused: List[str] = field(
+    confused: list[str] = field(
         default_factory=lambda: [
             "困惑",
             "不懂",
@@ -203,7 +203,7 @@ class EmotionAnalyzer:
         self.keywords = keywords or EmotionKeywords()
 
         # 构建情感-关键词映射
-        self._emotion_keywords: Dict[Emotion, List[str]] = {
+        self._emotion_keywords: dict[Emotion, list[str]] = {
             Emotion.HAPPY: self.keywords.positive,
             Emotion.SAD: self.keywords.negative,
             Emotion.ANGRY: self.keywords.angry,
@@ -224,7 +224,7 @@ class EmotionAnalyzer:
             "～": (Emotion.HAPPY, 0.2),
         }
 
-    def analyze(self, text: str) -> Tuple[Emotion, float]:
+    def analyze(self, text: str) -> tuple[Emotion, float]:
         """
         分析文本的情感
 
@@ -238,7 +238,7 @@ class EmotionAnalyzer:
             return Emotion.NEUTRAL, 0.0
 
         text_lower = text.lower()
-        scores: Dict[Emotion, float] = {e: 0.0 for e in Emotion}
+        scores: dict[Emotion, float] = dict.fromkeys(Emotion, 0.0)
 
         # 关键词匹配
         for emotion, keywords in self._emotion_keywords.items():
@@ -274,7 +274,7 @@ class EmotionAnalyzer:
         log_debug(f"Emotion analysis: {max_emotion.value} (confidence: {confidence:.2f})")
         return max_emotion, confidence
 
-    def add_keywords(self, emotion: Emotion, keywords: List[str]):
+    def add_keywords(self, emotion: Emotion, keywords: list[str]):
         """添加自定义关键词"""
         if emotion in self._emotion_keywords:
             self._emotion_keywords[emotion].extend(keywords)
@@ -284,7 +284,7 @@ class ExpressionManager:
     """表情管理器 - 管理和控制 Live2D 模型的表情"""
 
     # 默认表情配置
-    DEFAULT_EXPRESSIONS: Dict[Emotion, ExpressionConfig] = {
+    DEFAULT_EXPRESSIONS: dict[Emotion, ExpressionConfig] = {
         Emotion.NEUTRAL: ExpressionConfig(Emotion.NEUTRAL, 0, None, None, 1),
         Emotion.HAPPY: ExpressionConfig(Emotion.HAPPY, 2, "TapBody", None, 2),
         Emotion.SAD: ExpressionConfig(Emotion.SAD, 3, None, None, 2),
@@ -299,7 +299,7 @@ class ExpressionManager:
         self,
         expression_callback: Callable[[int], None],
         motion_callback: Optional[Callable[[str, int], None]] = None,
-        expression_config: Optional[Dict[Emotion, ExpressionConfig]] = None,
+        expression_config: Optional[dict[Emotion, ExpressionConfig]] = None,
     ):
         """
         Args:
@@ -385,6 +385,6 @@ class ExpressionManager:
         """当前情感"""
         return self._current_emotion
 
-    def add_keywords(self, emotion: Emotion, keywords: List[str]):
+    def add_keywords(self, emotion: Emotion, keywords: list[str]):
         """添加情感关键词"""
         self._analyzer.add_keywords(emotion, keywords)

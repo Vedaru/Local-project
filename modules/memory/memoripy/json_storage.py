@@ -12,7 +12,7 @@ class JSONStorage(BaseStorage):
 
     def load_history(self):
         if os.path.exists(self.file_path):
-            with open(self.file_path, "r", encoding="utf-8") as f:
+            with open(self.file_path, encoding="utf-8") as f:
                 print("Loading existing interaction history from JSON...")
                 history = json.load(f)
                 return history.get("short_term_memory", []), history.get("long_term_memory", [])

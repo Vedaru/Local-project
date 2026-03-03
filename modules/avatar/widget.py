@@ -250,9 +250,7 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
             global_pos = mouse_event.globalPosition().toPoint()
             local_pos = self.mapFromGlobal(global_pos)
 
-            if self.handle_mouse_move(global_pos, local_pos, mouse_event.buttons()):
-                return True
-            return False
+            return bool(self.handle_mouse_move(global_pos, local_pos, mouse_event.buttons()))
 
         elif event_type == QEvent.Type.MouseButtonPress:
             mouse_event = event
@@ -264,9 +262,8 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
 
         elif event_type == QEvent.Type.MouseButtonRelease:
             mouse_event = event
-            if mouse_event.button() == Qt.MouseButton.LeftButton:
-                if self.handle_mouse_release():
-                    return True
+            if mouse_event.button() == Qt.MouseButton.LeftButton and self.handle_mouse_release():
+                return True
 
         return super().eventFilter(obj, event)
 

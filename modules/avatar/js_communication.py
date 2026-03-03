@@ -91,18 +91,12 @@ class JSCommunicationMixin:
 
     def change_expression(self: "AvatarWidget", expression: int | str):
         """切换表情"""
-        if isinstance(expression, str):
-            script = f"setExpression('{expression}')"
-        else:
-            script = f"setExpression({expression})"
+        script = f"setExpression('{expression}')" if isinstance(expression, str) else f"setExpression({expression})"
         self.run_js(script)
 
     def play_motion(self: "AvatarWidget", group: str, index: Optional[int] = None):
         """播放动作"""
-        if index is not None:
-            script = f"setMotion('{group}', {index})"
-        else:
-            script = f"setMotion('{group}')"
+        script = f"setMotion('{group}', {index})" if index is not None else f"setMotion('{group}')"
         self.run_js(script)
 
     def update_lip_sync(self: "AvatarWidget", value: float):

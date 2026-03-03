@@ -163,7 +163,7 @@ class MemoryStore:
         for concept in query_concepts:
             activated_nodes[concept] = initial_activation
 
-        for step in range(2):
+        for _step in range(2):
             new_activated_nodes = {}
             for node in activated_nodes:
                 if node in self.graph:
@@ -183,7 +183,7 @@ class MemoryStore:
             print("Not enough interactions to perform clustering.")
             return
 
-        embeddings_matrix = np.vstack([e for e in self.embeddings])
+        embeddings_matrix = np.vstack(list(self.embeddings))
         num_clusters = min(10, len(self.embeddings))
         kmeans = KMeans(n_clusters=num_clusters, random_state=0).fit(embeddings_matrix)
         self.cluster_labels = kmeans.labels_

@@ -1,14 +1,11 @@
 """Unit tests for SkillManager"""
 
-import json
 import os
 import sys
-import uuid
 
 # ensure project root on path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import modules.memory.skills as skills_mod
 from modules import llm as llm_mod
 from modules.memory.skills import SkillManager
 
@@ -46,7 +43,7 @@ def test_skill_learning_and_retrieval(tmp_path, monkeypatch):
 
     # a query that is unrelated should probably return None (distance > threshold)
     unrelated = mgr.retrieve_skill("完全无关的描述")
-    assert unrelated is None or unrelated == None
+    assert unrelated is None or unrelated is None
 
 
 if __name__ == "__main__":

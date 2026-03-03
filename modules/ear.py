@@ -26,17 +26,10 @@ try:
 except Exception:
     pyaudio = None
     PYAUDIO_AVAILABLE = False
-import torch
-
-# 必须首先导入补丁模块（修复 ctranslate2 的 ROCm 路径问题）
-# 补丁会修补 os.add_dll_directory，必须在导入 faster_whisper / ctranslate2 之前执行
-try:
-    from . import _patch_ctranslate2  # apply patch that guards os.add_dll_directory on Windows
-except Exception:
-    # 如果补丁无法加载，继续执行以便后续导入能呈现错误信息
-    pass
-
 # 现在可以安全导入 faster_whisper
+import contextlib
+
+import torch
 from faster_whisper import WhisperModel
 
 # 检查 CUDA 可用性
@@ -121,7 +114,7 @@ class Ear:
         except (RuntimeError, OSError) as e:
             raise RuntimeError(
                 f"[Ear] 错误：加载模型失败（GPU 模式下仅支持 CUDA）。\n" f"原始错误: {e}\n" f"请检查 CUDA 环境和驱动。"
-            )
+            ) from e
 
     def _open_stream(self):
         if self.stream is None:
@@ -149,10 +142,8 @@ class Ear:
                 for filename in os.listdir(self.temp_dir):
                     if filename.endswith(".wav"):
                         filepath = os.path.join(self.temp_dir, filename)
-                        try:
+                        with contextlib.suppress(Exception):
                             os.remove(filepath)
-                        except Exception:
-                            pass  # 忽略单个文件删除错误
                 logger.info("🗑️  初始化时清理了临时音频目录")
         except Exception:
             pass  # 如果清理失败，不影响初始化
@@ -197,7 +188,7 @@ class Ear:
                 f"  - 显存不足：尝试重启应用或关闭其他 GPU 应用\n"
                 f"  - GPU 驱动过旧：更新到最新版本\n"
                 f"\n当前要求：仅使用 GPU，不降级到 CPU。"
-            )
+            ) from e
 
     def listen(self, callback=None):
         """
@@ -299,10 +290,8 @@ class Ear:
         try:
             self._close_stream()
             if self.pa is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self.pa.terminate()
-                except Exception:
-                    pass
         except Exception:
             pass
 

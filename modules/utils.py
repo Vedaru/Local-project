@@ -31,9 +31,8 @@ def extract_entities(text):
     words = pseg.cut(text)
 
     for word, flag in words:
-        if flag in ["nr", "ns", "nt", "nz", "n"]:
-            if len(word) >= 1:
-                entities.add(word)
+        if flag in ["nr", "ns", "nt", "nz", "n"] and len(word) >= 1:
+            entities.add(word)
 
         if any(
             word.endswith(suffix) for suffix in ["公司", "大学", "医院", "学校", "银行", "政府", "中心", "局", "部"]

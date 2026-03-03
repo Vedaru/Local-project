@@ -200,13 +200,8 @@ class VoiceManager:
                                 rms = np.sqrt(np.mean(audio_data**2))
 
                                 # --- 优化点 3: 门限过滤 + 非线性映射 ---
-                                # 1. 门限过滤 (Gate)：消除底噪
-                                if rms < 500:  # 如果音量太小，直接当做 0
-                                    volume = 0.0
-                                else:
-                                    # 2. 非线性映射：让嘴巴更容易张开
-                                    # 将线性音量转为指数曲线
-                                    volume = min((rms / 8000) ** 0.8, 1.0)
+                                # 门限过滤 (Gate)：消除底噪；非线性映射：让嘴巴更容易张开
+                                volume = 0.0 if rms < 500 else min((rms / 8000) ** 0.8, 1.0)
 
                                 lip_sync_callback(volume)
                             except Exception:

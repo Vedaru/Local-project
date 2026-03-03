@@ -2,6 +2,7 @@
 Windows 点击穿透功能模块
 """
 
+import contextlib
 import sys
 from typing import TYPE_CHECKING
 
@@ -87,10 +88,13 @@ class ClickThroughMixin:
                 ]
 
             msg = MSG()
-            if self._user32.PeekMessageW(byref(msg), None, WM_HOTKEY, WM_HOTKEY, PM_REMOVE):
-                if msg.message == WM_HOTKEY and msg.wParam == self._HOTKEY_ID:
-                    log_debug("Hotkey Alt+D detected")
-                    self.toggle_click_through()
+            if (
+                self._user32.PeekMessageW(byref(msg), None, WM_HOTKEY, WM_HOTKEY, PM_REMOVE)
+                and msg.message == WM_HOTKEY
+                and msg.wParam == self._HOTKEY_ID
+            ):
+                log_debug("Hotkey Alt+D detected")
+                self.toggle_click_through()
 
         except Exception as e:
             log_error(f"Hotkey check error: {e}")
@@ -165,10 +169,8 @@ class ClickThroughMixin:
         self._user32.EnumChildWindows(parent_hwnd, callback, 0)
 
         for child_hwnd in child_windows:
-            try:
+            with contextlib.suppress(Exception):
                 self._set_window_click_through(child_hwnd, enabled)
-            except Exception:
-                pass
 
     def _set_window_click_through(self: "AvatarWidget", hwnd, enabled):
         """设置指定窗口的点击穿透"""

@@ -12,9 +12,9 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Optional
 
 import requests
 
@@ -45,7 +45,7 @@ class HealthCheckResult:
     status: HealthStatus
     message: str = ""
     response_time_ms: Optional[float] = None
-    details: Dict = field(default_factory=dict)
+    details: dict = field(default_factory=dict)
     checked_at: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict:
@@ -65,7 +65,7 @@ class SystemHealth:
     """系统整体健康状态"""
 
     overall_status: HealthStatus
-    services: List[HealthCheckResult]
+    services: list[HealthCheckResult]
     checked_at: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict:
@@ -231,10 +231,7 @@ def check_chromadb_health(data_dir: Optional[str] = None) -> HealthCheckResult:
     try:
         import chromadb
 
-        if data_dir:
-            client = chromadb.PersistentClient(path=data_dir)
-        else:
-            client = chromadb.Client()
+        client = chromadb.PersistentClient(path=data_dir) if data_dir else chromadb.Client()
 
         # 尝试列出集合
         collections = client.list_collections()
@@ -262,7 +259,7 @@ def check_chromadb_health(data_dir: Optional[str] = None) -> HealthCheckResult:
         )
 
 
-def check_filesystem_health(paths: Optional[List[str]] = None) -> HealthCheckResult:
+def check_filesystem_health(paths: Optional[list[str]] = None) -> HealthCheckResult:
     """
     检查文件系统健康状态
 
@@ -350,8 +347,8 @@ class HealthChecker:
     """
 
     def __init__(self):
-        self._checks: Dict[str, Callable[[], HealthCheckResult]] = {}
-        self._results: Dict[str, HealthCheckResult] = {}
+        self._checks: dict[str, Callable[[], HealthCheckResult]] = {}
+        self._results: dict[str, HealthCheckResult] = {}
         self._background_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
@@ -442,7 +439,7 @@ class HealthChecker:
         with self._lock:
             return self._results.get(name)
 
-    def get_all_cached_results(self) -> Dict[str, HealthCheckResult]:
+    def get_all_cached_results(self) -> dict[str, HealthCheckResult]:
         """获取所有缓存的检查结果"""
         with self._lock:
             return dict(self._results)

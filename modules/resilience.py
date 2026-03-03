@@ -8,9 +8,9 @@ import functools
 import random
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Optional, Type, Union
+from typing import Any, Callable, Optional
 
 from .logging_config import get_logger
 
@@ -287,14 +287,13 @@ class CircuitBreaker:
     @property
     def state(self) -> CircuitState:
         """获取当前断路器状态"""
-        if self._state == CircuitState.OPEN:
+        if self._state == CircuitState.OPEN and self._last_failure_time:
             # 检查是否应该转换为半开状态
-            if self._last_failure_time:
-                elapsed = (datetime.now() - self._last_failure_time).total_seconds()
-                if elapsed >= self.recovery_timeout:
-                    self._state = CircuitState.HALF_OPEN
-                    self._success_count = 0
-                    logger.info("Circuit breaker transitioning to HALF_OPEN")
+            elapsed = (datetime.now() - self._last_failure_time).total_seconds()
+            if elapsed >= self.recovery_timeout:
+                self._state = CircuitState.HALF_OPEN
+                self._success_count = 0
+                logger.info("Circuit breaker transitioning to HALF_OPEN")
         return self._state
 
     def record_success(self):
@@ -367,10 +366,10 @@ class GlobalExceptionHandler:
     """
 
     def __init__(self):
-        self._handlers: dict[Type[Exception], Callable] = {}
+        self._handlers: dict[type[Exception], Callable] = {}
         self._default_handler: Optional[Callable] = None
 
-    def register(self, exception_type: Type[Exception]) -> Callable[[Callable], Callable]:
+    def register(self, exception_type: type[Exception]) -> Callable[[Callable], Callable]:
         """注册特定异常类型的处理器"""
 
         def decorator(handler: Callable) -> Callable:

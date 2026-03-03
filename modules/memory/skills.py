@@ -6,7 +6,7 @@
 
 import os
 import uuid
-from typing import List, Optional
+from typing import Optional
 
 import chromadb
 
@@ -58,7 +58,7 @@ class SkillManager:
             logger.error(f"技能检索异常: {e}")
         return None
 
-    def learn_new_skill(self, task_name: str, interaction_logs: List[str]) -> Optional[str]:
+    def learn_new_skill(self, task_name: str, interaction_logs: list[str]) -> Optional[str]:
         """将交互日志交给 LLM 总结为通用的 SOP，并写入数据库。
 
         返回生成的 SOP 文本，或在失败时返回 None。

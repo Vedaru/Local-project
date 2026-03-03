@@ -83,4 +83,5 @@ res = ag.run_task("open and write name")
 print("result", res)
 print("file exists", os.path.exists("note.txt"))
 if os.path.exists("note.txt"):
-    print("content", open("note.txt", "r", encoding="utf-8").read())
+    with open("note.txt", encoding="utf-8") as f:
+        print("content", f.read())

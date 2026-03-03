@@ -23,7 +23,7 @@ _env_vars = dotenv.dotenv_values(dotenv_path=_ENV_PATH)
 dotenv.load_dotenv(dotenv_path=_ENV_PATH)
 
 # ---- 加载 YAML 配置 ----
-with open(_CONFIG_PATH, "r", encoding="utf-8") as _f:
+with open(_CONFIG_PATH, encoding="utf-8") as _f:
     config = yaml.safe_load(_f)
 
 
@@ -92,7 +92,7 @@ _prompt_file = _clean_env_value(_env_vars.get("SYSTEM_PROMPT_FILE"))
 if _prompt_file:
     _prompt_path = os.path.join(PROJECT_ROOT, _prompt_file)
     if os.path.exists(_prompt_path):
-        with open(_prompt_path, "r", encoding="utf-8") as _f:
+        with open(_prompt_path, encoding="utf-8") as _f:
             SYSTEM_PROMPT = _f.read()
     else:
         # 回退：尝试从环境变量读取（兼容旧配置）

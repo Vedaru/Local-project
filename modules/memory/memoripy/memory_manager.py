@@ -77,7 +77,7 @@ class MemoryManager:
         self.save_memory_to_history()
 
     def get_embedding(self, text: str) -> np.ndarray:
-        print(f"Generating embedding for the provided text...")
+        print("Generating embedding for the provided text...")
         embedding = self.embedding_model.get_embedding(text)
         if embedding is None:
             raise ValueError("Failed to generate embedding.")

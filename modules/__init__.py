@@ -1,4 +1,7 @@
 # 初始化模块 — 仅导出明确需要的符号，避免命名空间污染
+# Avatar 模块（可选导入，避免未安装 PyQt6 时报错）
+import contextlib
+
 from .config import (  # noqa: F401
     CONTROLLER_APP_WHITELIST,
     CONTROLLER_ENABLED,
@@ -56,8 +59,5 @@ from .utils import (  # noqa: F401
 )
 from .voice import VoiceManager  # noqa: F401
 
-# Avatar 模块（可选导入，避免未安装 PyQt6 时报错）
-try:
+with contextlib.suppress(ImportError):
     from .avatar import AvatarBridge, AvatarManager, AvatarWidget  # noqa: F401
-except ImportError:
-    pass  # PyQt6 未安装时跳过

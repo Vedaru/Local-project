@@ -1,4 +1,3 @@
-import os
 import sys
 
 sys.path.append(r"d:\Personal_Files\Projects\Github\Local-project")

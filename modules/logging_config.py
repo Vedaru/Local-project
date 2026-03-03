@@ -13,6 +13,7 @@ should call `from modules.logging_config import get_logger` and use
 `get_logger('MyModule')` to obtain a logger that writes to the centralized handlers.
 """
 
+import contextlib
 import contextvars
 import json
 import logging
@@ -21,17 +22,17 @@ import os
 import sys
 import traceback
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 # Context var for structured logging (per-task / per-thread)
-_log_context: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("log_context", default={})
+_log_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("log_context", default=None)
 
 
 class JSONFormatter(logging.Formatter):
     """Format log records as compact JSON for machine parsing and storage."""
 
     def format(self, record: logging.LogRecord) -> str:
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "level": record.levelname,
             "logger": record.name,
@@ -50,7 +51,7 @@ class JSONFormatter(logging.Formatter):
             # 如果还想保留原始字符串可在这里添加 payload["exc_info"] = ...
 
         # Merge explicit contextvars (trace_id, request_id, user_id, etc.)
-        ctx = _log_context.get({})
+        ctx = _log_context.get() or {}
         if ctx:
             payload["context"] = ctx
 
@@ -104,13 +105,11 @@ class ContextFilter(logging.Filter):
     """Inject contextvars into LogRecord so formatters can render them."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        ctx = _log_context.get({})
+        ctx = _log_context.get() or {}
         for k, v in ctx.items():
             # attach only simple types to avoid serialization surprises
-            try:
+            with contextlib.suppress(Exception):
                 setattr(record, k, v)
-            except Exception:
-                pass
         return True
 
 
@@ -123,7 +122,7 @@ def set_context(**kwargs: Any) -> None:
 
     Example: set_context(trace_id='abc123', user_id=42)
     """
-    ctx = dict(_log_context.get())
+    ctx = dict(_log_context.get() or {})
     ctx.update({k: v for k, v in kwargs.items() if v is not None})
     _log_context.set(ctx)
 
