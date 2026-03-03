@@ -4,3 +4,4 @@
 __pycache__/
 SYSTEM_PROMPT.txt
 GPT-SoVITS-v2pro-20250604-nvidia50
+/OpenManus/logs

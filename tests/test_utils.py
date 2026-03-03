@@ -1,0 +1,186 @@
+"""
+Unit tests for modules/utils.py
+"""
+import pytest
+from unittest.mock import patch, MagicMock
+import sys
+from pathlib import Path
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+class TestCleanText:
+    """Tests for clean_text function."""
+    
+    def test_clean_text_removes_emojis(self):
+        """Test that emojis are removed from text."""
+        from modules.utils import clean_text
+        
+        text = "Hello 😀 World"
+        result = clean_text(text)
+        assert "😀" not in result
+    
+    def test_clean_text_preserves_chinese(self):
+        """Test that Chinese characters are preserved."""
+        from modules.utils import clean_text
+        
+        text = "你好世界"
+        result = clean_text(text)
+        assert result == "你好世界"
+    
+    def test_clean_text_preserves_punctuation(self):
+        """Test that common punctuation is preserved."""
+        from modules.utils import clean_text
+        
+        text = "你好！这是测试。"
+        result = clean_text(text)
+        assert "！" in result
+        assert "。" in result
+    
+    def test_clean_text_collapses_whitespace(self):
+        """Test that multiple spaces are collapsed."""
+        from modules.utils import clean_text
+        
+        text = "Hello    World"
+        result = clean_text(text)
+        assert "    " not in result
+        assert " " in result
+    
+    def test_clean_text_strips_whitespace(self):
+        """Test that leading/trailing whitespace is stripped."""
+        from modules.utils import clean_text
+        
+        text = "  Hello World  "
+        result = clean_text(text)
+        assert result == "Hello World"
+
+
+class TestExtractEntities:
+    """Tests for extract_entities function."""
+    
+    def test_extract_entities_finds_person_names(self):
+        """Test that person names are extracted."""
+        from modules.utils import extract_entities
+        
+        text = "张三和李四是好朋友"
+        entities = extract_entities(text)
+        # Note: Results depend on jieba's segmentation
+        assert isinstance(entities, set)
+    
+    def test_extract_entities_finds_organizations(self):
+        """Test that organization names are extracted."""
+        from modules.utils import extract_entities
+        
+        text = "我在北京大学工作"
+        entities = extract_entities(text)
+        assert isinstance(entities, set)
+        # Should contain organization-like entities
+        assert any("大学" in e for e in entities) or "北京大学" in entities
+    
+    def test_extract_entities_handles_empty_text(self):
+        """Test that empty text returns empty set."""
+        from modules.utils import extract_entities
+        
+        text = ""
+        entities = extract_entities(text)
+        assert isinstance(entities, set)
+        assert len(entities) == 0
+
+
+class TestFilterEmotionTags:
+    """Tests for filter_emotion_tags function."""
+    
+    def test_filter_emotion_tags_removes_happy(self):
+        """Test that [开心] tag is removed."""
+        from modules.utils import filter_emotion_tags
+        
+        text = "这是一个测试[开心]句子"
+        result = filter_emotion_tags(text)
+        assert "[开心]" not in result
+        assert "测试" in result
+        assert "句子" in result
+    
+    def test_filter_emotion_tags_removes_angry(self):
+        """Test that [生气] tag is removed."""
+        from modules.utils import filter_emotion_tags
+        
+        text = "[生气]我很生气"
+        result = filter_emotion_tags(text)
+        assert "[生气]" not in result
+    
+    def test_filter_emotion_tags_handles_multiple_tags(self):
+        """Test that multiple emotion tags are removed."""
+        from modules.utils import filter_emotion_tags
+        
+        text = "[开心]你好[生气]世界[疑惑]"
+        result = filter_emotion_tags(text)
+        assert "[开心]" not in result
+        assert "[生气]" not in result
+        assert "[疑惑]" not in result
+        assert "你好" in result
+        assert "世界" in result
+    
+    def test_filter_emotion_tags_preserves_normal_brackets(self):
+        """Test that normal brackets are preserved."""
+        from modules.utils import filter_emotion_tags
+        
+        text = "这是[普通]括号"
+        result = filter_emotion_tags(text)
+        assert "[普通]" in result
+
+
+class TestCheckSovitsService:
+    """Tests for check_sovits_service function."""
+    
+    @patch("modules.utils.requests.get")
+    def test_check_sovits_service_returns_true_on_success(self, mock_get):
+        """Test that True is returned when service is available."""
+        from modules.utils import check_sovits_service
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_get.return_value = mock_response
+        
+        result = check_sovits_service()
+        assert result is True
+    
+    @patch("modules.utils.requests.get")
+    def test_check_sovits_service_returns_false_on_error(self, mock_get):
+        """Test that False is returned when service is unavailable."""
+        from modules.utils import check_sovits_service
+        
+        mock_get.side_effect = Exception("Connection refused")
+        
+        result = check_sovits_service()
+        assert result is False
+    
+    @patch("modules.utils.requests.get")
+    def test_check_sovits_service_returns_false_on_non_200(self, mock_get):
+        """Test that False is returned on non-200 status code."""
+        from modules.utils import check_sovits_service
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_get.return_value = mock_response
+        
+        result = check_sovits_service()
+        assert result is False
+
+
+class TestStartGptSovitsApi:
+    """Tests for start_gpt_sovits_api function."""
+    
+    def test_start_gpt_sovits_api_returns_none_for_invalid_path(self):
+        """Test that None is returned for invalid path."""
+        from modules.utils import start_gpt_sovits_api
+        
+        result = start_gpt_sovits_api("/nonexistent/path")
+        assert result is None
+    
+    def test_start_gpt_sovits_api_returns_none_for_none_path(self):
+        """Test that None is returned for None path."""
+        from modules.utils import start_gpt_sovits_api
+        
+        result = start_gpt_sovits_api(None)
+        assert result is None

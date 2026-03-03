@@ -248,11 +248,29 @@ class AIWorker(threading.Thread):
                         logger.warning(f"解析 SUMMON_AGENT JSON 失败: {e}，使用用户输入作为 task")
                         task_desc = cleaned_input
 
-                    # 先播放标签前的闲聊文本（非阻塞 TTS）
+                    # 先播放标签前的闲聊文本，如果没有则生成默认开始提示
                     if pre_text:
                         self.signals.speak_request.emit(pre_text)
+                    else:
+                        # 没有 pre_text 时，生成一个简短的开始执行提示
+                        try:
+                            start_prompt = """用户让你帮忙执行一个操作任务。
+请用你的人设风格，只生成一句简短的确认语（5-10字），表示你开始执行了。
+示例：好的，交给我吧~ / 没问题~ / 马上处理~ / 好嘞~
+注意：不要提及具体任务内容，不要说"我来帮你"之类的长句子，只要简短确认即可。
+只输出确认语，不要输出任何其他内容。"""
+                            start_reply = call_llm(SYSTEM_PROMPT, MODEL_NAME, start_prompt, "")
+                            # 清理回复，去掉可能的引号和多余内容
+                            start_reply = start_reply.strip().strip('"\'')
+                            if start_reply and len(start_reply) < 30:
+                                self.signals.speak_request.emit(start_reply)
+                            else:
+                                self.signals.speak_request.emit("好的~")
+                        except Exception as e:
+                            logger.warning(f"生成任务开始语音失败: {e}")
+                            self.signals.speak_request.emit("好的~")
 
-                    clean_pre = pre_text
+                    clean_pre = pre_text if pre_text else ""
 
                     # 阻塞地调用 OpenManus Agent 执行任务（如果已初始化）
                     agent_result = "⚠️ Agent 未启用"
@@ -268,7 +286,7 @@ class AIWorker(threading.Thread):
                     elif task_desc:
                         agent_result = "⚠️ Agent 未初始化或不可用"
 
-                    # 将 Agent 的执行结果显示在 UI 上（不进行 TTS 播报）
+                    # 将 Agent 的执行结果显示在 UI 上
                     combined = (clean_pre + "\n\n[Agent 执行结果]\n" + agent_result).strip()
 
                     # 将结果作为最终响应发送并写入记忆
@@ -277,6 +295,46 @@ class AIWorker(threading.Thread):
                     if combined != "抱歉，我现在有点卡住了。":
                         self.memory_manager.add_to_short_term("AI", combined)
                         self.memory_manager.store_memory(f"用户: {cleaned_input}\nAI: {combined}")
+
+                    # 任务完成后，调用 LLM 生成符合人设的简短语音回复
+                    try:
+                        # 判断任务是否成功
+                        is_success = "success" in agent_result.lower() or "完成" in agent_result or "成功" in agent_result
+                        is_failure = "failure" in agent_result.lower() or "失败" in agent_result or "异常" in agent_result or "错误" in agent_result
+                        
+                        if is_success:
+                            summary_prompt = """你刚刚帮用户完成了一个操作任务，任务成功了。
+请用你的人设风格，生成一句简短的完成确认语（5-15字）。
+示例：搞定啦~ / 完成了哦~ / 好了~ / 已经弄好了~
+注意：不要提及具体任务内容，不要说复杂的话，只要简短确认完成即可。
+只输出确认语，不要输出任何其他内容。"""
+                        elif is_failure:
+                            summary_prompt = """你刚刚帮用户执行一个操作任务，但是遇到了一些问题。
+请用你的人设风格，生成一句简短的抱歉语（5-15字）。
+示例：抱歉，没成功呢... / 出了点问题~ / 失败了，下次再试吧~
+注意：不要提及具体错误内容，不要说复杂的话，只要简短表达歉意即可。
+只输出抱歉语，不要输出任何其他内容。"""
+                        else:
+                            summary_prompt = """你刚刚帮用户处理了一个操作任务。
+请用你的人设风格，生成一句简短的完成确认语（5-15字）。
+示例：处理好了~ / 弄完了哦~ / 搞定~
+注意：不要提及具体任务内容，只要简短确认即可。
+只输出确认语，不要输出任何其他内容。"""
+                        
+                        voice_reply = call_llm(SYSTEM_PROMPT, MODEL_NAME, summary_prompt, "")
+                        
+                        # 清理回复，去掉引号和多余内容
+                        voice_reply = voice_reply.strip().strip('"\'')
+                        if voice_reply and len(voice_reply) < 50:
+                            self.signals.speak_request.emit(voice_reply)
+                            logger.info(f"Agent 任务完成语音回复: {voice_reply}")
+                        else:
+                            # 回复太长，使用默认
+                            default_reply = "搞定啦~" if is_success else ("抱歉没成功呢..." if is_failure else "处理好了~")
+                            self.signals.speak_request.emit(default_reply)
+                    except Exception as e:
+                        logger.warning(f"生成任务完成语音回复失败: {e}")
+                        self.signals.speak_request.emit("好了~")
 
                     # 本次循环结束，等待下一个用户输入
                     continue
@@ -291,6 +349,41 @@ class AIWorker(threading.Thread):
                             agent_result = self.agent.run_task(cleaned_input)
                             ai_response = agent_result
                             skip_tts_for_response = True
+                            
+                            # 生成符合人设的语音回复
+                            try:
+                                is_success = "success" in agent_result.lower() or "完成" in agent_result or "成功" in agent_result
+                                is_failure = "failure" in agent_result.lower() or "失败" in agent_result or "异常" in agent_result
+                                
+                                if is_success:
+                                    summary_prompt = """你刚刚帮用户完成了一个操作任务，任务成功了。
+请用你的人设风格，生成一句简短的完成确认语（5-15字）。
+示例：搞定啦~ / 完成了哦~ / 好了~
+注意：不要提及具体任务内容，只要简短确认完成即可。
+只输出确认语，不要输出任何其他内容。"""
+                                elif is_failure:
+                                    summary_prompt = """你刚刚帮用户执行一个操作任务，但是遇到了一些问题。
+请用你的人设风格，生成一句简短的抱歉语（5-15字）。
+示例：抱歉，没成功呢... / 出了点问题~
+注意：不要提及具体错误内容，只要简短表达歉意即可。
+只输出抱歉语，不要输出任何其他内容。"""
+                                else:
+                                    summary_prompt = """你刚刚帮用户处理了一个操作任务。
+请用你的人设风格，生成一句简短的完成确认语（5-15字）。
+示例：处理好了~ / 弄完了哦~
+只输出确认语，不要输出任何其他内容。"""
+                                
+                                voice_reply = call_llm(SYSTEM_PROMPT, MODEL_NAME, summary_prompt, "")
+                                voice_reply = voice_reply.strip().strip('"\'')
+                                if voice_reply and len(voice_reply) < 50:
+                                    self.signals.speak_request.emit(voice_reply)
+                                    logger.info(f"Agent 任务完成语音回复: {voice_reply}")
+                                else:
+                                    default_reply = "搞定啦~" if is_success else ("抱歉没成功呢..." if is_failure else "处理好了~")
+                                    self.signals.speak_request.emit(default_reply)
+                            except Exception as ve:
+                                logger.warning(f"生成任务完成语音回复失败: {ve}")
+                                self.signals.speak_request.emit("好了~")
                         else:
                             logger.warning("Agent 未初始化，无法处理工具调用")
                 except Exception as e:

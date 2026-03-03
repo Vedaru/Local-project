@@ -29,6 +29,13 @@ Key capabilities include:
 * Scrolling: Scroll up/down by pixel amount or scroll to specific text
 * Content extraction: Extract and analyze content from web pages based on specific goals
 * Tab management: Switch between tabs, open new tabs, or close tabs
+* Media detection: Use 'get_media_status' to check if video/audio is playing on the page
+
+IMPORTANT for video tasks:
+* Video sites (Bilibili, YouTube, etc.) auto-play videos when you navigate to a video page
+* When navigating to a video URL, the tool will automatically report if video is playing
+* If video is playing, consider the task complete and call terminate - do NOT click random elements
+* Use 'get_media_status' if you need to verify playback status
 
 Note: When using element indices, refer to the numbered elements shown in the current browser state.
 """
@@ -61,6 +68,7 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     "switch_tab",
                     "open_tab",
                     "close_tab",
+                    "get_media_status",
                 ],
                 "description": "The browser action to perform",
             },
@@ -118,6 +126,7 @@ class BrowserUseTool(BaseTool, Generic[Context]):
             "web_search": ["query"],
             "wait": ["seconds"],
             "extract_content": ["goal"],
+            "get_media_status": [],
         },
     }
 
@@ -129,6 +138,9 @@ class BrowserUseTool(BaseTool, Generic[Context]):
 
     # Context for generic functionality
     tool_context: Optional[Context] = Field(default=None, exclude=True)
+
+    # Flag to keep browser open after task completion (e.g., for video playback)
+    keep_browser_open: bool = Field(default=False, exclude=True)
 
     llm: Optional[LLM] = Field(default_factory=LLM)
 
@@ -262,7 +274,23 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     except Exception:
                         pass  # networkidle may timeout on pages with persistent connections
                     await asyncio.sleep(1)
-                    return ToolResult(output=f"Navigated to {url}")
+                    
+                    # Auto-detect media status for video sites
+                    current_url = page.url.lower()
+                    media_hint = ""
+                    if any(site in current_url for site in ['bilibili.com/video', 'youtube.com/watch', 'youku.com/v_', 'iqiyi.com/v_']):
+                        media_status = await self._get_media_status(page)
+                        if media_status.get('has_video'):
+                            is_playing = media_status.get('is_playing', False)
+                            media_hint = f"\n\n🎬 Media status: {'▶️ Video is PLAYING' if is_playing else '⏸️ Video found (paused or loading)'}."
+                            if is_playing or media_status.get('has_video'):
+                                # Keep browser open for video playback
+                                self.keep_browser_open = True
+                                media_hint += " Browser will stay open for viewing."
+                            if is_playing:
+                                media_hint += " Task completed - you can now call terminate."
+                    
+                    return ToolResult(output=f"Navigated to {url}{media_hint}")
 
                 elif action == "go_back":
                     await context.go_back()
@@ -421,12 +449,24 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                         )
 
                     page = await context.get_current_page()
+                    current_url = page.url.lower()
                     import markdownify
 
                     content = markdownify.markdownify(await page.content())
 
+                    # Check if we're on a video site and add special instructions
+                    video_site_hint = ""
+                    if any(site in current_url for site in ['bilibili.com', 'youtube.com', 'youku.com', 'iqiyi.com']):
+                        video_site_hint = """
+IMPORTANT: This is a video website. When extracting video information, you MUST include:
+1. The complete video URL (e.g., https://www.bilibili.com/video/BVxxxxxxx or https://www.youtube.com/watch?v=xxxxx)
+2. Look for BV numbers (Bilibili) or video IDs in links
+3. Extract href attributes from video links, not just titles
+"""
+
                     prompt = f"""\
 Your task is to extract the content of the page. You will be given a page and a goal, and you should extract all relevant information around this goal from the page. If the goal is vague, summarize the page. Respond in json format.
+{video_site_hint}
 Extraction goal: {goal}
 
 Page content:
@@ -526,11 +566,85 @@ Page content:
                     await asyncio.sleep(seconds_to_wait)
                     return ToolResult(output=f"Waited for {seconds_to_wait} seconds")
 
+                elif action == "get_media_status":
+                    page = await context.get_current_page()
+                    media_status = await self._get_media_status(page)
+                    
+                    if not media_status.get('has_video') and not media_status.get('has_audio'):
+                        return ToolResult(output="No video or audio elements found on this page.")
+                    
+                    # Keep browser open if video is found
+                    if media_status.get('has_video'):
+                        self.keep_browser_open = True
+                    
+                    output_lines = ["📺 Media Status Report:"]
+                    if media_status.get('has_video'):
+                        is_playing = media_status.get('is_playing', False)
+                        duration = media_status.get('duration', 0)
+                        current_time = media_status.get('current_time', 0)
+                        output_lines.append(f"  - Video: {'▶️ PLAYING' if is_playing else '⏸️ PAUSED/LOADING'}")
+                        if duration > 0:
+                            output_lines.append(f"  - Progress: {current_time:.1f}s / {duration:.1f}s")
+                        output_lines.append(f"  - Muted: {'Yes' if media_status.get('muted') else 'No'}")
+                    if media_status.get('has_audio'):
+                        output_lines.append(f"  - Audio: Found")
+                    
+                    if media_status.get('is_playing'):
+                        output_lines.append("\n✅ Media is actively playing. If this was your goal, you can call terminate.")
+                    
+                    return ToolResult(output="\n".join(output_lines))
+
                 else:
                     return ToolResult(error=f"Unknown action: {action}")
 
             except Exception as e:
                 return ToolResult(error=f"Browser action '{action}' failed: {str(e)}")
+
+    async def _get_media_status(self, page) -> dict:
+        """Detect video/audio playback status on the current page."""
+        try:
+            media_info = await page.evaluate("""
+                () => {
+                    const videos = document.querySelectorAll('video');
+                    const audios = document.querySelectorAll('audio');
+                    
+                    let result = {
+                        has_video: videos.length > 0,
+                        has_audio: audios.length > 0,
+                        is_playing: false,
+                        duration: 0,
+                        current_time: 0,
+                        muted: false
+                    };
+                    
+                    // Check videos
+                    for (const video of videos) {
+                        if (!video.paused && !video.ended && video.readyState > 2) {
+                            result.is_playing = true;
+                        }
+                        if (video.duration > result.duration) {
+                            result.duration = video.duration || 0;
+                            result.current_time = video.currentTime || 0;
+                            result.muted = video.muted;
+                        }
+                    }
+                    
+                    // Check audios if no video playing
+                    if (!result.is_playing) {
+                        for (const audio of audios) {
+                            if (!audio.paused && !audio.ended && audio.readyState > 2) {
+                                result.is_playing = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    return result;
+                }
+            """)
+            return media_info or {}
+        except Exception:
+            return {}
 
     async def get_current_state(
         self, context: Optional[BrowserContext] = None
@@ -596,6 +710,10 @@ Page content:
 
     async def cleanup(self):
         """Clean up browser resources."""
+        # Skip cleanup if browser should stay open (e.g., video is playing)
+        if self.keep_browser_open:
+            return
+        
         async with self.lock:
             if self.context is not None:
                 await self.context.close()
