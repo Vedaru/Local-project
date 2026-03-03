@@ -235,6 +235,14 @@ class AIWorker(threading.Thread):
                         if not task_desc:
                             task_desc = cleaned_input
                             logger.info(f"SUMMON_AGENT JSON 无 task 字段(keys={list(payload.keys())})，使用用户原始输入作为任务: {task_desc}")
+                        # 检测 task_desc 是否看起来像工具名称而不是完整查询
+                        # 工具名称通常很短且简单（如 "search_web", "browser_use"）
+                        # 完整查询应该包含中文、空格或较长的描述
+                        elif task_desc and isinstance(task_desc, str):
+                            # 如果 task 看起来像工具名（短字符串，仅包含字母、数字、下划线），则使用原始输入
+                            if len(task_desc) < 20 and re.match(r'^[a-zA-Z0-9_]+$', task_desc):
+                                logger.warning(f"SUMMON_AGENT JSON 中的 task 看起来是工具名称 '{task_desc}'，不是完整查询。使用用户原始输入: {cleaned_input}")
+                                task_desc = cleaned_input
                     except Exception as e:
                         # JSON 解析失败时，用用户原始输入作为任务
                         logger.warning(f"解析 SUMMON_AGENT JSON 失败: {e}，使用用户输入作为 task")
