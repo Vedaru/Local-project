@@ -289,7 +289,7 @@ Local-project/
 - 🔍 **Ruff** - 高速リンティング
 - 📝 **mypy** - 型チェック
 
-詳しくは[CONTRIBUTING.md](CONTRIBUTING.md)を参照してください。
+詳しくは[CONTRIBUTING_JA.md](CONTRIBUTING_JA.md)を参照してください。
 
 ---
 
@@ -380,7 +380,7 @@ Local-project/
 
 IssueやPull Requestを歓迎します！
 
-詳しくは[貢献ガイド](CONTRIBUTING.md)をご覧ください。
+詳しくは[貢献ガイド](CONTRIBUTING_JA.md)をご覧ください。
 
 ---
 

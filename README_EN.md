@@ -289,7 +289,7 @@ Local-project/
 - 🔍 **Ruff** - Fast linting
 - 📝 **mypy** - Type checking
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+See [CONTRIBUTING_EN.md](CONTRIBUTING_EN.md) for details.
 
 ---
 
@@ -380,7 +380,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 Issues and Pull Requests are welcome!
 
-See [Contributing Guide](CONTRIBUTING.md) for details.
+See [Contributing Guide](CONTRIBUTING_EN.md) for details.
 
 ---
 

@@ -1,5 +1,11 @@
 # 开发者指南
 
+**Language / 言語 / 语言:**
+
+- [中文](./CONTRIBUTING.md)
+- [English](./CONTRIBUTING_EN.md)
+- [日本語](./CONTRIBUTING_JA.md)
+
 本文档介绍如何设置开发环境、运行测试以及贡献代码到 Local-project。
 
 ## 目录
