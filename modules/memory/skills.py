@@ -1,33 +1,38 @@
 """
 技能管理器 — 用于记录/检索 AI 学习到的操作流程 (SOP)
 
-使用现有的 ChromaDB 存储（通过 StorageClient，即 MemoryStorage）
+使用独立的 ChromaDB 存储（不再依赖旧的 MemoryStorage）
 """
+import os
 import uuid
 from typing import List, Optional
+import chromadb
 
-from ..config import MODEL_NAME
-from .storage import MemoryStorage as StorageClient
+from ..config import MODEL_NAME, data_dir
 from ..logging_config import get_logger
-# call_llm 导入放在方法内部以避免与 agent/core 导入循环
 
 logger = get_logger('Memory.Skills')
 
 
 class SkillManager:
-    def __init__(self, storage: StorageClient = None):
-        # 复用记忆存储的 chromadb client，节省资源
-        # 如果外部传入 storage 实例则共享连接，否则退化创建新实例
-        self.storage = storage if storage is not None else StorageClient()
-        self.client = self.storage.client
-        # 获取或创建用于存放技能的 collection
+    def __init__(self, storage=None, db_path: str = None):
+        """初始化技能管理器。
+
+        Args:
+            storage: (已废弃) 旧的 MemoryStorage 实例，现忽略此参数以保持向后兼容
+            db_path: ChromaDB 数据库路径，默认使用 data/chroma_db
+        """
+        path = db_path or os.path.join(data_dir)
+        os.makedirs(path, exist_ok=True)
         try:
+            self.client = chromadb.PersistentClient(path=path)
             self.collection = self.client.get_or_create_collection(
                 name="agent_skills",
                 metadata={"description": "存放 AI 学习到的标准操作程序 (SOP)"}
             )
         except Exception as e:
             logger.error(f"创建或获取 agent_skills collection 失败: {e}")
+            self.client = None
             self.collection = None
 
     def retrieve_skill(self, task_description: str) -> Optional[str]:

@@ -2,6 +2,5 @@
 *.wav
 /data
 __pycache__/
-chroma_db/
-GPT-SoVITS-v2pro-20250604-nvidia50
 SYSTEM_PROMPT.txt
+GPT-SoVITS-v2pro-20250604-nvidia50

@@ -77,6 +77,11 @@ GPT_SOVITS_PATH = _clean_env_value(_env_vars.get("GPT_SOVITS_PATH"))
 # ---- 模型名称 ----
 MODEL_NAME = _clean_env_value(_env_vars.get("MODEL_NAME"))
 
+# ---- 嵌入模型名称（可选，用于 memoripy 记忆系统）----
+# 设置为 Volcengine 嵌入模型端点 ID 或模型名称（如 doubao-embedding）
+# 如果未设置，将回退到本地 sentence-transformers
+EMBEDDING_MODEL_NAME = _clean_env_value(_env_vars.get("EMBEDDING_MODEL_NAME"))
+
 # ---- System Prompt（支持文件或环境变量）----
 _prompt_file = _clean_env_value(_env_vars.get("SYSTEM_PROMPT_FILE"))
 if _prompt_file:

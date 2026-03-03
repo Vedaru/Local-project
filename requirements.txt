@@ -5,6 +5,14 @@ jieba>=0.42.1
 pyaudio>=0.2.13
 requests>=2.31.0
 pyyaml>=6.0
+python-pptx>=1.0.2
+
+# memoripy 记忆系统依赖
+faiss-cpu>=1.7.0
+scikit-learn>=1.2.0
+networkx>=3.0
+sentence-transformers>=2.2.0
+pydantic>=2.0.0
 
 # Avatar 模块依赖（PyQt6 + WebEngine）
 PyQt6>=6.4.0
@@ -26,12 +34,22 @@ numpy>=1.22.0,<2.3.0
 pyautogui>=0.9.53
 pygetwindow>=0.0.9
 
-# Agent / 浏览与检索能力（用于 modules.agent）
-# 使用国内友好的爬虫流：requests + BeautifulSoup，优先访问 baidu（不回退到 Bing）
+# Agent / 浏览与检索能力（OpenManus 框架依赖）
+browser-use>=0.1.40
+playwright>=1.51.0
+tenacity>=9.0.0
+loguru>=0.7.3
+tiktoken>=0.9.0
+aiofiles>=24.1.0
+colorama>=0.4.6
+html2text>=2024.2.26
+googlesearch-python>=1.3.0
+baidusearch>=1.0.3
+duckduckgo_search>=7.5.3
+tomli>=2.0.0
+httpx>=0.27.0
 beautifulsoup4>=4.12.0
 requests>=2.31.0
-# 可选：DrissionPage（用于需要 JS 渲染的页面，非必须）
-drissionpage>=1.1.0
 
 # OCR（Tesseract 后端）
 # - Python 端库：pytesseract

@@ -25,14 +25,12 @@ from modules.avatar import AvatarWidget, AvatarManager
 from modules.avatar import LipSyncManager, ExpressionManager, Emotion
 from modules.avatar.logger import log_info as avatar_log_info
 from modules.memory import MemoryManager
-from modules.memory.logger import get_logger as get_memory_logger
 from modules.voice import VoiceManager
 from modules.ear import Ear
-from modules.agent import SafetyGuard, AgentTools
 from modules.llm import call_llm
-# Agent 模块（Manus 风格的 ReAct 智能体）
+# Agent 模块（基于 OpenManus 框架的智能体）
 from modules.agent.core import ManusAgent
-from modules.config import REF_AUDIO, PROMPT_TEXT, SOVITS_URL, GPT_SOVITS_PATH, MODEL_NAME, SYSTEM_PROMPT, CONTROLLER_ENABLED, CONTROLLER_FAILSAFE, CONTROLLER_APP_WHITELIST
+from modules.config import REF_AUDIO, PROMPT_TEXT, SOVITS_URL, GPT_SOVITS_PATH, MODEL_NAME, SYSTEM_PROMPT
 from modules.utils import clean_text, start_gpt_sovits_api, check_sovits_service, filter_emotion_tags
 from modules.logging_config import get_logger
 from modules.json_utils import extract_first_json
@@ -109,7 +107,6 @@ class AIWorker(threading.Thread):
         input_queue: queue.Queue,
         memory_manager: MemoryManager,
         voice_manager: VoiceManager,
-        controller: Optional[Any] = None,
         agent: Optional[ManusAgent] = None
     ):
         super().__init__(daemon=True)
@@ -117,19 +114,11 @@ class AIWorker(threading.Thread):
         self.input_queue = input_queue
         self.memory_manager = memory_manager
         self.voice_manager = voice_manager
-        self.controller = controller
         self.agent = agent
         self._running = True
         # 当模型因“人设/拒绝”而中断任务时，在下一轮强制提醒它继续未完成的任务
         self._force_continue_next = False
         self._force_lock = threading.Lock()  # 保护 _force_continue_next 的线程安全
-
-    def _get_tools_executor(self):
-        """获取工具执行器（优先使用已初始化的 ManusAgent.tools，否则临时创建）"""
-        if self.agent and hasattr(self.agent, 'tools') and self.agent.tools:
-            return self.agent.tools
-        from modules.agent import AgentTools
-        return AgentTools(controller=self.controller)
     
     def run(self):
         """线程主循环"""
@@ -154,11 +143,10 @@ class AIWorker(threading.Thread):
                     stats = self.memory_manager.get_memory_stats()
                     status_msg = (
                         f"📊 记忆系统状态:\n"
-                        f"  ├─ 短期记忆: {stats['short_term']}/{stats['short_term_capacity']} 轮\n"
-                        f"  ├─ 工作记忆: {stats['working_memory']} 条\n"
+                        f"  ├─ 对话轮次: {stats['short_term']}/{stats['short_term_capacity']} 轮\n"
+                        f"  ├─ 短期交互: {stats['working_memory']} 条\n"
                         f"  ├─ 长期记忆: {stats['long_term']} 条\n"
-                        f"  ├─ 情感记忆: {stats['emotional']} 条\n"
-                        f"  └─ 当前情感: {stats['current_emotion']}"
+                        f"  └─ 概念节点: {stats.get('concept_nodes', 0)} 个"
                     )
                     self.signals.status_update.emit(status_msg)
                     continue
@@ -214,25 +202,12 @@ class AIWorker(threading.Thread):
                 if should_force and cleaned_input and cleaned_input.lower() not in ('status','exit','quit'):
                     cleaned_input = "请继续执行未完成的任务，发送指令标签。\n\n" + cleaned_input
 
-                # --- 注入当前浏览器状态，让 LLM 知道是否已有打开的页面 ---
-                browser_ctx = ""
-                try:
-                    tools_inst = self._get_tools_executor()
-                    if getattr(tools_inst, '_page', None) is not None:
-                        page = tools_inst._page
-                        cur_url = page.url
-                        cur_title = page.title()
-                        browser_ctx = (
-                            f"\n[当前浏览器状态] 已打开页面: {cur_title} ({cur_url})\n"
-                            "你可以直接对这个页面执行 scan_page、click_element、type_text 等操作，无需再次 browse 打开。\n"
-                        )
-                except Exception:
-                    pass
-                # 将浏览器状态拼接到 memory_context 中传给 LLM
-                full_memory_context = (memory_context + browser_ctx) if browser_ctx else memory_context
+                # --- 注入记忆上下文（OpenManus 处理自己的浏览器状态）---
+                full_memory_context = memory_context
 
                 # 调用 LLM 生成响应
                 ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, cleaned_input, full_memory_context)
+                skip_tts_for_response = False
 
                 # --- 语义触发：优先检测是否包含 [SUMMON_AGENT] 标签 ---
                 # 优先尝试完整的开闭标签
@@ -240,21 +215,26 @@ class AIWorker(threading.Thread):
                 m = re.search(summon_pattern, ai_response, re.DOTALL)
                 # 如果严格匹配失败但包含开始标签（LLM 经常漏写闭合标签），尝试宽松匹配
                 if not m and '[SUMMON_AGENT]' in ai_response:
-                    lenient_pattern = r'\[SUMMON_AGENT\]\s*(\{.*\})'
+                    # LLM 经常用 markdown 代码围栏包裹 JSON，需要跳过 ```json ... ```
+                    lenient_pattern = r'\[SUMMON_AGENT\]\s*(?:```\w*\s*)?(\{.*?\})\s*(?:```)?' 
                     m = re.search(lenient_pattern, ai_response, re.DOTALL)
                 if m:
                     # 提取标签前的普通回复以及标签内的 JSON 任务
                     pre_text = ai_response[:m.start()].strip()
                     tag_json = m.group(1).strip()
+                    # 清理 LLM 可能残留的 markdown 代码围栏标记
+                    tag_json = re.sub(r'^```\w*\s*', '', tag_json)
+                    tag_json = re.sub(r'\s*```\s*$', '', tag_json)
+                    tag_json = tag_json.strip()
                     task_desc = None
                     try:
                         payload = json.loads(tag_json)
                         task_desc = payload.get('task')
-                        # LLM 有时会返回 {"actions":[...]} 而不是 {"task":"..."}
-                        # 在这种情况下，用原始用户输入作为 task_desc
-                        if not task_desc and ('actions' in payload or 'tool' in payload):
+                        # LLM 可能返回 {"action":...} / {"actions":...} / {"tool":...}
+                        # 而不是标准的 {"task":"..."}，统一回退到用户原始输入
+                        if not task_desc:
                             task_desc = cleaned_input
-                            logger.info(f"SUMMON_AGENT JSON 无 task 字段，使用用户原始输入作为任务: {task_desc}")
+                            logger.info(f"SUMMON_AGENT JSON 无 task 字段(keys={list(payload.keys())})，使用用户原始输入作为任务: {task_desc}")
                     except Exception as e:
                         # JSON 解析失败时，用用户原始输入作为任务
                         logger.warning(f"解析 SUMMON_AGENT JSON 失败: {e}，使用用户输入作为 task")
@@ -264,15 +244,9 @@ class AIWorker(threading.Thread):
                     if pre_text:
                         self.signals.speak_request.emit(pre_text)
 
-                    # 如果 pre_text 中包含 [ACTION] 指令，则先执行这些电脑控制（与 Agent 并行的预操作）
-                    execution_log = ""
                     clean_pre = pre_text
-                    if self.controller and pre_text:
-                        execution_log, clean_pre = self.controller.process_command(pre_text)
-                        if execution_log:
-                            logger.info(f"电脑控制: {execution_log}")
 
-                    # 阻塞地调用本地 Agent 执行任务（如果已初始化）
+                    # 阻塞地调用 OpenManus Agent 执行任务（如果已初始化）
                     agent_result = "⚠️ Agent 未启用"
                     if self.agent and task_desc:
                         logger = get_logger('AIWorker')
@@ -286,8 +260,7 @@ class AIWorker(threading.Thread):
                     elif task_desc:
                         agent_result = "⚠️ Agent 未初始化或不可用"
 
-                    # 将 Agent 的执行结果通过语音播报并显示在 UI 上
-                    self.signals.speak_request.emit(agent_result)
+                    # 将 Agent 的执行结果显示在 UI 上（不进行 TTS 播报）
                     combined = (clean_pre + "\n\n[Agent 执行结果]\n" + agent_result).strip()
 
                     # 将结果作为最终响应发送并写入记忆
@@ -300,73 +273,23 @@ class AIWorker(threading.Thread):
                     # 本次循环结束，等待下一个用户输入
                     continue
 
-                # --- 自动处理 LLM 直接输出的 Agent-style JSON（无须 [SUMMON_AGENT] 标签） ---
+                # --- 自动检测：LLM 直接输出包含工具调用意图时，交由 Agent 处理 ---
                 try:
-                    auto_attempts = 0
-                    max_auto_attempts = 8
-                    tools_executor = self._get_tools_executor()
-                    action_history = []  # 记录所有已执行的步骤，帮助 LLM 保持上下文
-                    # 逐步执行：每次只提取并执行第一个工具调用，将观察结果回传给 LLM 决定下一步
-                    while auto_attempts < max_auto_attempts:
-                        parsed_agent = extract_first_json(ai_response)
-                        if not parsed_agent or not isinstance(parsed_agent, dict) or 'tool' not in parsed_agent:
-                            break
-
-                        tool_name = (parsed_agent.get('tool') or '').strip()
-                        tool_args = parsed_agent.get('args')
-
-                        logger.info(f"检测到 Agent-style 输出(步骤{auto_attempts+1})，执行工具: {tool_name} args={tool_args}")
-                        observation = tools_executor.execute(tool_name, tool_args)
-                        logger.info(f"工具观察: {observation}")
-
-                        # 若 dom_open 返回 no_page，短期重试一次
-                        try:
-                            if (str(tool_name).lower() == 'dom_open' and isinstance(observation, str)
-                                    and 'no_page' in observation.lower()):
-                                logger.info('dom_open 返回 no_page，尝试重试一次')
-                                observation = tools_executor.execute(tool_name, tool_args)
-                                logger.info(f'dom_open 重试返回: {observation}')
-                        except Exception:
-                            pass
-
-                        if isinstance(observation, str) and (observation.startswith('❌') or observation.startswith('⚠️') or '无法获取' in observation):
-                            ai_response = observation
-                            break
-
-                        # 记录本步骤到历史
-                        args_str = json.dumps(tool_args, ensure_ascii=False) if tool_args else ''
-                        obs_short = str(observation)[:200]  # 截断过长的 observation
-                        action_history.append(f"步骤{auto_attempts+1}: {tool_name}({args_str}) → {obs_short}")
-
-                        # 构建包含完整历史的 followup，帮助 LLM 保持上下文
-                        history_text = "\n".join(action_history)
-                        followup_prompt = (
-                            f"原始用户请求：{cleaned_input}\n\n"
-                            f"已执行的步骤：\n{history_text}\n\n"
-                            f"最新一步的完整观察结果：\n{observation}\n\n"
-                            "请判断用户的请求是否已完成：\n"
-                            "- 如果已完成（例如已经在目标网站上完成了搜索、页面已导航到搜索结果等），"
-                            "请直接给出面向用户的可读回答（纯文本，不要包含 JSON），不要重复执行已完成的操作。\n"
-                            "- 如果尚未完成，请返回下一步的工具调用 JSON："
-                            '{"tool":"<工具名>","args":"<参数>"}。\n'
-                            "注意：每次只返回一个工具调用，不要重复之前已经成功执行的步骤。"
-                        )
-                        ai_response = call_llm(SYSTEM_PROMPT, MODEL_NAME, followup_prompt, memory_context)
-                        if not ai_response:
-                            ai_response = observation
-                            break
-
-                        auto_attempts += 1
+                    parsed_agent = extract_first_json(ai_response)
+                    if parsed_agent and isinstance(parsed_agent, dict) and 'tool' in parsed_agent:
+                        # LLM 直接输出了工具调用 JSON，将原始用户请求交由 Agent 执行
+                        logger.info("检测到 LLM 直接输出工具调用 JSON，转交 Agent 处理")
+                        if self.agent:
+                            agent_result = self.agent.run_task(cleaned_input)
+                            ai_response = agent_result
+                            skip_tts_for_response = True
+                        else:
+                            logger.warning("Agent 未初始化，无法处理工具调用")
                 except Exception as e:
-                    logger.error(f"自动 Agent 处理失败: {e}", exc_info=True)
+                    logger.error(f"自动 Agent 检测失败: {e}", exc_info=True)
 
-                # 处理电脑控制指令（常规流程）
-                execution_log = ""
+                # 常规文本响应处理
                 clean_response = ai_response
-                if self.controller:
-                    execution_log, clean_response = self.controller.process_command(ai_response)
-                    if execution_log:
-                        logger.info(f"电脑控制: {execution_log}")
 
                 # 根据响应内容自动切换表情
                 self.signals.expression_change.emit(clean_response)  # 发送文本，让主线程分析情感
@@ -374,17 +297,6 @@ class AIWorker(threading.Thread):
                 # 发送响应到主线程
                 self.signals.response_ready.emit(clean_response)
 
-                # 检测：若模型以“人设/拒绝”中断了进行中的操作且未给出 [ACTION] 指令，标记在下一轮强制提醒模型继续
-                try:
-                    persona_pattern = r'\b(作为|我不能|我无法|我不应该|无法执行|不能执行|不便于|抱歉，我|抱歉我)\b'
-                    action_keywords = r'搜索|打开|点击|填写|登录|播放|查找|在 B 站|bilibili|搜索视频'
-                    if self.controller and '[ACTION]' not in ai_response and re.search(persona_pattern, ai_response, re.I) and re.search(action_keywords, cleaned_input or '', re.I):
-                        with self._force_lock:
-
-                            self._force_continue_next = True
-                        logger.info("检测到任务可能被人设中断；将在下一轮强制提醒模型继续执行未完成任务。")
-                except Exception:
-                    pass
 
                 # 处理记忆
                 if clean_response != "抱歉，我现在有点卡住了。":
@@ -392,7 +304,8 @@ class AIWorker(threading.Thread):
                     self.memory_manager.store_memory(f"用户: {cleaned_input}\nAI: {clean_response}")
                 
                 # 语音合成（请求主线程进行口型同步）
-                self.signals.speak_request.emit(clean_response)
+                if not skip_tts_for_response:
+                    self.signals.speak_request.emit(clean_response)
                 
             except Exception as e:
                 logger.error(f"Error: {e}", exc_info=True)
@@ -418,7 +331,7 @@ class MainApplication:
         
         self.memory_manager: Optional[MemoryManager] = None
         self.voice_manager: Optional[VoiceManager] = None
-        self.controller: Optional[Any] = None  # 新增：电脑控制器，实际为 AgentTools 实例
+
         self.sovits_process = None
         self.agent: Optional[ManusAgent] = None  # 本地智能体（ManusAgent）实例
         
@@ -454,47 +367,12 @@ class MainApplication:
             prompt_text=PROMPT_TEXT,
         )
         
-        # 初始化电脑控制模块（如果启用）。
-        if CONTROLLER_ENABLED:
-            safety_guard = SafetyGuard(CONTROLLER_APP_WHITELIST)
-            # agent tools 将在需要时自动创建内部的 ActionExecutor；
-            # 上层无需保留那个引用。
-            self.controller = None
-            logger.info("电脑控制模块已启用")
-
-            # Playwright 初始化／可用性也由 tools 暴露
-            try:
-                tools_tmp = AgentTools(safety_guard=safety_guard)
-                tools_tmp.ensure_playwright()
-                if tools_tmp.dom_available:
-                    self.signals.status_update.emit("✅ DOM 工具（Playwright）已启用：网页交互可用。")
-                else:
-                    try:
-                        import importlib.util
-                        spec = importlib.util.find_spec('playwright')
-                        if spec is None:
-                            msg = "⚠️ Playwright 未安装。运行 `pip install playwright` 来安装。"
-                        else:
-                            msg = "⚠️ Playwright 包已安装，但浏览器二进制可能缺失。运行 `playwright install` 来安装浏览器驱动。"
-                    except Exception:
-                        msg = "⚠️ DOM 工具（Playwright）不可用。请安装 Playwright 并运行 `playwright install`。"
-                    self.signals.status_update.emit(msg)
-            except Exception:
-                pass
-        else:
-            self.controller = None
-            logger.info("电脑控制模块已禁用")
-
-        # 初始化 Agent（Manus 风格 ReAct 智能体）并注入工具集
-        tools = AgentTools(safety_guard=safety_guard if CONTROLLER_ENABLED else None)
-        # 为旧代码兼容，将 controller 指向同一个对象
-        self.controller = tools
+        # 初始化 Agent（基于 OpenManus 框架的智能体）
         self.agent = ManusAgent(
-            llm_fn=call_llm, tools=tools, model_name=MODEL_NAME,
             system_prompt=SYSTEM_PROMPT,
-            max_iterations=20,
-            memory_storage=self.memory_manager._storage if self.memory_manager else None,
+            max_steps=100,
         )
+        logger.info("OpenManus 智能体已初始化")
 
         
         # 清理旧记忆
@@ -525,7 +403,6 @@ class MainApplication:
             input_queue=self.input_queue,
             memory_manager=self.memory_manager,
             voice_manager=self.voice_manager,
-            controller=self.controller,
             agent=self.agent
         )
     
@@ -706,6 +583,10 @@ class MainApplication:
         if self.memory_manager:
             self.memory_manager.summarize_day()
             self.memory_manager.close()
+        
+        # 清理 Agent 资源（关闭 OpenManus 事件循环等）
+        if self.agent:
+            self.agent.cleanup()
         
         # 停止语音服务
         if self.sovits_process:

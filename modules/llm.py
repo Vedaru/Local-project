@@ -4,7 +4,6 @@ LLM 模块 - OpenAI 接口
 
 优化点：
 - 缓存拼装好的 system prompt，避免每次调用都重复拼接
-- 移除未使用的 CORE_PROHIBITIONS / INSTRUCTION_FORMAT 死代码
 - max_tokens 从 200 提升到 800（200 对 Agent JSON 输出远远不够）
 - 指数退避首次间隔从 1.5s 降到 1.0s
 """
@@ -14,9 +13,6 @@ from openai import APIConnectionError, APITimeoutError, APIStatusError, RateLimi
 from .config import client
 from .logging_config import get_logger
 
-# 动态工具描述 — registry 位于 agent 子包
-from .agent.registry import registry as tool_registry
-
 logger = get_logger('llm')
 
 # ---- 缓存已拼装的 system prompt ----
@@ -25,12 +21,13 @@ _prompt_cache: dict = {}  # key: 原始 system_prompt 的 hash -> 拼装后的�
 
 
 def _build_enhanced_prompt(base_prompt: str) -> str:
-    """在基础 system prompt 上追加 Agent 触发提示与工具说明（仅在首次时构建）。"""
+    """在基础 system prompt 上追加 Agent 触发提示（OpenManus 会自行管理工具描述）。"""
     parts = [base_prompt]
 
     if "[SUMMON_AGENT]" not in base_prompt:
         parts.append(
-            "\n\n注意：如果用户请求需要联网检索、搜索信息、浏览网页、或操作本地电脑的任务，"
+            "\n\n注意：如果用户请求需要联网检索、搜索信息、浏览网页、操作本地电脑、"
+            "执行代码或任何需要工具辅助的任务，"
             "请在回复末尾以纯 JSON 的形式添加触发标签："
             '[SUMMON_AGENT]{"task": "<简明任务描述>"}[/SUMMON_AGENT]。'
             "标签内只应包含 JSON，不要包含其他文字。\n"
@@ -40,25 +37,7 @@ def _build_enhanced_prompt(base_prompt: str) -> str:
             '回复：好的，我来帮你搜索一下~ [SUMMON_AGENT]{"task":"搜索今天的天气预报"}[/SUMMON_AGENT]\n'
             "用户：打开B站搜索猫猫视频\n"
             '回复：好嘞，我去B站找找~ [SUMMON_AGENT]{"task":"打开B站并搜索猫猫视频"}[/SUMMON_AGENT]\n'
-            "对于那些仅需启动本地程序的简单命令，您也可以直接使用 [ACTION] 标签，"
-            '例如 [ACTION]{"action":"open_local_app","app_path":"notepad"}[/ACTION]。'
         )
-
-    tool_guidance = (
-        "当前可用的工具已在提示词中列出。"
-        "当用户要求搜索、查询、浏览网页或执行需要多个步骤的操作时，"
-        "必须使用 [SUMMON_AGENT] 标签触发 Agent 来执行，不要只是口头描述步骤。"
-        "对于简单的单步操作（如打开记事本），可以直接返回 JSON 工具调用。"
-        '例如，当用户说"打开笔记本"或"打开记事本"时，应该返回 JSON {"tool":"open_local_app","args":"notepad"}。'
-        "当用户要求写日志或写一段文字到笔记本时，可直接使用 open_local_app 然后 type_text。\n"
-        "【重要：网页输入规范】在网页的输入框中输入文字时，必须先执行 click_element 点击/聚焦输入框，"
-        "再执行 type_text 输入文字，最后执行 press_key Enter 提交。"
-        "切勿跳过 click_element 直接 type_text，否则键盘事件无目标、文字会丢失。"
-        "例如在B站搜索：先 browse 打开B站，再 click_element nav-search-input，再 type_text 关键词，再 press_key Enter。"
-    )
-    if tool_guidance not in base_prompt:
-        tools_knowledge = "可用工具及使用说明：\n\n" + tool_registry.get_prompt_description() + "\n"
-        parts.append("\n\n" + tool_guidance + "\n\n" + tools_knowledge)
 
     return "".join(parts)
 

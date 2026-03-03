@@ -1,17 +1,14 @@
 """
-人类化记忆系统 - 模块化版本
+记忆系统 — 基于 memoripy 的实现
 
 模块结构:
-- config.py: 配置参数和常量
-- logger.py: 日志配置
-- analyzers.py: 文本分析器（实体提取、情感分析等）
-- conflict.py: 冲突检测与覆盖
-- storage.py: 存储层（ChromaDB交互）
-- retrieval.py: 检索与去重
-- core.py: 核心记忆管理类
+- memoripy/: memoripy 核心库 (FAISS, 概念图, 语义聚类)
+- models.py: 模型适配器 (ArkChatModel, LocalEmbeddingModel)
+- wrapper.py: MemoryManager 包装器 (提供与旧代码兼容的接口)
+- skills.py: 技能管理器 (SkillManager, ChromaDB)
 """
 
-from .core import HumanLikeMemory, MemoryManager
+from .wrapper import MemoryManager
 from .skills import SkillManager
 
-__all__ = ['HumanLikeMemory', 'MemoryManager', 'SkillManager']
+__all__ = ['MemoryManager', 'SkillManager']
