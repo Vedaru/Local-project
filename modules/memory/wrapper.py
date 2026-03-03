@@ -5,16 +5,18 @@ on top of memoripy.
 This is a drop-in replacement: main.py and other callers use the same interface.
 Internally, all memory operations are delegated to memoripy's MemoryManager.
 """
+
 import os
 import time
 from collections import deque
 
-from .memoripy import MemoryManager as MemoripyManager, JSONStorage
-from .models import ArkChatModel, ArkEmbeddingModel, LocalEmbeddingModel, HashEmbeddingModel
 from ..config import data_dir
 from ..logging_config import get_logger
+from .memoripy import JSONStorage
+from .memoripy import MemoryManager as MemoripyManager
+from .models import ArkChatModel, ArkEmbeddingModel, HashEmbeddingModel, LocalEmbeddingModel
 
-logger = get_logger('Memory')
+logger = get_logger("Memory")
 
 SHORT_TERM_CAPACITY = 7
 
@@ -35,7 +37,7 @@ class MemoryManager:
     def __init__(self):
         # Short-term memory (recent conversation turns for display)
         self.short_term_memory = deque(maxlen=SHORT_TERM_CAPACITY)
-        self.current_emotion = 'neutral'
+        self.current_emotion = "neutral"
         self.enabled = False
 
         # Storage path
@@ -107,11 +109,7 @@ class MemoryManager:
 
     def add_to_short_term(self, role: str, content: str):
         """添加到短期记忆（最近对话轮次）"""
-        self.short_term_memory.append({
-            'role': role,
-            'content': content,
-            'timestamp': time.time()
-        })
+        self.short_term_memory.append({"role": role, "content": content, "timestamp": time.time()})
         logger.debug(f"[短期记忆] {role}: {content[:50]}...")
 
     def get_short_term_context(self) -> str:
@@ -196,8 +194,8 @@ class MemoryManager:
             if relevant:
                 memory_lines = []
                 for r in relevant[:n_results]:
-                    p = r.get('prompt', '')
-                    o = r.get('output', '')
+                    p = r.get("prompt", "")
+                    o = r.get("output", "")
                     if p and o:
                         memory_lines.append(f"用户: {p}\nAI: {o}")
                     elif p:
@@ -233,19 +231,19 @@ class MemoryManager:
     def get_memory_stats(self) -> dict:
         """获取记忆系统统计信息"""
         stats = {
-            'short_term': len(self.short_term_memory),
-            'short_term_capacity': SHORT_TERM_CAPACITY,
-            'current_emotion': self.current_emotion,
-            'working_memory': 0,
-            'long_term': 0,
-            'emotional': 0,
-            'concept_nodes': 0,
+            "short_term": len(self.short_term_memory),
+            "short_term_capacity": SHORT_TERM_CAPACITY,
+            "current_emotion": self.current_emotion,
+            "working_memory": 0,
+            "long_term": 0,
+            "emotional": 0,
+            "concept_nodes": 0,
         }
         if self._manager:
             store = self._manager.memory_store
-            stats['working_memory'] = len(store.short_term_memory)
-            stats['long_term'] = len(store.long_term_memory)
-            stats['concept_nodes'] = store.graph.number_of_nodes()
+            stats["working_memory"] = len(store.short_term_memory)
+            stats["long_term"] = len(store.long_term_memory)
+            stats["concept_nodes"] = store.graph.number_of_nodes()
         return stats
 
     def summarize_day(self):
@@ -254,7 +252,9 @@ class MemoryManager:
             return
         store = self._manager.memory_store
         total = len(store.short_term_memory) + len(store.long_term_memory)
-        logger.info(f"[每日总结] 总交互数: {total} (短期={len(store.short_term_memory)}, 长期={len(store.long_term_memory)})")
+        logger.info(
+            f"[每日总结] 总交互数: {total} (短期={len(store.short_term_memory)}, 长期={len(store.long_term_memory)})"
+        )
 
     def force_update_memory(self, old_info: str, new_info: str) -> bool:
         """强制更新记忆（memoripy 模式下存储新记忆作为更正）"""

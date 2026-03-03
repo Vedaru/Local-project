@@ -13,15 +13,15 @@ should call `from modules.logging_config import get_logger` and use
 `get_logger('MyModule')` to obtain a logger that writes to the centralized handlers.
 """
 
-import os
-import sys
+import contextvars
 import json
 import logging
 import logging.handlers
+import os
+import sys
 import traceback
 from datetime import datetime
 from typing import Any, Dict, Optional
-import contextvars
 
 # Context var for structured logging (per-task / per-thread)
 _log_context: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("log_context", default={})
@@ -56,9 +56,7 @@ class JSONFormatter(logging.Formatter):
 
         # Include extra attributes set on the LogRecord (avoid duplicates)
         extras = {
-            k: v
-            for k, v in record.__dict__.items()
-            if k not in logging.LogRecord.__dict__ and k not in ("msg", "args")
+            k: v for k, v in record.__dict__.items() if k not in logging.LogRecord.__dict__ and k not in ("msg", "args")
         }
         if extras:
             payload.setdefault("extra", {}).update(extras)
@@ -67,29 +65,32 @@ class JSONFormatter(logging.Formatter):
             return json.dumps(payload, ensure_ascii=False)
         except TypeError as e:
             # 兜底：如果 payload 中仍有不可序列化对象，返回简化错误信息
-            return json.dumps({
-                "timestamp": payload.get("timestamp"),
-                "level": "ERROR",
-                "message": f"日志序列化失败: {str(e)} | 原消息: {payload.get('message')}"
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "timestamp": payload.get("timestamp"),
+                    "level": "ERROR",
+                    "message": f"日志序列化失败: {str(e)} | 原消息: {payload.get('message')}",
+                },
+                ensure_ascii=False,
+            )
 
 
 class ColoredFormatter(logging.Formatter):
     """Human-friendly console formatter with minimal coloring when supported."""
 
     COLOR_MAP = {
-        "DEBUG": "\u001b[37m",   # white
-        "INFO": "\u001b[32m",    # green
-        "WARNING": "\u001b[33m", # yellow
-        "ERROR": "\u001b[31m",   # red
-        "CRITICAL": "\u001b[41m",# red background
+        "DEBUG": "\u001b[37m",  # white
+        "INFO": "\u001b[32m",  # green
+        "WARNING": "\u001b[33m",  # yellow
+        "ERROR": "\u001b[31m",  # red
+        "CRITICAL": "\u001b[41m",  # red background
     }
     RESET = "\u001b[0m"
 
     def format(self, record: logging.LogRecord) -> str:
         level = record.levelname
         color = self.COLOR_MAP.get(level, "")
-        ts = datetime.now().strftime('%H:%M:%S')
+        ts = datetime.now().strftime("%H:%M:%S")
         name = record.name
         location = f"{record.module}:{record.lineno}"
         msg = record.getMessage()

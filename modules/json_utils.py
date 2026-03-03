@@ -4,10 +4,11 @@
 将 main.py 和 agent/core.py 中重复的 balanced-brace 扫描、宽松解析逻辑
 统一提取到此处，避免代码重复并集中维护。
 """
-import re
-import json
+
 import ast
-from typing import Optional, List
+import json
+import re
+from typing import List, Optional
 
 
 def parse_loose(js_text: str) -> Optional[dict]:
@@ -32,12 +33,12 @@ def parse_loose(js_text: str) -> Optional[dict]:
         pass
 
     # 2) 提取代码围栏
-    m = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', js_text, re.IGNORECASE)
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", js_text, re.IGNORECASE)
     candidate = m.group(1) if m else js_text
 
     # 3) 去除尾随逗号 + 规范化智能引号
-    cand = re.sub(r',\s*(\}|\])', r'\1', candidate)
-    cand = cand.replace('\u201c', '"').replace('\u201d', '"')
+    cand = re.sub(r",\s*(\}|\])", r"\1", candidate)
+    cand = cand.replace("\u201c", '"').replace("\u201d", '"')
 
     try:
         obj = json.loads(cand)
@@ -71,7 +72,7 @@ def _scan_balanced_brace(s: str, start: int) -> Optional[str]:
     正确处理嵌套大括号、字符串内的转义字符与引号。
     """
     length = len(s)
-    if start >= length or s[start] != '{':
+    if start >= length or s[start] != "{":
         return None
 
     depth = 0
@@ -84,7 +85,7 @@ def _scan_balanced_brace(s: str, start: int) -> Optional[str]:
         ch = s[j]
         if esc:
             esc = False
-        elif ch == '\\':
+        elif ch == "\\":
             esc = True
         elif in_str:
             if ch == quote_ch:
@@ -93,12 +94,12 @@ def _scan_balanced_brace(s: str, start: int) -> Optional[str]:
         elif ch in ('"', "'"):
             in_str = True
             quote_ch = ch
-        elif ch == '{':
+        elif ch == "{":
             depth += 1
-        elif ch == '}':
+        elif ch == "}":
             depth -= 1
             if depth == 0:
-                return s[start:j + 1]
+                return s[start : j + 1]
         j += 1
 
     return None
@@ -117,7 +118,7 @@ def extract_all_jsons(s: str) -> List[dict]:
     seen_spans: list = []  # 记录已消费的字符范围，避免重复
 
     # 1) 提取所有 [ACTION] 块
-    for m in re.finditer(r'\[ACTION\](.*?)\[/ACTION\]', s, re.DOTALL):
+    for m in re.finditer(r"\[ACTION\](.*?)\[/ACTION\]", s, re.DOTALL):
         txt = m.group(1).strip()
         if not txt:
             continue
@@ -131,7 +132,7 @@ def extract_all_jsons(s: str) -> List[dict]:
     length = len(s)
     while i < length:
         try:
-            i = s.index('{', i)
+            i = s.index("{", i)
         except ValueError:
             break
 

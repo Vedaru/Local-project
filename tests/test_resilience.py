@@ -1,27 +1,29 @@
 """
 Unit tests for modules/resilience.py
 """
-import pytest
-import time
-from unittest.mock import MagicMock, patch
+
 import sys
+import time
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from modules.resilience import (
-    retry,
-    RetryStrategy,
-    RetryConfig,
-    calculate_delay,
     CircuitBreaker,
     CircuitState,
     LocalProjectError,
-    ServiceUnavailableError,
     RateLimitError,
-    safe_call,
+    RetryConfig,
+    RetryStrategy,
+    ServiceUnavailableError,
+    calculate_delay,
     exception_handler,
+    retry,
+    safe_call,
 )
 
 

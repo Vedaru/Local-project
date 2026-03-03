@@ -5,10 +5,13 @@ Changes from upstream:
 - Removed langchain dependency (HumanMessage, SystemMessage).
 - Messages are plain dicts with 'role' and 'content' keys.
 """
-import numpy as np
+
 import time
 import uuid
+
+import numpy as np
 from pydantic import BaseModel, Field
+
 from .in_memory_storage import InMemoryStorage
 from .memory_store import MemoryStore
 from .model import ChatModel, EmbeddingModel
@@ -47,9 +50,9 @@ class MemoryManager:
         if current_dim == self.dimension:
             return embedding
         elif current_dim < self.dimension:
-            return np.pad(embedding, (0, self.dimension - current_dim), 'constant')
+            return np.pad(embedding, (0, self.dimension - current_dim), "constant")
         else:
-            return embedding[:self.dimension]
+            return embedding[: self.dimension]
 
     def load_history(self):
         return self.storage.load_history()
@@ -88,23 +91,29 @@ class MemoryManager:
     def initialize_memory(self):
         short_term, long_term = self.load_history()
         for interaction in short_term:
-            interaction['embedding'] = self.standardize_embedding(np.array(interaction['embedding']))
+            interaction["embedding"] = self.standardize_embedding(np.array(interaction["embedding"]))
             self.memory_store.add_interaction(interaction)
         self.memory_store.long_term_memory.extend(long_term)
 
         self.memory_store.cluster_interactions()
-        print(f"Memory initialized with {len(self.memory_store.short_term_memory)} interactions in short-term and {len(self.memory_store.long_term_memory)} in long-term.")
+        print(
+            f"Memory initialized with {len(self.memory_store.short_term_memory)} interactions in short-term and {len(self.memory_store.long_term_memory)} in long-term."
+        )
 
     def retrieve_relevant_interactions(self, query: str, similarity_threshold=40, exclude_last_n=0) -> list:
         query_embedding = self.get_embedding(query)
         query_concepts = self.extract_concepts(query)
-        return self.memory_store.retrieve(query_embedding, query_concepts, similarity_threshold, exclude_last_n=exclude_last_n)
+        return self.memory_store.retrieve(
+            query_embedding, query_concepts, similarity_threshold, exclude_last_n=exclude_last_n
+        )
 
     def generate_response(self, prompt: str, last_interactions: list, retrievals: list, context_window=3) -> str:
         context = ""
         if last_interactions:
             context_interactions = last_interactions[-context_window:]
-            context += "\n".join([f"Previous prompt: {r['prompt']}\nPrevious output: {r['output']}" for r in context_interactions])
+            context += "\n".join(
+                [f"Previous prompt: {r['prompt']}\nPrevious output: {r['output']}" for r in context_interactions]
+            )
             print(f"Using the following last interactions as context for response generation:\n{context}")
         else:
             context = "No previous interactions available."
@@ -112,16 +121,23 @@ class MemoryManager:
 
         if retrievals:
             retrieved_context_interactions = retrievals[:context_window]
-            retrieved_context = "\n".join([f"Relevant prompt: {r['prompt']}\nRelevant output: {r['output']}" for r in retrieved_context_interactions])
-            print(f"Using the following retrieved interactions as context for response generation:\n{retrieved_context}")
+            retrieved_context = "\n".join(
+                [
+                    f"Relevant prompt: {r['prompt']}\nRelevant output: {r['output']}"
+                    for r in retrieved_context_interactions
+                ]
+            )
+            print(
+                f"Using the following retrieved interactions as context for response generation:\n{retrieved_context}"
+            )
             context += "\n" + retrieved_context
 
         # Use simple dicts instead of langchain message objects
         messages = [
             {"role": "system", "content": "You're a helpful assistant."},
-            {"role": "user", "content": f"{context}\nCurrent prompt: {prompt}"}
+            {"role": "user", "content": f"{context}\nCurrent prompt: {prompt}"},
         ]
-        
+
         response = self.chat_model.invoke(messages)
 
         return response

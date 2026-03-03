@@ -1,19 +1,23 @@
 # voice.py - 语音模块（低延迟版）
 
 import requests
+
 try:
     import pyaudio
+
     PYAUDIO_AVAILABLE = True
 except Exception:
     pyaudio = None
     PYAUDIO_AVAILABLE = False
-import threading
-import queue
-import wave
 import os
+import queue
+import threading
+import wave
+
 from .logging_config import get_logger
 
-logger = get_logger('voice')
+logger = get_logger("voice")
+
 
 class VoiceManager:
     def __init__(self, sovits_url="http://127.0.0.1:9880", ref_audio="", prompt_text=""):
@@ -28,7 +32,9 @@ class VoiceManager:
         self._ref_audio_missing = False
         try:
             if not self.ref_audio or not os.path.exists(self.ref_audio):
-                logger.warning(f"TTS reference audio not found: {self.ref_audio!r}. TTS requests will fail with 400 until this is fixed.")
+                logger.warning(
+                    f"TTS reference audio not found: {self.ref_audio!r}. TTS requests will fail with 400 until this is fixed."
+                )
                 self._ref_audio_missing = True
         except Exception:
             self._ref_audio_missing = True
@@ -46,7 +52,7 @@ class VoiceManager:
             channels=1,
             rate=self.sample_rate,
             output=True,
-            frames_per_buffer=self.chunk_size  # 匹配chunk大小
+            frames_per_buffer=self.chunk_size,  # 匹配chunk大小
         )
 
         # 播放状态控制
@@ -83,11 +89,11 @@ class VoiceManager:
     def speak_and_save(self, text: str, wav_path: str) -> bool:
         """
         合成语音并保存到 wav 文件（同步阻塞）
-        
+
         Args:
             text: 要合成的文本
             wav_path: 保存的 wav 文件路径
-        
+
         Returns:
             是否成功
         """
@@ -95,22 +101,19 @@ class VoiceManager:
             tts_data = self._build_tts_params(text)
 
             if self._ref_audio_missing:
-                logger.error(f"TTS aborted: reference audio missing ({self.ref_audio}). Place the file or update `REF_AUDIO` in config.")
+                logger.error(
+                    f"TTS aborted: reference audio missing ({self.ref_audio}). Place the file or update `REF_AUDIO` in config."
+                )
                 return False
 
             # 使用 bytearray 收集音频数据，避免 O(n²) 的 bytes += 拼接
             audio_chunks: list = []
 
-            with self.session.post(
-                f"{self.sovits_url}/tts",
-                json=tts_data,
-                stream=True,
-                timeout=(5, 60)
-            ) as resp:
+            with self.session.post(f"{self.sovits_url}/tts", json=tts_data, stream=True, timeout=(5, 60)) as resp:
                 try:
                     resp.raise_for_status()
                 except requests.exceptions.HTTPError as he:
-                    body = getattr(he.response, 'text', None)
+                    body = getattr(he.response, "text", None)
                     logger.error(f"TTS service returned HTTP {resp.status_code}: {body}")
                     raise
 
@@ -121,13 +124,13 @@ class VoiceManager:
             if not audio_chunks:
                 return False
 
-            audio_data = b''.join(audio_chunks)
+            audio_data = b"".join(audio_chunks)
 
             # 确保目录存在
-            os.makedirs(os.path.dirname(wav_path) if os.path.dirname(wav_path) else '.', exist_ok=True)
+            os.makedirs(os.path.dirname(wav_path) if os.path.dirname(wav_path) else ".", exist_ok=True)
 
             # 保存为 wav 文件
-            with wave.open(wav_path, 'wb') as wav_file:
+            with wave.open(wav_path, "wb") as wav_file:
                 wav_file.setnchannels(1)
                 wav_file.setsampwidth(2)  # 16-bit
                 wav_file.setframerate(self.sample_rate)
@@ -145,7 +148,7 @@ class VoiceManager:
     def play_wav(self, wav_path: str, lip_sync_callback=None):
         """
         播放 wav 文件（阻塞）并可选地进行实时口型同步
-        
+
         Args:
             wav_path: wav 文件路径
             lip_sync_callback: 口型同步回调函数，接收 0-1 的音量值
@@ -153,7 +156,7 @@ class VoiceManager:
         try:
             import numpy as np
 
-            with wave.open(wav_path, 'rb') as wav_file:
+            with wave.open(wav_path, "rb") as wav_file:
                 # 读取参数
                 n_channels = wav_file.getnchannels()
                 sampwidth = wav_file.getsampwidth()
@@ -169,7 +172,7 @@ class VoiceManager:
                         channels=n_channels,
                         rate=framerate,
                         output=True,
-                        frames_per_buffer=chunk_size
+                        frames_per_buffer=chunk_size,
                     )
                     stream = temp_stream
                 else:
@@ -236,12 +239,7 @@ class VoiceManager:
                 # 预热时若参考音频缺失，直接返回以避免 400
                 return
 
-            with self.session.post(
-                f"{self.sovits_url}/tts",
-                json=tts_data,
-                stream=True,
-                timeout=(2, 10)
-            ) as resp:
+            with self.session.post(f"{self.sovits_url}/tts", json=tts_data, stream=True, timeout=(2, 10)) as resp:
                 try:
                     resp.raise_for_status()
                 except requests.exceptions.HTTPError as he:
@@ -279,26 +277,25 @@ class VoiceManager:
                 if self._ref_audio_missing:
                     logger.error(f"TTS request skipped: missing reference audio ({self.ref_audio}).")
                     # 发送结束标记以避免播放线程卡住
-                    self.audio_queue.put(b'__START__')
-                    self.audio_queue.put(b'__END__')
+                    self.audio_queue.put(b"__START__")
+                    self.audio_queue.put(b"__END__")
                     continue
 
                 with self.session.post(
-                    f"{self.sovits_url}/tts",
-                    json=tts_data,
-                    stream=True,
-                    timeout=(2, 20)  # (连接超时, 读取超时)
+                    f"{self.sovits_url}/tts", json=tts_data, stream=True, timeout=(2, 20)  # (连接超时, 读取超时)
                 ) as resp:
                     try:
                         resp.raise_for_status()
                     except requests.exceptions.HTTPError as he:
-                        logger.error(f"TTS service returned HTTP {resp.status_code}: {getattr(he.response, 'text', None)}")
+                        logger.error(
+                            f"TTS service returned HTTP {resp.status_code}: {getattr(he.response, 'text', None)}"
+                        )
                         # 发送结束标记并继续循环
-                        self.audio_queue.put(b'__END__')
+                        self.audio_queue.put(b"__END__")
                         continue
 
                     # 通知播放线程新流开始，首包即播
-                    self.audio_queue.put(b'__START__')
+                    self.audio_queue.put(b"__START__")
 
                     # 使用更小的chunk_size实现更低延迟
                     for chunk in resp.iter_content(chunk_size=512):
@@ -313,12 +310,12 @@ class VoiceManager:
                 logger.error(f"TTS 错误: {e}", exc_info=True)
             finally:
                 # 发送结束标记
-                self.audio_queue.put(b'__END__')
+                self.audio_queue.put(b"__END__")
                 self.text_queue.task_done()
 
     def playback_worker(self):
         """音频播放线程 - 低延迟播放"""
-        buffer = b''
+        buffer = b""
         min_buffer_size = 256  # 最小缓冲大小，收到这么多数据就开始播放
         immediate_first_packet = False
 
@@ -330,17 +327,17 @@ class VoiceManager:
                 if chunk is None:
                     break
 
-                if chunk == b'__END__':
+                if chunk == b"__END__":
                     # 播放剩余buffer
                     if buffer:
                         self.stream.write(buffer)
-                        buffer = b''
+                        buffer = b""
                     self.is_playing = False
                     self.audio_queue.task_done()
                     continue
 
-                if chunk == b'__START__':
-                    buffer = b''
+                if chunk == b"__START__":
+                    buffer = b""
                     immediate_first_packet = True
                     self.audio_queue.task_done()
                     continue

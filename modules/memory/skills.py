@@ -3,15 +3,17 @@
 
 使用独立的 ChromaDB 存储（不再依赖旧的 MemoryStorage）
 """
+
 import os
 import uuid
 from typing import List, Optional
+
 import chromadb
 
 from ..config import MODEL_NAME, data_dir
 from ..logging_config import get_logger
 
-logger = get_logger('Memory.Skills')
+logger = get_logger("Memory.Skills")
 
 
 class SkillManager:
@@ -27,8 +29,7 @@ class SkillManager:
         try:
             self.client = chromadb.PersistentClient(path=path)
             self.collection = self.client.get_or_create_collection(
-                name="agent_skills",
-                metadata={"description": "存放 AI 学习到的标准操作程序 (SOP)"}
+                name="agent_skills", metadata={"description": "存放 AI 学习到的标准操作程序 (SOP)"}
             )
         except Exception as e:
             logger.error(f"创建或获取 agent_skills collection 失败: {e}")
@@ -44,12 +45,10 @@ class SkillManager:
             return None
         try:
             results = self.collection.query(
-                query_texts=[task_description],
-                n_results=1,
-                include=["documents", "distances"]
+                query_texts=[task_description], n_results=1, include=["documents", "distances"]
             )
-            docs = results.get('documents', [[]])[0]
-            dists = results.get('distances', [[]])[0]
+            docs = results.get("documents", [[]])[0]
+            dists = results.get("distances", [[]])[0]
             if docs and dists:
                 dist = dists[0]
                 if dist is not None and dist < 0.5:
@@ -81,16 +80,13 @@ class SkillManager:
         try:
             # 延迟导入以避免循环依赖
             from ..llm import call_llm
+
             sop = call_llm("", MODEL_NAME, prompt)
             if sop:
                 # 写入数据库
                 try:
                     sid = str(uuid.uuid4())
-                    self.collection.add(
-                        documents=[sop],
-                        metadatas=[{"task_name": task_name}],
-                        ids=[sid]
-                    )
+                    self.collection.add(documents=[sop], metadatas=[{"task_name": task_name}], ids=[sid])
                     logger.info(f"新技能已学习并存储，task_name={task_name} id={sid}")
                 except Exception as e:
                     logger.error(f"技能存储失败: {e}")

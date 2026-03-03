@@ -2,18 +2,18 @@
 Avatar 管理器 - 用于在子线程中安全地控制 Avatar
 """
 
-from typing import Optional, Callable
+from typing import Callable, Optional
 
 from PyQt6.QtWidgets import QApplication
 
-from .widget import AvatarWidget
 from .logger import log_info
+from .widget import AvatarWidget
 
 
 class AvatarManager:
     """
     Avatar 管理器 - 用于在子线程中安全地控制 Avatar
-    
+
     由于 PyQt 的 GUI 必须在主线程运行，此管理器提供线程安全的方法
     """
 
@@ -21,13 +21,7 @@ class AvatarManager:
         self.widget: Optional[AvatarWidget] = None
         self._app: Optional[QApplication] = None
 
-    def create_widget(
-        self,
-        width: int = 400,
-        height: int = 600,
-        x: int = 100,
-        y: int = 100
-    ) -> AvatarWidget:
+    def create_widget(self, width: int = 400, height: int = 600, x: int = 100, y: int = 100) -> AvatarWidget:
         """
         创建 Avatar 窗口（必须在主线程调用）
         """

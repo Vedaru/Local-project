@@ -7,13 +7,16 @@ LLM 模块 - OpenAI 接口
 - max_tokens 从 200 提升到 800（200 对 Agent JSON 输出远远不够）
 - 指数退避首次间隔从 1.5s 降到 1.0s
 """
+
 import threading
 import time
-from openai import APIConnectionError, APITimeoutError, APIStatusError, RateLimitError
+
+from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+
 from .config import client
 from .logging_config import get_logger
 
-logger = get_logger('llm')
+logger = get_logger("llm")
 
 # ---- 缓存已拼装的 system prompt ----
 _prompt_cache_lock = threading.Lock()
@@ -97,7 +100,7 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
     # 注入记忆上下文
     if memory_context:
         memory_prompt = (
-            "以下是你的记忆，请自然地运用这些记忆来回应用户，但不要生硬地提及\"我记得\"：\n\n"
+            '以下是你的记忆，请自然地运用这些记忆来回应用户，但不要生硬地提及"我记得"：\n\n'
             f"{memory_context}\n\n"
             "注意：\n"
             "- 【最近对话】是刚才的对话上下文，保持对话连贯性\n"
@@ -114,7 +117,7 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
             response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                max_tokens=800,           # 原 200 对 Agent JSON 不够，提升至 800
+                max_tokens=800,  # 原 200 对 Agent JSON 不够，提升至 800
                 temperature=0.7,
                 top_p=0.9,
                 presence_penalty=0.1,
@@ -125,7 +128,7 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
             return (content or "").strip() or "抱歉，我没能生成有效回复。"
         except (APIConnectionError, APITimeoutError) as e:
             if attempt < max_retries:
-                time.sleep(1.0 * (2 ** attempt))  # 1s, 2s
+                time.sleep(1.0 * (2**attempt))  # 1s, 2s
                 continue
             logger.error(f"连接失败: {e}")
             return "抱歉，我现在连接不上服务。"

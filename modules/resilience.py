@@ -3,6 +3,7 @@
 
 提供统一的异常类型、重试装饰器（指数退避）和断路器模式。
 """
+
 import functools
 import random
 import time
@@ -84,9 +85,9 @@ class AgentExecutionError(LocalProjectError):
 class RetryStrategy(Enum):
     """重试策略枚举"""
 
-    FIXED = "fixed"              # 固定间隔
+    FIXED = "fixed"  # 固定间隔
     EXPONENTIAL = "exponential"  # 指数退避
-    LINEAR = "linear"            # 线性增长
+    LINEAR = "linear"  # 线性增长
 
 
 @dataclass
@@ -94,11 +95,11 @@ class RetryConfig:
     """重试配置"""
 
     max_retries: int = 3
-    base_delay: float = 1.0        # 基础延迟（秒）
-    max_delay: float = 60.0        # 最大延迟（秒）
+    base_delay: float = 1.0  # 基础延迟（秒）
+    max_delay: float = 60.0  # 最大延迟（秒）
     strategy: RetryStrategy = RetryStrategy.EXPONENTIAL
-    jitter: bool = True            # 是否添加随机抖动
-    jitter_factor: float = 0.1     # 抖动因子
+    jitter: bool = True  # 是否添加随机抖动
+    jitter_factor: float = 0.1  # 抖动因子
     retryable_exceptions: tuple = (Exception,)  # 可重试的异常类型
 
 
@@ -107,7 +108,7 @@ def calculate_delay(config: RetryConfig, attempt: int) -> float:
     if config.strategy == RetryStrategy.FIXED:
         delay = config.base_delay
     elif config.strategy == RetryStrategy.EXPONENTIAL:
-        delay = config.base_delay * (2 ** attempt)
+        delay = config.base_delay * (2**attempt)
     elif config.strategy == RetryStrategy.LINEAR:
         delay = config.base_delay * (attempt + 1)
     else:
@@ -180,9 +181,7 @@ def retry(
 
                         time.sleep(delay)
                     else:
-                        logger.error(
-                            f"All {config.max_retries} retries exhausted for {func.__name__}: {e}"
-                        )
+                        logger.error(f"All {config.max_retries} retries exhausted for {func.__name__}: {e}")
 
             raise last_exception
 
@@ -237,9 +236,7 @@ def async_retry(
 
                         await asyncio.sleep(delay)
                     else:
-                        logger.error(
-                            f"All {config.max_retries} retries exhausted for {func.__name__}: {e}"
-                        )
+                        logger.error(f"All {config.max_retries} retries exhausted for {func.__name__}: {e}")
 
             raise last_exception
 
@@ -256,9 +253,9 @@ def async_retry(
 class CircuitState(Enum):
     """断路器状态"""
 
-    CLOSED = "closed"       # 正常状态
-    OPEN = "open"           # 断开状态（直接失败）
-    HALF_OPEN = "half_open" # 半开状态（尝试恢复）
+    CLOSED = "closed"  # 正常状态
+    OPEN = "open"  # 断开状态（直接失败）
+    HALF_OPEN = "half_open"  # 半开状态（尝试恢复）
 
 
 @dataclass
@@ -278,9 +275,9 @@ class CircuitBreaker:
             pass
     """
 
-    failure_threshold: int = 5          # 触发断路的失败次数
-    recovery_timeout: float = 30.0      # 恢复超时时间（秒）
-    success_threshold: int = 2          # 半开状态下恢复所需的成功次数
+    failure_threshold: int = 5  # 触发断路的失败次数
+    recovery_timeout: float = 30.0  # 恢复超时时间（秒）
+    success_threshold: int = 2  # 半开状态下恢复所需的成功次数
 
     _state: CircuitState = field(default=CircuitState.CLOSED, init=False)
     _failure_count: int = field(default=0, init=False)
@@ -322,9 +319,7 @@ class CircuitBreaker:
         elif self._state == CircuitState.CLOSED:
             if self._failure_count >= self.failure_threshold:
                 self._state = CircuitState.OPEN
-                logger.warning(
-                    f"Circuit breaker OPEN after {self._failure_count} failures"
-                )
+                logger.warning(f"Circuit breaker OPEN after {self._failure_count} failures")
 
     def __call__(self, func: Callable) -> Callable:
         """作为装饰器使用"""
@@ -375,9 +370,7 @@ class GlobalExceptionHandler:
         self._handlers: dict[Type[Exception], Callable] = {}
         self._default_handler: Optional[Callable] = None
 
-    def register(
-        self, exception_type: Type[Exception]
-    ) -> Callable[[Callable], Callable]:
+    def register(self, exception_type: Type[Exception]) -> Callable[[Callable], Callable]:
         """注册特定异常类型的处理器"""
 
         def decorator(handler: Callable) -> Callable:

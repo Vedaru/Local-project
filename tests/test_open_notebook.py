@@ -8,12 +8,12 @@ To run:
     python tests/test_open_notebook.py
 """
 
+import json
 import os
 import sys
-import json
 
 # make sure workspace root is on path so 'modules' package can be resolved
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from modules.agent import agent_tools, core
 
@@ -21,25 +21,14 @@ from modules.agent import agent_tools, core
 responses = []
 
 # first call: open notepad
-responses.append(json.dumps({
-    "thought": "打开记事本",
-    "tool": "open_local_app",
-    "args": "notepad"
-}))
+responses.append(json.dumps({"thought": "打开记事本", "tool": "open_local_app", "args": "notepad"}))
 # second call: type some text directly
-responses.append(json.dumps({
-    "thought": "记下内容",
-    "tool": "type_text",
-    "args": "测试内容123"
-}))
+responses.append(json.dumps({"thought": "记下内容", "tool": "type_text", "args": "测试内容123"}))
 # third call: finish
-responses.append(json.dumps({
-    "thought": "完成",
-    "tool": "final_answer",
-    "args": "done"
-}))
+responses.append(json.dumps({"thought": "完成", "tool": "final_answer", "args": "done"}))
 
 call_count = 0
+
 
 def fake_llm(system_prompt, model_name, prompt, memory_context=""):
     global call_count
@@ -47,13 +36,13 @@ def fake_llm(system_prompt, model_name, prompt, memory_context=""):
         resp = responses[call_count]
         call_count += 1
         return resp
-    return json.dumps({"thought":"","tool":"final_answer","args":""})
+    return json.dumps({"thought": "", "tool": "final_answer", "args": ""})
 
 
 def main():
     # cleanup any previous note file
     try:
-        os.remove('note.txt')
+        os.remove("note.txt")
     except FileNotFoundError:
         pass
 
@@ -71,5 +60,5 @@ def main():
     print("type_text invocation assumed successful")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -6,15 +6,16 @@ Avatar expression API and may be called dynamically by the Avatar manager or
 external code. Keep public method signatures stable to preserve compatibility.
 """
 
-from typing import Callable, Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Callable, Dict, List, Optional, Tuple
 
-from .logger import log_info, log_debug
+from .logger import log_debug, log_info
 
 
 class Emotion(Enum):
     """情感类型枚举"""
+
     NEUTRAL = "neutral"
     HAPPY = "happy"
     SAD = "sad"
@@ -28,6 +29,7 @@ class Emotion(Enum):
 @dataclass
 class ExpressionConfig:
     """表情配置"""
+
     emotion: Emotion
     expression_index: int  # Live2D 模型的表情索引
     motion_group: Optional[str] = None  # 可选的配套动作组
@@ -38,38 +40,160 @@ class ExpressionConfig:
 @dataclass
 class EmotionKeywords:
     """情感关键词配置"""
-    positive: List[str] = field(default_factory=lambda: [
-        '开心', '高兴', '快乐', '好', '棒', '喜欢', '爱', '哈哈', '嘻嘻', '嘿嘿',
-        '太好了', '真棒', '厉害', '赞', '不错', '可以', '行', '好的', '好呀',
-        '哇', '耶', '欢迎', '谢谢', '感谢', '开玩笑', '有趣', '好玩', '笑',
-        '😊', '😄', '😃', '🎉', '👍', '❤️', '💕', '🥰', '😘',
-    ])
-    negative: List[str] = field(default_factory=lambda: [
-        '难过', '伤心', '悲伤', '哭', '痛', '累', '烦', '郁闷', '无聊',
-        '讨厌', '不喜欢', '不想', '不要', '算了', '唉', '呜呜', '呜',
-        '对不起', '抱歉', '遗憾', '可惜', '失望', '沮丧',
-        '😢', '😭', '😔', '😞', '💔',
-    ])
-    angry: List[str] = field(default_factory=lambda: [
-        '生气', '愤怒', '烦死', '讨厌', '滚', '闭嘴', '可恶', '混蛋',
-        '什么鬼', '搞什么', '气死', '受不了', '不爽',
-        '😠', '😡', '🤬', '💢',
-    ])
-    surprised: List[str] = field(default_factory=lambda: [
-        '惊讶', '震惊', '天哪', '我的天', '什么', '真的吗', '不会吧',
-        '居然', '竟然', '没想到', '想不到', '意外', '突然',
-        '😮', '😲', '😱', '🤯', '❗', '❓',
-    ])
-    shy: List[str] = field(default_factory=lambda: [
-        '害羞', '不好意思', '羞', '脸红', '尴尬', '那个', '嗯...',
-        '人家', '讨厌啦', '别这样', '哎呀',
-        '😳', '🙈', '😅',
-    ])
-    confused: List[str] = field(default_factory=lambda: [
-        '困惑', '不懂', '不明白', '什么意思', '为什么', '怎么',
-        '奇怪', '疑惑', '迷茫', '不知道', '不确定',
-        '🤔', '❓', '😕',
-    ])
+
+    positive: List[str] = field(
+        default_factory=lambda: [
+            "开心",
+            "高兴",
+            "快乐",
+            "好",
+            "棒",
+            "喜欢",
+            "爱",
+            "哈哈",
+            "嘻嘻",
+            "嘿嘿",
+            "太好了",
+            "真棒",
+            "厉害",
+            "赞",
+            "不错",
+            "可以",
+            "行",
+            "好的",
+            "好呀",
+            "哇",
+            "耶",
+            "欢迎",
+            "谢谢",
+            "感谢",
+            "开玩笑",
+            "有趣",
+            "好玩",
+            "笑",
+            "😊",
+            "😄",
+            "😃",
+            "🎉",
+            "👍",
+            "❤️",
+            "💕",
+            "🥰",
+            "😘",
+        ]
+    )
+    negative: List[str] = field(
+        default_factory=lambda: [
+            "难过",
+            "伤心",
+            "悲伤",
+            "哭",
+            "痛",
+            "累",
+            "烦",
+            "郁闷",
+            "无聊",
+            "讨厌",
+            "不喜欢",
+            "不想",
+            "不要",
+            "算了",
+            "唉",
+            "呜呜",
+            "呜",
+            "对不起",
+            "抱歉",
+            "遗憾",
+            "可惜",
+            "失望",
+            "沮丧",
+            "😢",
+            "😭",
+            "😔",
+            "😞",
+            "💔",
+        ]
+    )
+    angry: List[str] = field(
+        default_factory=lambda: [
+            "生气",
+            "愤怒",
+            "烦死",
+            "讨厌",
+            "滚",
+            "闭嘴",
+            "可恶",
+            "混蛋",
+            "什么鬼",
+            "搞什么",
+            "气死",
+            "受不了",
+            "不爽",
+            "😠",
+            "😡",
+            "🤬",
+            "💢",
+        ]
+    )
+    surprised: List[str] = field(
+        default_factory=lambda: [
+            "惊讶",
+            "震惊",
+            "天哪",
+            "我的天",
+            "什么",
+            "真的吗",
+            "不会吧",
+            "居然",
+            "竟然",
+            "没想到",
+            "想不到",
+            "意外",
+            "突然",
+            "😮",
+            "😲",
+            "😱",
+            "🤯",
+            "❗",
+            "❓",
+        ]
+    )
+    shy: List[str] = field(
+        default_factory=lambda: [
+            "害羞",
+            "不好意思",
+            "羞",
+            "脸红",
+            "尴尬",
+            "那个",
+            "嗯...",
+            "人家",
+            "讨厌啦",
+            "别这样",
+            "哎呀",
+            "😳",
+            "🙈",
+            "😅",
+        ]
+    )
+    confused: List[str] = field(
+        default_factory=lambda: [
+            "困惑",
+            "不懂",
+            "不明白",
+            "什么意思",
+            "为什么",
+            "怎么",
+            "奇怪",
+            "疑惑",
+            "迷茫",
+            "不知道",
+            "不确定",
+            "🤔",
+            "❓",
+            "😕",
+        ]
+    )
 
 
 class EmotionAnalyzer:
@@ -90,23 +214,23 @@ class EmotionAnalyzer:
 
         # 标点符号情感映射
         self._punctuation_emotions = {
-            '！': (Emotion.HAPPY, 0.3),
-            '!': (Emotion.HAPPY, 0.3),
-            '？': (Emotion.CONFUSED, 0.2),
-            '?': (Emotion.CONFUSED, 0.2),
-            '...': (Emotion.THINKING, 0.2),
-            '……': (Emotion.THINKING, 0.2),
-            '~': (Emotion.HAPPY, 0.2),
-            '～': (Emotion.HAPPY, 0.2),
+            "！": (Emotion.HAPPY, 0.3),
+            "!": (Emotion.HAPPY, 0.3),
+            "？": (Emotion.CONFUSED, 0.2),
+            "?": (Emotion.CONFUSED, 0.2),
+            "...": (Emotion.THINKING, 0.2),
+            "……": (Emotion.THINKING, 0.2),
+            "~": (Emotion.HAPPY, 0.2),
+            "～": (Emotion.HAPPY, 0.2),
         }
 
     def analyze(self, text: str) -> Tuple[Emotion, float]:
         """
         分析文本的情感
-        
+
         Args:
             text: 要分析的文本
-        
+
         Returns:
             (情感类型, 置信度) 的元组
         """
@@ -130,7 +254,7 @@ class EmotionAnalyzer:
             scores[emotion] += count * weight
 
         # 感叹号多表示强烈情感
-        exclaim_count = text.count('！') + text.count('!')
+        exclaim_count = text.count("！") + text.count("!")
         if exclaim_count >= 2:
             # 增强当前最高情感
             max_emotion = max(scores, key=scores.get)
@@ -175,7 +299,7 @@ class ExpressionManager:
         self,
         expression_callback: Callable[[int], None],
         motion_callback: Optional[Callable[[str, int], None]] = None,
-        expression_config: Optional[Dict[Emotion, ExpressionConfig]] = None
+        expression_config: Optional[Dict[Emotion, ExpressionConfig]] = None,
     ):
         """
         Args:
@@ -202,7 +326,7 @@ class ExpressionManager:
     def set_emotion(self, emotion: Emotion, play_motion: bool = True):
         """
         设置表情
-        
+
         Args:
             emotion: 情感类型
             play_motion: 是否播放配套动作
@@ -220,8 +344,7 @@ class ExpressionManager:
             # 播放配套动作
             if play_motion and self._motion_callback and config.motion_group:
                 self._motion_callback(
-                    config.motion_group,
-                    config.motion_index if config.motion_index is not None else 0
+                    config.motion_group, config.motion_index if config.motion_index is not None else 0
                 )
 
             log_debug(f"Expression set: {emotion.value} (index: {config.expression_index})")
@@ -229,11 +352,11 @@ class ExpressionManager:
     def set_expression_from_text(self, text: str, play_motion: bool = True) -> Emotion:
         """
         根据文本内容自动设置表情
-        
+
         Args:
             text: 文本内容
             play_motion: 是否播放配套动作
-        
+
         Returns:
             检测到的情感
         """

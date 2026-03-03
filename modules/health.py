@@ -7,6 +7,7 @@
 - 记忆系统（ChromaDB）
 - 文件系统（临时目录等）
 """
+
 import os
 import threading
 import time
@@ -30,10 +31,10 @@ logger = get_logger("health")
 class HealthStatus(Enum):
     """服务健康状态"""
 
-    HEALTHY = "healthy"         # 健康
-    DEGRADED = "degraded"       # 降级（部分功能可用）
-    UNHEALTHY = "unhealthy"     # 不健康
-    UNKNOWN = "unknown"         # 未知
+    HEALTHY = "healthy"  # 健康
+    DEGRADED = "degraded"  # 降级（部分功能可用）
+    UNHEALTHY = "unhealthy"  # 不健康
+    UNKNOWN = "unknown"  # 未知
 
 
 @dataclass
@@ -469,9 +470,7 @@ class HealthChecker:
                 self._stop_event.wait(interval)
             logger.info("Background health checks stopped")
 
-        self._background_thread = threading.Thread(
-            target=background_check_loop, daemon=True, name="HealthChecker"
-        )
+        self._background_thread = threading.Thread(target=background_check_loop, daemon=True, name="HealthChecker")
         self._background_thread.start()
 
     def stop_background_checks(self):

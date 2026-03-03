@@ -3,6 +3,7 @@ Pytest configuration and fixtures for Local-project tests.
 
 This module provides shared fixtures and configuration for all tests.
 """
+
 import os
 import sys
 from pathlib import Path
@@ -61,13 +62,13 @@ def mock_openai_client() -> Generator[MagicMock, None, None]:
     with patch("openai.OpenAI") as mock_client:
         instance = MagicMock()
         mock_client.return_value = instance
-        
+
         # Mock chat completion response
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = "Test response"
         instance.chat.completions.create.return_value = mock_response
-        
+
         yield instance
 
 
@@ -115,7 +116,7 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
-    
+
     # Skip integration tests unless --runintegration is passed
     if not config.getoption("--runintegration", default=False):
         skip_integration = pytest.mark.skip(reason="need --runintegration option to run")

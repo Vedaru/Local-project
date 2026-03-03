@@ -1,5 +1,6 @@
 # storage.py
 
+
 class BaseStorage:
     def load_history(self):
         raise NotImplementedError("The method load_history() must be implemented.")

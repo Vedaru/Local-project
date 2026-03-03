@@ -7,20 +7,24 @@ EmbeddingModel (priority order):
   2. LocalEmbeddingModel: sentence-transformers locally (requires HuggingFace download)
   3. HashEmbeddingModel: lightweight sklearn hash-based embedding (no downloads needed)
 """
+
 import json
+
 import numpy as np
 
-from .memoripy.model import ChatModel, EmbeddingModel
 from ..logging_config import get_logger
+from .memoripy.model import ChatModel, EmbeddingModel
 
-logger = get_logger('Memory.Models')
+logger = get_logger("Memory.Models")
 
 
 class ArkChatModel(ChatModel):
     """Chat model adapter that uses the project's OpenAI-compatible client (Volcengine/Ark)."""
 
     def __init__(self, model_name: str = None):
-        from ..config import client as ark_client, MODEL_NAME
+        from ..config import MODEL_NAME
+        from ..config import client as ark_client
+
         self._client = ark_client
         self.model_name = model_name or MODEL_NAME
         logger.info(f"ArkChatModel 初始化: model={self.model_name}")
@@ -31,10 +35,10 @@ class ArkChatModel(ChatModel):
         for msg in messages:
             if isinstance(msg, dict):
                 openai_messages.append(msg)
-            elif hasattr(msg, 'role') and hasattr(msg, 'content'):
+            elif hasattr(msg, "role") and hasattr(msg, "content"):
                 openai_messages.append({"role": msg.role, "content": msg.content})
-            elif hasattr(msg, 'type') and hasattr(msg, 'content'):
-                role = 'system' if msg.type == 'system' else 'user'
+            elif hasattr(msg, "type") and hasattr(msg, "content"):
+                role = "system" if msg.type == "system" else "user"
                 openai_messages.append({"role": role, "content": msg.content})
 
         response = self._client.chat.completions.create(
@@ -60,9 +64,10 @@ class ArkChatModel(ChatModel):
             content = response.choices[0].message.content.strip()
             # Try to extract JSON from the response
             # Sometimes LLM wraps in markdown code blocks
-            if '```' in content:
+            if "```" in content:
                 import re
-                json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
+
+                json_match = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
                 if json_match:
                     content = json_match.group(1)
             result = json.loads(content)
@@ -83,7 +88,9 @@ class ArkEmbeddingModel(EmbeddingModel):
     """
 
     def __init__(self, model_name: str = None):
-        from ..config import client as ark_client, EMBEDDING_MODEL_NAME
+        from ..config import EMBEDDING_MODEL_NAME
+        from ..config import client as ark_client
+
         self._client = ark_client
         self.model_name = model_name or EMBEDDING_MODEL_NAME
 
@@ -133,7 +140,7 @@ class LocalEmbeddingModel(EmbeddingModel):
     # Preferred models in order of priority
     _MODEL_CANDIDATES = [
         "paraphrase-multilingual-MiniLM-L12-v2",  # Good for Chinese, 384 dim
-        "all-MiniLM-L6-v2",                        # English-focused, 384 dim
+        "all-MiniLM-L6-v2",  # English-focused, 384 dim
     ]
 
     def __init__(self, model_name: str = None):
@@ -145,6 +152,7 @@ class LocalEmbeddingModel(EmbeddingModel):
         for name in candidates:
             try:
                 from sentence_transformers import SentenceTransformer
+
                 logger.info(f"正在加载嵌入模型: {name}")
                 self.model = SentenceTransformer(name)
                 self.dimension = self.model.get_sentence_embedding_dimension()
@@ -155,9 +163,7 @@ class LocalEmbeddingModel(EmbeddingModel):
                 continue
 
         if self.model is None:
-            raise RuntimeError(
-                "无法加载任何嵌入模型。请安装 sentence-transformers: pip install sentence-transformers"
-            )
+            raise RuntimeError("无法加载任何嵌入模型。请安装 sentence-transformers: pip install sentence-transformers")
 
     def get_embedding(self, text: str) -> np.ndarray:
         """Generate embedding for the given text."""
@@ -172,9 +178,10 @@ def _simple_extract_concepts(text: str) -> list[str]:
     """Fallback concept extraction using simple heuristics (no LLM needed)."""
     try:
         import jieba.posseg as pseg
+
         concepts = []
         for word, flag in pseg.cut(text):
-            if flag.startswith('n') and len(word) >= 2:
+            if flag.startswith("n") and len(word) >= 2:
                 concepts.append(word)
         return list(set(concepts))[:10]
     except ImportError:
@@ -193,14 +200,15 @@ class HashEmbeddingModel(EmbeddingModel):
 
     def __init__(self, dimension: int = 384):
         from sklearn.feature_extraction.text import HashingVectorizer
+
         self._dimension = dimension
         # Character n-gram hashing (supports Chinese without word segmentation)
         self._vectorizer = HashingVectorizer(
             n_features=dimension,
-            analyzer='char',
+            analyzer="char",
             ngram_range=(2, 4),
             alternate_sign=False,
-            norm='l2',
+            norm="l2",
         )
         logger.info(f"HashEmbeddingModel 已就绪: 维度={dimension}（本地哈希嵌入，无需下载）")
 

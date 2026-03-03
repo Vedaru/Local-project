@@ -5,8 +5,8 @@
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt6.QtGui import QColor, QIcon, QAction, QPixmap, QPainter
+from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .logger import log_info
 
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 class TrayMixin:
     """系统托盘功能 Mixin 类"""
 
-    def setup_tray(self: 'AvatarWidget'):
+    def setup_tray(self: "AvatarWidget"):
         """设置系统托盘图标"""
         # 创建托盘图标（简单的彩色圆形）
         pixmap = QPixmap(32, 32)
@@ -66,33 +66,27 @@ class TrayMixin:
         self.tray_icon.show()
         log_info("System tray initialized")
 
-    def _on_tray_activated(self: 'AvatarWidget', reason):
+    def _on_tray_activated(self: "AvatarWidget", reason):
         """托盘图标点击事件"""
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self._on_toggle_drag()
 
-    def _on_toggle_drag(self: 'AvatarWidget'):
+    def _on_toggle_drag(self: "AvatarWidget"):
         """切换拖拽模式"""
         result = self.toggle_click_through()
         if result is not None:
             if result:
                 self.drag_action.setText("🔓 启用拖拽模式")
                 self.tray_icon.showMessage(
-                    "Avatar",
-                    "点击穿透模式 - 可以点击模型后面的窗口",
-                    QSystemTrayIcon.MessageIcon.Information,
-                    2000
+                    "Avatar", "点击穿透模式 - 可以点击模型后面的窗口", QSystemTrayIcon.MessageIcon.Information, 2000
                 )
             else:
                 self.drag_action.setText("🔒 禁用拖拽模式")
                 self.tray_icon.showMessage(
-                    "Avatar",
-                    "拖拽模式 - 可以拖动窗口位置",
-                    QSystemTrayIcon.MessageIcon.Information,
-                    2000
+                    "Avatar", "拖拽模式 - 可以拖动窗口位置", QSystemTrayIcon.MessageIcon.Information, 2000
                 )
 
-    def _on_toggle_visibility(self: 'AvatarWidget'):
+    def _on_toggle_visibility(self: "AvatarWidget"):
         """切换窗口可见性"""
         if self.isVisible():
             self.hide()
@@ -101,14 +95,11 @@ class TrayMixin:
             self.show()
             log_info("Window shown")
 
-    def _reset_window(self: 'AvatarWidget'):
+    def _reset_window(self: "AvatarWidget"):
         """重置窗口位置和大小到初始值"""
-        self.setGeometry(
-            self._initial_x,
-            self._initial_y,
-            self._initial_width,
-            self._initial_height
-        )
+        self.setGeometry(self._initial_x, self._initial_y, self._initial_width, self._initial_height)
         # 同时重置模型缩放
         self.run_js("resetModelScale()")
-        log_info(f"Window reset to ({self._initial_x}, {self._initial_y}, {self._initial_width}x{self._initial_height})")
+        log_info(
+            f"Window reset to ({self._initial_x}, {self._initial_y}, {self._initial_width}x{self._initial_height})"
+        )

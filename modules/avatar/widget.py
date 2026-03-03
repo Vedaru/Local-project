@@ -4,26 +4,26 @@ Avatar 主窗口部件
 
 import sys
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QEvent, QTimer
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineSettings
+from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor
+from PyQt6.QtWebEngineCore import QWebEngineSettings
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
 
-from .logger import log_info, log_error, log_debug
-from .webengine import WebEnginePage, AvatarBridge
 from .click_through import ClickThroughMixin
-from .tray import TrayMixin
-from .resize import ResizeMixin
 from .js_communication import JSCommunicationMixin
+from .logger import log_debug, log_error, log_info
+from .resize import ResizeMixin
+from .tray import TrayMixin
+from .webengine import AvatarBridge, WebEnginePage
 
 
 class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCommunicationMixin):
     """
     Live2D 虚拟形象显示窗口
-    
+
     特性：
     - 无边框透明窗口
     - 总是置顶显示
@@ -34,12 +34,7 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
     page_ready = pyqtSignal()
 
     def __init__(
-        self,
-        width: int = 400,
-        height: int = 600,
-        x: int = 100,
-        y: int = 100,
-        parent: Optional[QWidget] = None
+        self, width: int = 400, height: int = 600, x: int = 100, y: int = 100, parent: Optional[QWidget] = None
     ):
         super().__init__(parent)
 
@@ -72,11 +67,7 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
 
     def _setup_window(self, width: int, height: int, x: int, y: int):
         """配置窗口属性"""
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
-        )
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
 
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
@@ -84,7 +75,7 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
         self.setMinimumSize(200, 200)
         self.setWindowTitle("Live2D Avatar")
 
-        if sys.platform == 'win32':
+        if sys.platform == "win32":
             self._click_through_enabled = False
             self._click_through_setup_done = False
 
@@ -161,6 +152,7 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
 
     def _check_js_ready(self):
         """检查 JavaScript 是否就绪"""
+
         def on_check_result(ready):
             if ready:
                 log_info("JavaScript is ready!")
@@ -180,12 +172,12 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
     def showEvent(self, event):
         """窗口显示事件"""
         super().showEvent(event)
-        if sys.platform == 'win32' and hasattr(self, '_click_through_setup_done') and self._click_through_setup_done:
+        if sys.platform == "win32" and hasattr(self, "_click_through_setup_done") and self._click_through_setup_done:
             QTimer.singleShot(100, self.apply_click_through)
 
     def closeEvent(self, event):
         """窗口关闭事件"""
-        if sys.platform == 'win32':
+        if sys.platform == "win32":
             self.cleanup_global_hotkey()
         log_info("Window closing")
         super().closeEvent(event)
@@ -193,9 +185,11 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
     def keyPressEvent(self, event):
         """键盘事件"""
         modifiers = event.modifiers()
-        if (modifiers & Qt.KeyboardModifier.ControlModifier and
-            modifiers & Qt.KeyboardModifier.AltModifier and
-            event.key() == Qt.Key.Key_D):
+        if (
+            modifiers & Qt.KeyboardModifier.ControlModifier
+            and modifiers & Qt.KeyboardModifier.AltModifier
+            and event.key() == Qt.Key.Key_D
+        ):
             self.toggle_click_through()
             event.accept()
         else:
@@ -203,7 +197,7 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
 
     def mouseMoveEvent(self, event):
         """处理主窗口的鼠标移动事件"""
-        if hasattr(self, '_click_through_enabled') and self._click_through_enabled:
+        if hasattr(self, "_click_through_enabled") and self._click_through_enabled:
             return super().mouseMoveEvent(event)
 
         global_pos = event.globalPosition().toPoint()
@@ -217,7 +211,7 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
 
     def mousePressEvent(self, event):
         """处理主窗口的鼠标按下事件"""
-        if hasattr(self, '_click_through_enabled') and self._click_through_enabled:
+        if hasattr(self, "_click_through_enabled") and self._click_through_enabled:
             return super().mousePressEvent(event)
 
         if event.button() == Qt.MouseButton.LeftButton:
@@ -231,7 +225,7 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
 
     def mouseReleaseEvent(self, event):
         """处理主窗口的鼠标释放事件"""
-        if hasattr(self, '_click_through_enabled') and self._click_through_enabled:
+        if hasattr(self, "_click_through_enabled") and self._click_through_enabled:
             return super().mouseReleaseEvent(event)
 
         if event.button() == Qt.MouseButton.LeftButton:
@@ -243,7 +237,7 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
 
     def eventFilter(self, obj, event):
         """事件过滤器"""
-        if hasattr(self, '_click_through_enabled') and self._click_through_enabled:
+        if hasattr(self, "_click_through_enabled") and self._click_through_enabled:
             return super().eventFilter(obj, event)
 
         event_type = event.type()

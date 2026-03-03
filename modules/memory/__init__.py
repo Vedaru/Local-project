@@ -8,7 +8,7 @@
 - skills.py: 技能管理器 (SkillManager, ChromaDB)
 """
 
-from .wrapper import MemoryManager
 from .skills import SkillManager
+from .wrapper import MemoryManager
 
-__all__ = ['MemoryManager', 'SkillManager']
+__all__ = ["MemoryManager", "SkillManager"]

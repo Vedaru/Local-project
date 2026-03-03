@@ -10,6 +10,7 @@ import os
 # 立即修补 os.add_dll_directory 以处理不存在的 ROCm 路径
 _original_add_dll_directory = os.add_dll_directory
 
+
 def _patched_add_dll_directory(path):
     """
     包装 os.add_dll_directory 以忽略不存在的 ROCm 路径和 CUDA 版本不匹配的路径。
@@ -34,6 +35,7 @@ def _patched_add_dll_directory(path):
         print(f"[PATCH] 添加 DLL 目录失败: {path}, 错误: {e}")
         return None
 
+
 # 立即应用补丁
 os.add_dll_directory = _patched_add_dll_directory
 print("[PATCH] ctranslate2 补丁已应用：os.add_dll_directory 已被修补")
@@ -43,6 +45,7 @@ print("[PATCH] ctranslate2 补丁已应用：os.add_dll_directory 已被修补")
 # 将 PyTorch 的 lib 目录添加到 DLL 搜索路径使得库可被找到
 try:
     import torch
+
     torch_lib_dir = os.path.join(os.path.dirname(torch.__file__), "lib")
     if os.path.exists(torch_lib_dir):
         try:

@@ -3,6 +3,7 @@ Avatar 日志模块 - 统一的日志管理
 """
 
 from typing import Optional
+
 from ..logging_config import get_logger as _get_global_logger
 
 
@@ -15,7 +16,7 @@ class AvatarLogger:
     serialized to the central JSON files.
     """
 
-    _instance: Optional['AvatarLogger'] = None
+    _instance: Optional["AvatarLogger"] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -27,7 +28,7 @@ class AvatarLogger:
         if getattr(self, "_initialized", False):
             return
         self._initialized = True
-        self.logger = _get_global_logger('Avatar')
+        self.logger = _get_global_logger("Avatar")
         self.logger.debug("AvatarLogger initialized (delegated to centralized logger)")
 
     def debug(self, message: str):

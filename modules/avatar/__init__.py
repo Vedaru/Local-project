@@ -15,57 +15,57 @@ Avatar 模块 - 基于 PyQt6 + QWebEngineView 的 Live2D 模型显示
 
 使用方法：
     from modules.avatar import AvatarWidget, AvatarManager
-    
+
     # 方式1: 直接使用 Widget
     widget = AvatarWidget(width=400, height=600, x=100, y=100)
     widget.show()
     widget.load_model("model/model.model3.json")
-    
+
     # 方式2: 使用 Manager
     manager = AvatarManager()
     widget = manager.create_widget()
     manager.show()
     manager.load_model("model/model.model3.json")
-    
+
     # 口型同步
     from modules.avatar import LipSyncManager
     lip_sync = LipSyncManager(callback=widget.set_mouth_open)
     lip_sync.sync_with_text("你好", duration=2.0)
-    
+
     # 表情管理
     from modules.avatar import ExpressionManager, Emotion
     expr_mgr = ExpressionManager(expression_callback=widget.set_expression)
     expr_mgr.set_expression_from_text("太开心了！")
 """
 
-from .widget import AvatarWidget
+from .expression import Emotion, EmotionAnalyzer, EmotionKeywords, ExpressionConfig, ExpressionManager
+from .lip_sync import LipSyncAnalyzer, LipSyncFrame, LipSyncManager, LipSyncPlayer
+from .logger import get_logger, log_debug, log_error, log_info, log_warning
 from .manager import AvatarManager
-from .webengine import WebEnginePage, AvatarBridge
-from .logger import get_logger, log_info, log_debug, log_warning, log_error
-from .lip_sync import LipSyncManager, LipSyncAnalyzer, LipSyncPlayer, LipSyncFrame
-from .expression import ExpressionManager, EmotionAnalyzer, Emotion, ExpressionConfig, EmotionKeywords
+from .webengine import AvatarBridge, WebEnginePage
+from .widget import AvatarWidget
 
 __all__ = [
-    'AvatarWidget',
-    'AvatarManager',
-    'WebEnginePage',
-    'AvatarBridge',
-    'get_logger',
-    'log_info',
-    'log_debug',
-    'log_warning',
-    'log_error',
+    "AvatarWidget",
+    "AvatarManager",
+    "WebEnginePage",
+    "AvatarBridge",
+    "get_logger",
+    "log_info",
+    "log_debug",
+    "log_warning",
+    "log_error",
     # Lip Sync
-    'LipSyncManager',
-    'LipSyncAnalyzer',
-    'LipSyncPlayer',
-    'LipSyncFrame',
+    "LipSyncManager",
+    "LipSyncAnalyzer",
+    "LipSyncPlayer",
+    "LipSyncFrame",
     # Expression
-    'ExpressionManager',
-    'EmotionAnalyzer',
-    'Emotion',
-    'ExpressionConfig',
-    'EmotionKeywords',
+    "ExpressionManager",
+    "EmotionAnalyzer",
+    "Emotion",
+    "ExpressionConfig",
+    "EmotionKeywords",
 ]
 
-__version__ = '1.1.0'
+__version__ = "1.1.0"

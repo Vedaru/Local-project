@@ -2,7 +2,7 @@
 WebEngine 相关组件 - 自定义 Page 和 Bridge
 """
 
-from PyQt6.QtCore import pyqtSignal, QObject
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWebEngineCore import QWebEnginePage
 
 from .logger import log_js
@@ -16,8 +16,8 @@ class WebEnginePage(QWebEnginePage):
 
     def javaScriptConsoleMessage(self, level, message, lineNumber, _sourceID):
         """捕获 JavaScript 控制台消息并记录到日志"""
-        level_names = {0: 'INFO', 1: 'WARNING', 2: 'ERROR'}
-        level_name = level_names.get(level, 'DEBUG')
+        level_names = {0: "INFO", 1: "WARNING", 2: "ERROR"}
+        level_name = level_names.get(level, "DEBUG")
         log_js(level_name, message, lineNumber)
 
 

@@ -11,14 +11,17 @@ modules/ear.py
 """
 
 import os
+import re
 import time
 import wave
-import re
-from .logging_config import get_logger
 
 import numpy as np
+
+from .logging_config import get_logger
+
 try:
     import pyaudio
+
     PYAUDIO_AVAILABLE = True
 except Exception:
     pyaudio = None
@@ -40,7 +43,7 @@ from faster_whisper import WhisperModel
 CUDA_AVAILABLE = torch.cuda.is_available()
 
 # 获取统一的模块化 logger
-logger = get_logger('Ear')
+logger = get_logger("Ear")
 
 
 class Ear:
@@ -81,7 +84,9 @@ class Ear:
 
         # PyAudio / 流
         if not PYAUDIO_AVAILABLE:
-            raise ImportError("pyaudio is required for Ear but is not installed. Install via your platform's package manager or `pip install pyaudio`.")
+            raise ImportError(
+                "pyaudio is required for Ear but is not installed. Install via your platform's package manager or `pip install pyaudio`."
+            )
         self.pa = pyaudio.PyAudio()
         self.stream = None
 
@@ -115,9 +120,7 @@ class Ear:
             logger.info("✅ Whisper 模型加载完成（GPU 模式，float16 精度）。")
         except (RuntimeError, OSError) as e:
             raise RuntimeError(
-                f"[Ear] 错误：加载模型失败（GPU 模式下仅支持 CUDA）。\n"
-                f"原始错误: {e}\n"
-                f"请检查 CUDA 环境和驱动。"
+                f"[Ear] 错误：加载模型失败（GPU 模式下仅支持 CUDA）。\n" f"原始错误: {e}\n" f"请检查 CUDA 环境和驱动。"
             )
 
     def _open_stream(self):
@@ -144,7 +147,7 @@ class Ear:
         try:
             if os.path.exists(self.temp_dir):
                 for filename in os.listdir(self.temp_dir):
-                    if filename.endswith('.wav'):
+                    if filename.endswith(".wav"):
                         filepath = os.path.join(self.temp_dir, filename)
                         try:
                             os.remove(filepath)

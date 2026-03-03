@@ -4,6 +4,7 @@
 将应用程序的初始化、配置加载、服务启动等逻辑与 GUI 分离。
 提供统一的应用程序生命周期管理。
 """
+
 import atexit
 import signal
 import sys
@@ -11,23 +12,23 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from .config import (
-    SOVITS_URL,
-    REF_AUDIO,
-    PROMPT_TEXT,
     GPT_SOVITS_PATH,
     MODEL_NAME,
+    PROMPT_TEXT,
+    REF_AUDIO,
+    SOVITS_URL,
     SYSTEM_PROMPT,
     data_dir,
 )
-from .health import health_checker, setup_default_checks, get_health_summary
+from .health import get_health_summary, health_checker, setup_default_checks
 from .logging_config import get_logger
 from .resilience import (
-    retry,
     RetryStrategy,
     ServiceUnavailableError,
+    retry,
     safe_call,
 )
-from .utils import start_gpt_sovits_api, check_sovits_service
+from .utils import check_sovits_service, start_gpt_sovits_api
 
 logger = get_logger("launcher")
 
@@ -61,9 +62,7 @@ class ApplicationContext:
 
     def register_service(self, name: str, instance: Any) -> None:
         """注册服务实例"""
-        self.services[name] = ServiceStatus(
-            name=name, initialized=True, instance=instance
-        )
+        self.services[name] = ServiceStatus(name=name, initialized=True, instance=instance)
         logger.debug(f"Service registered: {name}")
 
     def register_cleanup(self, handler: Callable) -> None:
@@ -194,9 +193,7 @@ def init_sovits_service() -> Any:
         )
 
     app_context.register_service("sovits_process", process)
-    app_context.register_cleanup(
-        lambda: safe_call(lambda: (process.terminate(), process.wait()))
-    )
+    app_context.register_cleanup(lambda: safe_call(lambda: (process.terminate(), process.wait())))
 
     return process
 

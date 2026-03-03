@@ -6,9 +6,11 @@
 - 路径常量统一通过 PROJECT_ROOT 派生
 - OpenAI 客户端延迟创建，避免导入时副作用
 """
+
 import os
-import yaml
+
 import dotenv
+import yaml
 
 # ---- 路径常量 ----
 PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
@@ -21,7 +23,7 @@ _env_vars = dotenv.dotenv_values(dotenv_path=_ENV_PATH)
 dotenv.load_dotenv(dotenv_path=_ENV_PATH)
 
 # ---- 加载 YAML 配置 ----
-with open(_CONFIG_PATH, 'r', encoding='utf-8') as _f:
+with open(_CONFIG_PATH, "r", encoding="utf-8") as _f:
     config = yaml.safe_load(_f)
 
 
@@ -45,6 +47,7 @@ def _get_client():
     global _client
     if _client is None:
         from openai import OpenAI
+
         _client = OpenAI(
             base_url="https://ark.cn-beijing.volces.com/api/v3",
             api_key=_api_key,
@@ -56,8 +59,10 @@ def _get_client():
 # 由于模块级别无法用 property，这里使用一个透明代理类
 class _ClientProxy:
     """透明代理：首次属性访问时才创建真正的 OpenAI 客户端"""
+
     def __getattr__(self, name):
         return getattr(_get_client(), name)
+
 
 client = _ClientProxy()
 
@@ -87,7 +92,7 @@ _prompt_file = _clean_env_value(_env_vars.get("SYSTEM_PROMPT_FILE"))
 if _prompt_file:
     _prompt_path = os.path.join(PROJECT_ROOT, _prompt_file)
     if os.path.exists(_prompt_path):
-        with open(_prompt_path, 'r', encoding='utf-8') as _f:
+        with open(_prompt_path, "r", encoding="utf-8") as _f:
             SYSTEM_PROMPT = _f.read()
     else:
         # 回退：尝试从环境变量读取（兼容旧配置）
@@ -96,7 +101,7 @@ else:
     SYSTEM_PROMPT = _clean_env_value(_env_vars.get("SYSTEM_PROMPT"))
 
 # ---- 电脑控制配置 ----
-_controller_cfg = config.get('controller', {})
-CONTROLLER_ENABLED = _controller_cfg.get('enabled', False)
-CONTROLLER_FAILSAFE = _controller_cfg.get('failsafe', True)
-CONTROLLER_APP_WHITELIST = _controller_cfg.get('app_whitelist', {})
+_controller_cfg = config.get("controller", {})
+CONTROLLER_ENABLED = _controller_cfg.get("enabled", False)
+CONTROLLER_FAILSAFE = _controller_cfg.get("failsafe", True)
+CONTROLLER_APP_WHITELIST = _controller_cfg.get("app_whitelist", {})
