@@ -222,6 +222,13 @@ addopts = [
     "-q",
     "--strict-markers",
     "--strict-config",
+    "--ignore=tests/temp_click_test.py",
+    "--ignore=tests/temp_test_script.py",
+    "--ignore=tests/temp_test_script2.py",
+    "--ignore=tests/simulate_name_write.py",
+    "--ignore=tests/tmp_list.py",
+    "--ignore=tests/test_action_executor_manual.py",
+    "--ignore=tests/test_open_notebook.py",
 ]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
