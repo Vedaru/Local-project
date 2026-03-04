@@ -8,9 +8,7 @@ EmbeddingModel (priority order):
   3. HashEmbeddingModel: lightweight sklearn hash-based embedding (no downloads needed)
 """
 
-import json
-
-import numpy as np
+from typing import Optional
 
 from ..logging_config import get_logger
 from .memoripy.model import ChatModel, EmbeddingModel
@@ -87,7 +85,7 @@ class ArkEmbeddingModel(EmbeddingModel):
     Compatible with doubao-embedding, bge-m3, or any Volcengine embedding endpoint.
     """
 
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: Optional[str] = None) -> None:
         from ..config import EMBEDDING_MODEL_NAME
         from ..config import client as ark_client
 
@@ -143,7 +141,7 @@ class LocalEmbeddingModel(EmbeddingModel):
         "all-MiniLM-L6-v2",  # English-focused, 384 dim
     ]
 
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: Optional[str] = None) -> None:
         self.model = None
         self.dimension = 384  # default
 

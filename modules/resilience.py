@@ -161,7 +161,7 @@ def retry(
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> Any:
-            last_exception = None
+            last_exception: Optional[Exception] = None
 
             for attempt in range(config.max_retries + 1):
                 try:
@@ -216,7 +216,7 @@ def async_retry(
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs) -> Any:
-            last_exception = None
+            last_exception: Optional[Exception] = None
 
             for attempt in range(config.max_retries + 1):
                 try:

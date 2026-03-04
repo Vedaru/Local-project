@@ -9,6 +9,7 @@ Internally, all memory operations are delegated to memoripy's MemoryManager.
 import os
 import time
 from collections import deque
+from typing import Any, Optional
 
 from ..config import PROJECT_ROOT
 from ..logging_config import get_logger
@@ -34,11 +35,12 @@ class MemoryManager:
     - Time-based decay and reinforcement learning
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Short-term memory (recent conversation turns for display)
-        self.short_term_memory = deque(maxlen=SHORT_TERM_CAPACITY)
-        self.current_emotion = "neutral"
-        self.enabled = False
+        self.short_term_memory: deque[tuple[str, str]] = deque(maxlen=SHORT_TERM_CAPACITY)
+        self.current_emotion: str = "neutral"
+        self.enabled: bool = False
+        self._manager: Optional[MemoripyManager] = None
 
         # Storage path
         memory_dir = os.path.join(PROJECT_ROOT, "data", "memoripy")
@@ -77,7 +79,7 @@ class MemoryManager:
             self.enabled = False
 
     @staticmethod
-    def _create_embedding_model():
+    def _create_embedding_model() -> Any:
         """创建嵌入模型：优先 Ark API → 本地哈希嵌入 → 本地 sentence-transformers。"""
         # 1. 尝试 Ark API 嵌入模型（需要 EMBEDDING_MODEL_NAME 配置）
         try:

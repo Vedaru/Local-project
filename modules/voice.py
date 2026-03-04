@@ -1,18 +1,12 @@
 # voice.py - 语音模块（低延迟版）
 
-import requests
-
-try:
-    import pyaudio
-
-    PYAUDIO_AVAILABLE = True
-except Exception:
-    pyaudio = None
-    PYAUDIO_AVAILABLE = False
 import os
 import queue
 import threading
 import wave
+from typing import Optional
+
+import requests
 
 from .logging_config import get_logger
 
@@ -20,12 +14,12 @@ logger = get_logger("voice")
 
 
 class VoiceManager:
-    def __init__(self, sovits_url="http://127.0.0.1:9880", ref_audio="", prompt_text=""):
+    def __init__(self, sovits_url: str = "http://127.0.0.1:9880", ref_audio: str = "", prompt_text: str = "") -> None:
         self.sovits_url = sovits_url
         self.ref_audio = ref_audio
         self.prompt_text = prompt_text
-        self.text_queue = queue.Queue()
-        self.audio_queue = queue.Queue()
+        self.text_queue: queue.Queue[str] = queue.Queue()
+        self.audio_queue: queue.Queue[bytes] = queue.Queue()
         self.session = requests.Session()
 
         # 验证参考音频是否存在 —— GPT-SoVITS 要求必须提供 `ref_audio_path`，若文件缺失会导致 400 错误。
