@@ -7,7 +7,6 @@ and recognize when the goal has been achieved.
 """
 
 
-
 class TaskCompletionHelper:
     """
     Helps Agent understand task completion through process awareness,
