@@ -30,12 +30,7 @@ Key capabilities include:
 * Content extraction: Extract and analyze content from web pages based on specific goals
 * Tab management: Switch between tabs, open new tabs, or close tabs
 * Media detection: Use 'get_media_status' to check if video/audio is playing on the page
-
-IMPORTANT for video tasks:
-* Video sites (Bilibili, YouTube, etc.) auto-play videos when you navigate to a video page
-* When navigating to a video URL, the tool will automatically report if video is playing
-* If video is playing, consider the task complete and call terminate - do NOT click random elements
-* Use 'get_media_status' if you need to verify playback status
+* Browser lifecycle: The browser stays open after task completion by default. Use 'close_browser' to explicitly close it when you decide the browser is no longer needed.
 
 Note: When using element indices, refer to the numbered elements shown in the current browser state.
 """
@@ -69,6 +64,7 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     "open_tab",
                     "close_tab",
                     "get_media_status",
+                    "close_browser",
                 ],
                 "description": "The browser action to perform",
             },
@@ -127,6 +123,7 @@ class BrowserUseTool(BaseTool, Generic[Context]):
             "wait": ["seconds"],
             "extract_content": ["goal"],
             "get_media_status": [],
+            "close_browser": [],
         },
     }
 
@@ -139,8 +136,9 @@ class BrowserUseTool(BaseTool, Generic[Context]):
     # Context for generic functionality
     tool_context: Optional[Context] = Field(default=None, exclude=True)
 
-    # Flag to keep browser open after task completion (e.g., for video playback)
-    keep_browser_open: bool = Field(default=False, exclude=True)
+    # Flag to keep browser open after task completion (default: True)
+    # Agent can explicitly close browser via close_browser action
+    keep_browser_open: bool = Field(default=True, exclude=True)
 
     llm: Optional[LLM] = Field(default_factory=LLM)
 
@@ -275,22 +273,8 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                         pass  # networkidle may timeout on pages with persistent connections
                     await asyncio.sleep(1)
                     
-                    # Auto-detect media status for video sites
-                    current_url = page.url.lower()
-                    media_hint = ""
-                    if any(site in current_url for site in ['bilibili.com/video', 'youtube.com/watch', 'youku.com/v_', 'iqiyi.com/v_']):
-                        media_status = await self._get_media_status(page)
-                        if media_status.get('has_video'):
-                            is_playing = media_status.get('is_playing', False)
-                            media_hint = f"\n\n🎬 Media status: {'▶️ Video is PLAYING' if is_playing else '⏸️ Video found (paused or loading)'}."
-                            if is_playing or media_status.get('has_video'):
-                                # Keep browser open for video playback
-                                self.keep_browser_open = True
-                                media_hint += " Browser will stay open for viewing."
-                            if is_playing:
-                                media_hint += " Task completed - you can now call terminate."
-                    
-                    return ToolResult(output=f"Navigated to {url}{media_hint}")
+                    output = f"Navigated to {url}"
+                    return ToolResult(output=output)
 
                 elif action == "go_back":
                     await context.go_back()
@@ -454,19 +438,9 @@ class BrowserUseTool(BaseTool, Generic[Context]):
 
                     content = markdownify.markdownify(await page.content())
 
-                    # Check if we're on a video site and add special instructions
-                    video_site_hint = ""
-                    if any(site in current_url for site in ['bilibili.com', 'youtube.com', 'youku.com', 'iqiyi.com']):
-                        video_site_hint = """
-IMPORTANT: This is a video website. When extracting video information, you MUST include:
-1. The complete video URL (e.g., https://www.bilibili.com/video/BVxxxxxxx or https://www.youtube.com/watch?v=xxxxx)
-2. Look for BV numbers (Bilibili) or video IDs in links
-3. Extract href attributes from video links, not just titles
-"""
-
                     prompt = f"""\
 Your task is to extract the content of the page. You will be given a page and a goal, and you should extract all relevant information around this goal from the page. If the goal is vague, summarize the page. Respond in json format.
-{video_site_hint}
+
 Extraction goal: {goal}
 
 Page content:
@@ -519,23 +493,16 @@ Page content:
                     if response and response.tool_calls:
                         args = json.loads(response.tool_calls[0].function.arguments)
                         extracted_content = args.get("extracted_content", {})
-                        return ToolResult(
-                            output=f"Extracted from page:\n{extracted_content}\n"
-                        )
+                        return ToolResult(output=f"Extracted from page:\n{extracted_content}\n")
 
                     # Fallback: LLM didn't return tool_calls (some models don't
                     # support tool_choice='required'). Return raw page text.
                     if response and response.content:
-                        return ToolResult(
-                            output=f"Extracted from page (raw):\n{response.content}\n"
-                        )
+                        return ToolResult(output=f"Extracted from page (raw):\n{response.content}\n")
 
                     # Last resort: return truncated markdown content directly
                     if content and content.strip():
                         truncated = content[:max_content_length]
-                        return ToolResult(
-                            output=f"Page content (markdown, truncated to {max_content_length} chars):\n{truncated}\n"
-                        )
 
                     return ToolResult(output="No content was extracted from the page. The page may be empty or still loading. Try 'wait' then retry.")
 
@@ -573,10 +540,6 @@ Page content:
                     if not media_status.get('has_video') and not media_status.get('has_audio'):
                         return ToolResult(output="No video or audio elements found on this page.")
                     
-                    # Keep browser open if video is found
-                    if media_status.get('has_video'):
-                        self.keep_browser_open = True
-                    
                     output_lines = ["📺 Media Status Report:"]
                     if media_status.get('has_video'):
                         is_playing = media_status.get('is_playing', False)
@@ -590,9 +553,14 @@ Page content:
                         output_lines.append(f"  - Audio: Found")
                     
                     if media_status.get('is_playing'):
-                        output_lines.append("\n✅ Media is actively playing. If this was your goal, you can call terminate.")
+                        output_lines.append("\n▶️ Media is actively playing.")
                     
                     return ToolResult(output="\n".join(output_lines))
+
+                elif action == "close_browser":
+                    self.keep_browser_open = False
+                    await self._force_cleanup()
+                    return ToolResult(output="Browser has been closed.")
 
                 else:
                     return ToolResult(error=f"Unknown action: {action}")
@@ -708,12 +676,8 @@ Page content:
         except Exception as e:
             return ToolResult(error=f"Failed to get browser state: {str(e)}")
 
-    async def cleanup(self):
-        """Clean up browser resources."""
-        # Skip cleanup if browser should stay open (e.g., video is playing)
-        if self.keep_browser_open:
-            return
-        
+    async def _force_cleanup(self):
+        """Unconditionally close browser resources."""
         async with self.lock:
             if self.context is not None:
                 await self.context.close()
@@ -723,15 +687,11 @@ Page content:
                 await self.browser.close()
                 self.browser = None
 
-    def __del__(self):
-        """Ensure cleanup when object is destroyed."""
-        if self.browser is not None or self.context is not None:
-            try:
-                asyncio.run(self.cleanup())
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(self.cleanup())
-                loop.close()
+    async def cleanup(self):
+        """Clean up browser resources. Respects keep_browser_open flag."""
+        if self.keep_browser_open:
+            return
+        await self._force_cleanup()
 
     @classmethod
     def create_with_context(cls, context: Context) -> "BrowserUseTool[Context]":

@@ -27,6 +27,7 @@ import threading
 from typing import Optional
 
 from ..logging_config import get_logger
+from ..task_completion import TaskCompletionHelper
 
 logger = get_logger("ManusAgent")
 
@@ -236,41 +237,22 @@ class ManusAgent:
             return f"❌ Agent 内部错误: {e}"
 
     def _prepare_task_description(self, task_description: str) -> str:
-        """根据任务类型注入约束，降低错误工具调用概率。"""
-        normalized = (task_description or "").lower()
+        """
+        Prepare task description by adding completion understanding guidance.
+        
+        NOTE: Does NOT use keyword matching or task classification.
+        Instead, provides process-based reasoning guidance for the agent to
+        understand when to stop based on goal achievement.
+        """
         result = task_description
-
-        # 检测 B 站/视频网站任务
-        is_bilibili_task = bool(
-            re.search(r"(b站|bilibili|哔哩哔哩)", normalized) and re.search(r"(视频|播放|搜索|看|打开)", normalized)
-        )
-        if is_bilibili_task:
-            bilibili_suffix = (
-                "\n\n【B站视频任务执行策略】\n"
-                "1) 不要使用百度搜索B站视频，直接使用 go_to_url 访问 https://search.bilibili.com/all?keyword=你的搜索词\n"
-                "2) 在B站搜索结果页，使用 extract_content 提取视频标题和完整URL（包含BV号）\n"
-                "3) 使用 go_to_url 直接访问提取到的视频URL（类似 https://www.bilibili.com/video/BVxxxxxxx）\n"
-                "4) 导航到视频页面后使用 get_media_status 验证视频是否播放\n"
-                "5) 不要在页面上盲目点击元素索引，索引1-10通常是导航栏（首页/番剧/直播等），不是视频\n"
-                "6) 视频播放中即可调用 terminate 完成任务"
-            )
-            result += bilibili_suffix
-
-        # 检测 PPT 任务
-        is_ppt_task = bool(
-            re.search(r"\b(ppt|pptx|powerpoint)\b", normalized)
-            or ("幻灯片" in task_description)
-            or ("演示文稿" in task_description)
-        )
-        if is_ppt_task:
-            ppt_suffix = (
-                "\n\n【PPT执行约束】\n"
-                "1) 不允许使用 str_replace_editor 在 .pptx 路径写入文本；\n"
-                "2) 需要生成真实可打开的 .pptx 文件时，必须使用 python_execute 运行 Python 生成；\n"
-                "3) 如当前环境缺少生成 PPT 所需库，请先生成同名 .md 提纲文件，并在结果中明确说明原因。"
-            )
-            result += ppt_suffix
-
+        
+        # Add general process-based completion guidance
+        # This applies equally to ALL task types
+        result += TaskCompletionHelper.get_completion_guidance()
+        
+        # Add process awareness guidance (not keyword-triggered)
+        result += TaskCompletionHelper.get_process_awareness_guidance()
+        
         return result
 
     def cleanup(self):

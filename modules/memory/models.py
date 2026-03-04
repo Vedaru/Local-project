@@ -8,7 +8,10 @@ EmbeddingModel (priority order):
   3. HashEmbeddingModel: lightweight sklearn hash-based embedding (no downloads needed)
 """
 
+import json
 from typing import Optional
+
+import numpy as np
 
 from ..logging_config import get_logger
 from .memoripy.model import ChatModel, EmbeddingModel

@@ -291,16 +291,20 @@ class AICoreService:
             await asyncio.to_thread(self.memory_manager.store_memory, f"用户: {cleaned_input}\nAI: {combined}")
 
         # 完成后语音
-        await self._speak_agent_completion(agent_result, system_prompt, model_name)
+        await self._speak_agent_completion(agent_result, system_prompt, model_name, task_desc)
         return True
 
     async def _try_handle_tool_json(
         self, ai_response: str, cleaned_input: str, system_prompt: str, model_name: str
     ) -> Optional[str]:
-        """检测 LLM 直接输出工具调用 JSON，返回 agent_result 或 None。"""
+        """检测 LLM 直接输出工具调用 JSON（含 "tool" 或 "task" 键），返回 agent_result 或 None。"""
         try:
             parsed_agent = extract_first_json(ai_response)
-            if not (parsed_agent and isinstance(parsed_agent, dict) and "tool" in parsed_agent):
+            if not (parsed_agent and isinstance(parsed_agent, dict)):
+                return None
+            has_tool = "tool" in parsed_agent
+            has_task = "task" in parsed_agent
+            if not (has_tool or has_task):
                 return None
         except Exception:
             return None
@@ -310,8 +314,18 @@ class AICoreService:
             logger.warning("Agent 未初始化，无法处理工具调用")
             return None
 
-        agent_result = await self._run_agent_task(cleaned_input)
-        await self._speak_agent_completion(agent_result, system_prompt, model_name)
+        # 优先使用 JSON 中的 task 描述，回退到用户原始输入
+        task_desc = parsed_agent.get("task") or cleaned_input
+        if isinstance(task_desc, str) and len(task_desc) < 5:
+            task_desc = cleaned_input
+
+        # 先播报 JSON 前面的闲聊文本（如果有的话）
+        pre_text = ai_response[: ai_response.find("{")].strip()
+        if pre_text:
+            self._emit("on_speak_request", pre_text)
+
+        agent_result = await self._run_agent_task(task_desc)
+        await self._speak_agent_completion(agent_result, system_prompt, model_name, task_desc)
         return agent_result
 
     async def _run_agent_task(self, task_desc: str) -> str:
@@ -330,27 +344,39 @@ class AICoreService:
             logger.exception(f"ManusAgent.run_task raised exception: {e}")
             return f"❌ Agent 执行异常: {e}"
 
-    async def _speak_agent_completion(self, agent_result: str, system_prompt: str, model_name: str):
-        """根据 Agent 执行结果生成语音回复。"""
+    async def _speak_agent_completion(
+        self, agent_result: str, system_prompt: str, model_name: str, task_desc: str = ""
+    ):
+        """根据 Agent 执行结果生成语音回复，内容与具体任务相关。"""
         is_success = any(kw in agent_result.lower() for kw in ("success", "完成", "成功"))
         is_failure = any(kw in agent_result.lower() for kw in ("failure", "失败", "异常", "错误"))
 
+        # 截取 agent 结果摘要（避免过长）
+        result_summary = agent_result[:200] if agent_result else ""
+        task_info = f"任务内容：{task_desc}\n执行结果摘要：{result_summary}" if task_desc else ""
+
         if is_success:
             prompt = (
-                "你刚刚帮用户完成了一个操作任务，任务成功了。请用你的人设风格，"
-                "生成一句简短的完成确认语（5-15字）。只输出确认语。"
+                "你刚刚帮用户完成了一个操作任务，任务成功了。\n"
+                f"{task_info}\n"
+                "请用你的人设风格，结合上面的任务内容，生成一句简短的完成确认语（10-30字），"
+                "要提到你做了什么事情。只输出确认语，不要输出其他内容。"
             )
             fallback = "搞定啦~"
         elif is_failure:
             prompt = (
-                "你刚刚帮用户执行一个操作任务，但是遇到了一些问题。请用你的人设风格，"
-                "生成一句简短的抱歉语（5-15字）。只输出抱歉语。"
+                "你刚刚帮用户执行一个操作任务，但是遇到了一些问题。\n"
+                f"{task_info}\n"
+                "请用你的人设风格，结合上面的任务内容，生成一句简短的说明（10-30字），"
+                "要提到任务是什么以及没成功。只输出这句话，不要输出其他内容。"
             )
             fallback = "抱歉没成功呢..."
         else:
             prompt = (
-                "你刚刚帮用户处理了一个操作任务。请用你的人设风格，"
-                "生成一句简短的完成确认语（5-15字）。只输出确认语。"
+                "你刚刚帮用户处理了一个操作任务。\n"
+                f"{task_info}\n"
+                "请用你的人设风格，结合上面的任务内容，生成一句简短的完成确认语（10-30字），"
+                "要提到你做了什么事情。只输出确认语，不要输出其他内容。"
             )
             fallback = "处理好了~"
 

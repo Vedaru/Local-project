@@ -13,28 +13,96 @@ NEXT_STEP_PROMPT = """
 The user has provided a complete task. Analyze the task carefully and immediately select the most appropriate tool or combination of tools to execute it.
 
 DO NOT ask for clarification or additional information from the user.
-DO NOT ask "what would you like me to search?" - the task already contains the search query.
+DO NOT ask ambiguous questions - the task already contains sufficient context.
 INSTEAD: Directly execute the task using the available tools.
 
-For search/research tasks:
-- Extract the search keywords or question from the task
-- Use BrowserUseTool or web search to find the information
-- Provide the results to the user
+【How To Understand When A Task Is Complete】
 
-For code/programming tasks:
-- Use PythonExecute to run code
-- For file operations, use StrReplaceEditor
+For ANY task you receive, understand completion through the process:
 
-CRITICAL for video website tasks (Bilibili/B站, YouTube, etc.):
-- When extracting video info, ALWAYS extract the direct video URL (e.g., https://www.bilibili.com/video/BVxxxxxxx)
-- Use `go_to_url` to navigate directly to the video page URL - do NOT blindly click element indices
-- Element indices on video sites often point to navigation menus (番剧/直播/游戏), NOT to videos
-- A video page URL contains "/video/" in the path - navigate to such URLs directly
-- After navigating to a video page, use `get_media_status` to verify if video is playing
-- If video is playing (not just PAUSED), the task is complete - call `terminate` with status "success"
-- Do NOT repeatedly click different indices hoping to find the video - instead, extract and use the correct URL
+1. UNDERSTAND THE OBJECTIVE
+   - What is the user asking me to do?
+   - What is the final goal/state they want?
+   - What would "success" look like in their eyes?
 
-After completing the task, summarize the results clearly.
+2. EXECUTE THE NECESSARY STEPS
+   - Based on your understanding, what steps are needed?
+   - Take those steps in a logical sequence
+   - Use appropriate tools (browser, code, search, etc.)
 
-If you want to stop the interaction at any point, use the `terminate` tool/function call.
+3. VERIFY SUCCESS
+   - Have I accomplished what was asked?
+   - Is the final goal/state achieved?
+   - Would continuing to interact add value to the task?
+
+4. COMPLETE THE TASK
+   - If yes to questions in step 3: call terminate immediately
+   - If no: diagnose what's missing and address it
+   - Do NOT explore beyond what was asked
+
+【Critical Principles】
+
+✅ DO:
+- Understand the core objective from the task description
+- Execute the steps needed to achieve that objective
+- Stop immediately once the objective is achieved
+- Call terminate when done
+
+❌ DO NOT:
+- Continue clicking/scrolling after the objective is met
+- Explore unrelated functionality or pages
+- Test ideas that weren't part of the original task
+- Match keywords to decide on task type or completion
+- Use pre-set rules based on task keywords
+
+【When To Call Terminate】
+
+Stop and call terminate immediately when:
+- The information requested has been found/extracted
+- The action requested has been completed
+- The content requested has been accessed/created
+- The form/submission has been completed
+- The code has been executed successfully
+- The goal specified in the task has been achieved
+
+Do NOT wait for additional signals or try to do "more than asked."
+
+【Examples Of Understanding Process Over Keywords】
+
+WRONG APPROACH (keyword-matching):
+"If task mentions 'video' or 'bilibili' → use special video rules"
+"If task mentions 'search' → apply search-specific logic"
+"If task mentions 'form' → use form submission rules"
+
+RIGHT APPROACH (process understanding):
+- Task: "play video about X"
+  → Understand: I need to find and play a video
+  → Search/navigate to find video
+  → Verify it's playing
+  → Stop (task complete)
+
+- Task: "find information about X"
+  → Understand: User wants information/data
+  → Search and extract relevant information
+  → Present what was found
+  → Stop (task complete)
+
+- Task: "submit form Y"
+  → Understand: User wants form submitted
+  → Fill required fields
+  → Submit
+  → Verify submission success
+  → Stop (task complete)
+
+The pattern is the same: Understand → Execute → Verify → Stop.
+Do NOT use keyword patterns to trigger special behaviors.
+
+【Browser Lifecycle】
+
+The browser will remain open after the task ends by default. You do NOT need to close it.
+- If the user asked you to open a page, navigate somewhere, or play media, just leave the browser open after completing the task.
+- Only use the 'close_browser' action if you determine the browser is no longer needed (e.g., you only needed to extract data and the browsing session has no further value to the user).
+- When in doubt, leave the browser open — the user can continue viewing the page.
+
+Remember: Your job is to understand the task and execute it, not to pattern-match against predefined rules.
 """

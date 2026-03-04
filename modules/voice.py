@@ -8,6 +8,13 @@ from typing import Optional
 
 import requests
 
+try:
+    import pyaudio
+    PYAUDIO_AVAILABLE = True
+except ImportError:
+    pyaudio = None
+    PYAUDIO_AVAILABLE = False
+
 from .logging_config import get_logger
 
 logger = get_logger("voice")
