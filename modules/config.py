@@ -162,7 +162,7 @@ def load_config(config_path: Optional[str] = None, env_path: Optional[str] = Non
         # System Prompt
         system_prompt=system_prompt,
         # 记忆
-        memory_data_dir=os.path.join(PROJECT_ROOT, memory_cfg.get("data_dir", "data/chroma_db")),
+        memory_data_dir=os.path.join(PROJECT_ROOT, memory_cfg.get("data_dir", "data/memoripy")),
         memory_collection_name=memory_cfg.get("collection_name", "seeka_memory"),
         # 日志
         log_dir=os.path.join(PROJECT_ROOT, logging_cfg.get("log_dir", "data/logs")),
@@ -215,10 +215,6 @@ client = _ClientProxy()
 SOVITS_URL = "http://127.0.0.1:9880"
 REF_AUDIO = os.path.join(PROJECT_ROOT, "assets", "audio_ref", "大家好，我是虚拟歌手洛天依.wav")
 PROMPT_TEXT = "大家好，我是虚拟歌手洛天依，欢迎来到我的十周年生日会直播。"
-
-# ---- ChromaDB 数据目录 ----
-data_dir = os.path.join(PROJECT_ROOT, "data", "chroma_db")
-os.makedirs(data_dir, exist_ok=True)
 
 # ---- GPT-SoVITS 路径（使用内嵌路径）----
 GPT_SOVITS_PATH = GPT_SOVITS_ROOT

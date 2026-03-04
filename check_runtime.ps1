@@ -112,7 +112,6 @@ if (Test-Path $PipExe) {
     $RequiredPackages = @(
         @{Name="openai"; Display="OpenAI SDK"},
         @{Name="PyQt6"; Display="PyQt6"},
-        @{Name="chromadb"; Display="ChromaDB"},
         @{Name="requests"; Display="Requests"}
     )
     

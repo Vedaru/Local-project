@@ -13,14 +13,12 @@ from .config import (  # noqa: F401
     SOVITS_URL,
     SYSTEM_PROMPT,
     client,
-    data_dir,
 )
 
 # 健康检查
 from .health import (  # noqa: F401
     HealthCheckResult,
     HealthStatus,
-    check_chromadb_health,
     check_llm_api_health,
     check_sovits_health,
     get_health_summary,

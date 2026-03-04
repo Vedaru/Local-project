@@ -13,7 +13,7 @@ audio:
 
 # 记忆配置
 memory:
-  data_dir: "data/chroma_db"
+  data_dir: "data/memoripy"
   collection_name: "seeka_memory"
 
 # 日志配置

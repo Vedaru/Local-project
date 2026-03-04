@@ -4,7 +4,6 @@
 提供对关键服务的健康检查功能，包括：
 - GPT-SoVITS 语音合成服务
 - LLM API 服务
-- 记忆系统（ChromaDB）
 - 文件系统（临时目录等）
 """
 
@@ -215,50 +214,6 @@ def check_llm_api_health(
         )
 
 
-def check_chromadb_health(data_dir: Optional[str] = None) -> HealthCheckResult:
-    """
-    检查 ChromaDB 记忆系统健康状态
-
-    Args:
-        data_dir: ChromaDB 数据目录
-
-    Returns:
-        HealthCheckResult
-    """
-    service_name = "chromadb"
-    start_time = time.time()
-
-    try:
-        import chromadb
-
-        client = chromadb.PersistentClient(path=data_dir) if data_dir else chromadb.Client()
-
-        # 尝试列出集合
-        collections = client.list_collections()
-        response_time = (time.time() - start_time) * 1000
-
-        return HealthCheckResult(
-            service_name=service_name,
-            status=HealthStatus.HEALTHY,
-            message=f"ChromaDB operational with {len(collections)} collections",
-            response_time_ms=response_time,
-            details={"collection_count": len(collections)},
-        )
-
-    except ImportError:
-        return HealthCheckResult(
-            service_name=service_name,
-            status=HealthStatus.UNHEALTHY,
-            message="ChromaDB not installed",
-        )
-    except Exception as e:
-        return HealthCheckResult(
-            service_name=service_name,
-            status=HealthStatus.UNHEALTHY,
-            message=f"ChromaDB error: {str(e)}",
-        )
-
-
 def check_filesystem_health(paths: Optional[list[str]] = None) -> HealthCheckResult:
     """
     检查文件系统健康状态
@@ -278,7 +233,7 @@ def check_filesystem_health(paths: Optional[list[str]] = None) -> HealthCheckRes
         paths = [
             os.path.join(PROJECT_ROOT, "data"),
             os.path.join(PROJECT_ROOT, "data", "temp"),
-            os.path.join(PROJECT_ROOT, "data", "chroma_db"),
+            os.path.join(PROJECT_ROOT, "data", "memoripy"),
         ]
 
     issues = []
@@ -489,7 +444,6 @@ health_checker = HealthChecker()
 def setup_default_checks(
     sovits_url: str = "http://127.0.0.1:9880",
     llm_api_key: Optional[str] = None,
-    chromadb_path: Optional[str] = None,
 ):
     """
     设置默认的健康检查
@@ -497,11 +451,9 @@ def setup_default_checks(
     Args:
         sovits_url: GPT-SoVITS 服务 URL
         llm_api_key: LLM API 密钥
-        chromadb_path: ChromaDB 数据目录
     """
     health_checker.register("sovits", lambda: check_sovits_health(sovits_url))
     health_checker.register("llm-api", lambda: check_llm_api_health(llm_api_key))
-    health_checker.register("chromadb", lambda: check_chromadb_health(chromadb_path))
     health_checker.register("filesystem", check_filesystem_health)
 
     logger.info("Default health checks registered")

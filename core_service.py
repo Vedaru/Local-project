@@ -18,7 +18,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import dataclass, field
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from modules.avatar.expression import Emotion
@@ -26,7 +27,7 @@ from modules.config import AppConfig
 from modules.json_utils import extract_first_json
 from modules.llm import call_llm
 from modules.logging_config import get_logger
-from modules.utils import clean_text, filter_emotion_tags
+from modules.utils import clean_text
 
 logger = get_logger("AICoreService")
 
@@ -111,10 +112,8 @@ class AICoreService:
         await self._input_queue.put(None)
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         logger.info("AICoreService 已停止")
 
     def submit(self, text: str):
@@ -237,9 +236,7 @@ class AICoreService:
         # 记忆
         if ai_response != "抱歉，我现在有点卡住了。":
             await asyncio.to_thread(self.memory_manager.add_to_short_term, "AI", ai_response)
-            await asyncio.to_thread(
-                self.memory_manager.store_memory, f"用户: {cleaned_input}\nAI: {ai_response}"
-            )
+            await asyncio.to_thread(self.memory_manager.store_memory, f"用户: {cleaned_input}\nAI: {ai_response}")
 
         # 语音
         if not skip_tts:
@@ -272,7 +269,8 @@ class AICoreService:
             self._emit("on_speak_request", pre_text)
         else:
             start_reply = await self._generate_short_reply(
-                system_prompt, model_name,
+                system_prompt,
+                model_name,
                 "用户让你帮忙执行一个操作任务。请用你的人设风格，只生成一句简短的确认语（5-10字），"
                 "表示你开始执行了。只输出确认语，不要输出任何其他内容。",
                 fallback="好的~",
@@ -290,9 +288,7 @@ class AICoreService:
 
         if combined != "抱歉，我现在有点卡住了。":
             await asyncio.to_thread(self.memory_manager.add_to_short_term, "AI", combined)
-            await asyncio.to_thread(
-                self.memory_manager.store_memory, f"用户: {cleaned_input}\nAI: {combined}"
-            )
+            await asyncio.to_thread(self.memory_manager.store_memory, f"用户: {cleaned_input}\nAI: {combined}")
 
         # 完成后语音
         await self._speak_agent_completion(agent_result, system_prompt, model_name)
@@ -327,8 +323,7 @@ class AICoreService:
         try:
             result = await asyncio.to_thread(self.agent.run_task, task_desc)
             logger.info(
-                f"ManusAgent.run_task completed — result(len)="
-                f"{len(result) if isinstance(result, str) else 'N/A'}"
+                f"ManusAgent.run_task completed — result(len)=" f"{len(result) if isinstance(result, str) else 'N/A'}"
             )
             return result
         except Exception as e:

@@ -18,7 +18,6 @@ from .config import (
     REF_AUDIO,
     SOVITS_URL,
     SYSTEM_PROMPT,
-    data_dir,
 )
 from .health import get_health_summary, health_checker, setup_default_checks
 from .logging_config import get_logger
@@ -222,7 +221,6 @@ def setup_health_checks() -> None:
     """设置健康检查"""
     setup_default_checks(
         sovits_url=SOVITS_URL,
-        chromadb_path=data_dir,
     )
 
 
@@ -288,7 +286,6 @@ def get_startup_info() -> dict[str, Any]:
     return {
         "model_name": MODEL_NAME,
         "sovits_url": SOVITS_URL,
-        "data_dir": data_dir,
         "system_prompt_length": len(SYSTEM_PROMPT) if SYSTEM_PROMPT else 0,
     }
 

@@ -494,7 +494,7 @@ Local-project/
 │   ├── 📂 audio_ref/          # 参考音频
 │   └── 📂 web/                # 前端资源
 ├── 📂 data/                   # 数据存储
-│   ├── 📂 chroma_db/          # 向量数据库
+│   ├── 📂 memoripy/           # 记忆系统数据
 │   ├── 📂 logs/               # 日志文件
 │   └── 📂 temp/               # 临时文件
 │
@@ -601,7 +601,7 @@ Local-project/
 <details>
 <summary><b>🐢 记忆系统响应慢</b></summary>
 
-- 检查 ChromaDB 数据库文件大小
+- 检查记忆数据库文件大小
 - 考虑清理过期记忆数据
 - 调整相似度阈值参数
 
@@ -631,7 +631,7 @@ Local-project/
 > - 首次运行需要下载模型文件，可能需要较长时间
 > - 确保 GPT-SoVITS 服务正常启动，否则语音功能不可用
 > - 建议使用 GPU 加速以获得更好的性能
-> - 记忆系统会在 `data/chroma_db/` 目录存储向量数据
+> - 记忆系统会在 `data/memoripy/` 目录存储交互历史数据
 
 ### 冲突检测系统
 

@@ -492,7 +492,7 @@ Local-project/
 │   ├── 📂 audio_ref/          # Reference audio
 │   └── 📂 web/                # Frontend resources
 ├── 📂 data/                   # Data storage
-│   ├── 📂 chroma_db/          # Vector database
+│   ├── 📂 memoripy/           # Memory system data
 │   ├── 📂 logs/               # Log files
 │   └── 📂 temp/               # Temporary files
 │
@@ -599,7 +599,7 @@ See [CONTRIBUTING_EN.md](CONTRIBUTING_EN.md) for details.
 <details>
 <summary><b>🐢 Memory system slow response</b></summary>
 
-- Check ChromaDB database file size
+- Check memory data database file size
 - Consider cleaning up expired memory data
 - Adjust similarity threshold parameters
 
@@ -629,7 +629,7 @@ See [CONTRIBUTING_EN.md](CONTRIBUTING_EN.md) for details.
 > - First run requires downloading model files, which may take some time
 > - Ensure GPT-SoVITS service is running, otherwise voice features are unavailable
 > - GPU acceleration is recommended for better performance
-> - Memory system stores vector data in `data/chroma_db/` directory
+> - Memory system stores interaction history in `data/memoripy/` directory
 
 ### Conflict Detection System
 

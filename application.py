@@ -13,13 +13,13 @@ AICoreService 交互的接口。
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
 import threading
 import time
 import wave
+from contextlib import suppress
 from pathlib import Path
 from typing import Optional
 
@@ -174,9 +174,7 @@ class LocalProjectApplication:
         )
 
         # LipSync & Expression
-        self.lip_sync_manager = LipSyncManager(
-            update_callback=lambda v: self._signals.lip_sync_update.emit(v)
-        )
+        self.lip_sync_manager = LipSyncManager(update_callback=lambda v: self._signals.lip_sync_update.emit(v))
         self.expression_manager = ExpressionManager(
             expression_callback=self._change_expression,
             motion_callback=self._play_motion,
@@ -295,9 +293,7 @@ class LocalProjectApplication:
 
         if self.voice_manager and self.avatar:
             try:
-                wav_path = os.path.join(
-                    self.config.project_root, "data", "temp", f"tts_{int(time.time() * 1000)}.wav"
-                )
+                wav_path = os.path.join(self.config.project_root, "data", "temp", f"tts_{int(time.time() * 1000)}.wav")
                 os.makedirs(os.path.dirname(wav_path), exist_ok=True)
 
                 def speak_with_browser():
@@ -312,10 +308,8 @@ class LocalProjectApplication:
                             with wave.open(wav_path, "rb") as wf:
                                 duration = wf.getnframes() / float(wf.getframerate())
                             time.sleep(duration + 0.5)
-                            try:
+                            with suppress(Exception):
                                 os.remove(wav_path)
-                            except Exception:
-                                pass
                         except Exception as e:
                             logger.warning(f"[TTS] 读取 wav 错误: {e}")
                     except Exception as e:

@@ -10,7 +10,7 @@ import os
 import time
 from collections import deque
 
-from ..config import data_dir
+from ..config import PROJECT_ROOT
 from ..logging_config import get_logger
 from .memoripy import JSONStorage
 from .memoripy import MemoryManager as MemoripyManager
@@ -41,7 +41,7 @@ class MemoryManager:
         self.enabled = False
 
         # Storage path
-        memory_dir = os.path.join(os.path.dirname(data_dir), "memoripy")
+        memory_dir = os.path.join(PROJECT_ROOT, "data", "memoripy")
         os.makedirs(memory_dir, exist_ok=True)
         history_path = os.path.join(memory_dir, "interaction_history.json")
 
