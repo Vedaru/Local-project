@@ -132,8 +132,9 @@ exclude = '''
     | build
     | dist
     | __pycache__
-    | GPT-SoVITS-v2pro-20250604-nvidia50
-    | OpenManus
+    | modules/gpt_sovits
+    | modules/openmanus
+    | runtime
 )/
 '''
 

@@ -21,13 +21,12 @@ os.environ["CT2_USE_CUDA"] = "0"
 if "LOKY_MAX_CPU_COUNT" not in os.environ:
     os.environ["LOKY_MAX_CPU_COUNT"] = str(os.cpu_count() or 4)
 
-# Apply ctranslate2 DLL patch before any module tries to import faster_whisper
-import modules._patch_ctranslate2  # noqa: F401, E402
-
 import asyncio
 
 from PyQt6.QtWidgets import QApplication
 
+# Apply ctranslate2 DLL patch before any module tries to import faster_whisper
+import modules._patch_ctranslate2  # noqa: F401, E402
 from modules.config import load_config
 from modules.logging_config import get_logger
 

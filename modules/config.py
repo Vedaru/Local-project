@@ -156,9 +156,7 @@ def load_config(config_path: Optional[str] = None, env_path: Optional[str] = Non
             PROJECT_ROOT,
             audio_cfg.get("ref_audio_path", "assets/audio_ref/大家好，我是虚拟歌手洛天依.wav"),
         ),
-        prompt_text=audio_cfg.get(
-            "prompt_text", "大家好，我是虚拟歌手洛天依，欢迎来到我的十周年生日会直播。"
-        ),
+        prompt_text=audio_cfg.get("prompt_text", "大家好，我是虚拟歌手洛天依，欢迎来到我的十周年生日会直播。"),
         gpt_sovits_path=GPT_SOVITS_ROOT,
         audio_sample_rate=audio_cfg.get("sample_rate", 32000),
         # System Prompt

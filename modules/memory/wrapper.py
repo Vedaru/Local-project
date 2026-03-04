@@ -293,19 +293,23 @@ class MemoryManager:
     async def add_to_short_term_async(self, role: str, content: str):
         """异步版 add_to_short_term。"""
         import asyncio
+
         await asyncio.to_thread(self.add_to_short_term, role, content)
 
     async def retrieve_memories_async(self, query: str, n_results: int = 3) -> str:
         """异步版 retrieve_memories。"""
         import asyncio
+
         return await asyncio.to_thread(self.retrieve_memories, query, n_results)
 
     async def store_memory_async(self, conversation: str):
         """异步版 store_memory。"""
         import asyncio
+
         await asyncio.to_thread(self.store_memory, conversation)
 
     async def get_memory_stats_async(self) -> dict:
         """异步版 get_memory_stats。"""
         import asyncio
+
         return await asyncio.to_thread(self.get_memory_stats)

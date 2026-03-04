@@ -304,4 +304,5 @@ class ManusAgent:
     async def run_task_async(self, task_description: str) -> str:
         """run_task 的异步包装 — 在线程池中执行同步的 run_task。"""
         import asyncio
+
         return await asyncio.to_thread(self.run_task, task_description)
