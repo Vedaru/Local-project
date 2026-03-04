@@ -6,23 +6,21 @@ NOT keyword matching. The agent should understand what it's trying to accomplish
 and recognize when the goal has been achieved.
 """
 
-from typing import List, Dict, Any
-from enum import Enum
 
 
 class TaskCompletionHelper:
     """
     Helps Agent understand task completion through process awareness,
     not keyword triggers.
-    
+
     Key principle: Agent should understand:
     1. What am I trying to accomplish? (Core objective)
     2. What steps have I taken? (Progress tracking)
     3. Have I achieved the goal? (Completion detection)
-    
+
     Do NOT rely on keyword matching to determine task type or completion.
     """
-    
+
     @staticmethod
     def get_completion_guidance() -> str:
         """
@@ -57,7 +55,7 @@ These apply to ANY task, regardless of what words are in the task description:
    Do NOT continue searching or scrolling
 
 ✅ NAVIGATE/ACCESS: When you have successfully reached the target
-   "Visit website Y" → Reached Y → DONE  
+   "Visit website Y" → Reached Y → DONE
    Do NOT explore unrelated parts
 
 ✅ ACTION/EXECUTION: When the action is complete
@@ -80,7 +78,7 @@ These apply to ANY task, regardless of what words are in the task description:
 These apply to ALL tasks - do NOT do these things:
 
 ❌ Random clicking after finding information
-❌ Unnecessary scrolling "to see what else is there"  
+❌ Unnecessary scrolling "to see what else is there"
 ❌ Visiting unrelated pages or links
 ❌ Testing ideas that weren't part of the task
 ❌ Continuing after the goal has been reached
@@ -93,7 +91,7 @@ Stop immediately when:
 
 Do NOT wait for some special signal - use your understanding of the task to decide.
 """
-    
+
     @staticmethod
     def get_process_awareness_guidance() -> str:
         """
@@ -108,7 +106,7 @@ For each task, reason about it like this:
    - What is the user asking me to do?
    - What is the end goal?
    - What would "success" look like?
-   
+
 2. IDENTIFY STEPS (Understand the process flow)
    - What tools do I need? (browser, code, search, file operations)
    - What is the natural sequence?
@@ -130,7 +128,7 @@ NO: "If the task mentions 'video' OR 'bilibili' → apply special rules"
 YES: "I need to navigate to a video and play it
       → I go to the URL → I verify playback → I stop"
 
-NO: "If task contains 'search' → find info → stop"  
+NO: "If task contains 'search' → find info → stop"
 YES: "User wants information about X
       → I search → I find X → I present it → I stop"
 

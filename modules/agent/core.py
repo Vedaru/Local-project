@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 import sys
 import threading
 from typing import Optional
@@ -239,20 +238,20 @@ class ManusAgent:
     def _prepare_task_description(self, task_description: str) -> str:
         """
         Prepare task description by adding completion understanding guidance.
-        
+
         NOTE: Does NOT use keyword matching or task classification.
         Instead, provides process-based reasoning guidance for the agent to
         understand when to stop based on goal achievement.
         """
         result = task_description
-        
+
         # Add general process-based completion guidance
         # This applies equally to ALL task types
         result += TaskCompletionHelper.get_completion_guidance()
-        
+
         # Add process awareness guidance (not keyword-triggered)
         result += TaskCompletionHelper.get_process_awareness_guidance()
-        
+
         return result
 
     def cleanup(self):

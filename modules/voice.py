@@ -4,12 +4,12 @@ import os
 import queue
 import threading
 import wave
-from typing import Optional
 
 import requests
 
 try:
     import pyaudio
+
     PYAUDIO_AVAILABLE = True
 except ImportError:
     pyaudio = None
