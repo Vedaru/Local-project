@@ -141,3 +141,9 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
         except Exception as e:
             logger.error(f"LLM 错误: {e}", exc_info=True)
             return "抱歉，我现在有点卡住了。"
+
+
+async def call_llm_async(system_prompt, model_name, prompt, memory_context="", max_retries=2):
+    """call_llm 的异步包装 — 在 asyncio 线程池中执行同步 LLM 调用。"""
+    import asyncio
+    return await asyncio.to_thread(call_llm, system_prompt, model_name, prompt, memory_context, max_retries)

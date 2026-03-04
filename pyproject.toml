@@ -146,8 +146,8 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 skip_glob = [
-    "GPT-SoVITS-v2pro-20250604-nvidia50/*",
-    "OpenManus/*",
+    "modules/gpt_sovits/*",
+    "modules/openmanus/*",
     "__pycache__/*",
 ]
 
@@ -174,8 +174,8 @@ exclude = [
     "dist",
     "node_modules",
     "venv",
-    "GPT-SoVITS-v2pro-20250604-nvidia50",
-    "OpenManus",
+    "modules/gpt_sovits",
+    "modules/openmanus",
 ]
 
 [tool.ruff.lint]
@@ -212,8 +212,8 @@ disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
 exclude = [
-    "GPT-SoVITS-v2pro-20250604-nvidia50",
-    "OpenManus",
+    "modules/gpt_sovits",
+    "modules/openmanus",
     "tests",
 ]
 
@@ -253,8 +253,8 @@ source = ["modules"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
-    "GPT-SoVITS-v2pro-20250604-nvidia50/*",
-    "OpenManus/*",
+    "modules/gpt_sovits/*",
+    "modules/openmanus/*",
 ]
 
 [tool.coverage.report]
@@ -276,7 +276,7 @@ directory = "htmlcov"
 [tool.bandit]
 exclude_dirs = [
     "tests",
-    "GPT-SoVITS-v2pro-20250604-nvidia50",
-    "OpenManus",
+    "modules/gpt_sovits",
+    "modules/openmanus",
 ]
 skips = ["B101", "B311"]  # Skip assert and random warnings

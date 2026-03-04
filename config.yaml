@@ -34,3 +34,8 @@ controller:
     calc: "C:\\Windows\\System32\\calc.exe"
     edge: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
     qq: "C:\\Program Files\\Tencent\\QQNT\\QQ.exe"
+
+# 听觉模块（语音识别）配置
+ear:
+  enabled: false                    # 是否启用语音识别功能
+  model_size: "base"               # 模型大小: tiny, base, small, medium, large

@@ -21,6 +21,7 @@
 
 [機能](#-機能) •
 [クイックスタート](#-クイックスタート) •
+[ランタイム設定](#-ランタイム設定) •
 [設定](#%EF%B8%8F-設定) •
 [プロジェクト構成](#-プロジェクト構成) •
 [開発ガイド](#-開発ガイド)
@@ -69,15 +70,38 @@
 | Python | 3.9 - 3.11 |
 | OS | Windows / Linux / macOS |
 | GPU | 推奨（音声合成の高速化用） |
+オプション 1: 組み込みランタイムを使用（Windows推奨）
 
-### インストール手順
+プロジェクトにはスタンドアロンの Python 3.9 ランタイムが付属しており、システム Python のインストールは不要です：
+
+```batch
+# 1. プロジェクトをクローン
+git clone https://github.com/your-org/local-project.git
+cd local-project
+
+# 2. PowerShell で依存関係をインストール（推奨）
+.\install_dependencies.ps1
+# またはバッチスクリプト: install_dependencies.bat
+
+# 3. 環境変数を設定（.env ファイルを作成）
+copy .env.example .env
+# .env を編集して API キーを記入
+
+# 4. プロジェクトを実行
+.\run_with_runtime.ps1
+# またはバッチスクリプト: run_with_runtime.bat
+```
+
+### オプション 2: システム Python または仮想環境を使用
+
+既に Python 3.9-3.11 がある場合：
 
 ```bash
 # 1. プロジェクトをクローン
 git clone https://github.com/your-org/local-project.git
 cd local-project
 
-# 2. 仮想環境を作成
+# 2. 仮想環境を作成（推奨）
 python -m venv venv
 # Windows:
 .\venv\Scripts\activate
@@ -87,8 +111,9 @@ source venv/bin/activate
 # 3. 依存関係をインストール
 pip install -r requirements.txt
 
-# 4. 環境変数を設定（.envファイルを作成）
+# 4. 環境変数を設定（.env ファイルを作成）
 cp .env.example .env
+# .env を編集して API キーを記入v
 # .envを編集してAPIキーを入力
 
 # 5. 実行
@@ -107,11 +132,260 @@ MODEL_NAME=your_model_name
 # システムプロンプト（オプション、ファイルパス対応）
 SYSTEM_PROMPT_FILE=SYSTEM_PROMPT.txt
 
-# GPT-SoVITSパス
-GPT_SOVITS_PATH=./GPT-SoVITS-v2pro-20250604-nvidia50
-
 # ブラウザエージェント（オプション）
 OPENAI_API_KEY=sk-xxxxxx
+```
+
+### 🎯 機能設定
+
+`config.yaml` を編集して機能モジュールを有効/無効にします：
+
+```yaml
+# PC制御機能
+controller:
+  enabled: true          # false に変更して無効化
+
+# 音声認識機能
+ear:
+  enabled: false         # true に変更して有効化
+  model_size: "base"     # モデルサイズ: tiny, base, small, medium
+```
+
+---
+
+## 🐛 よくある質問
+
+### ❌ python.exe が見つかりません
+
+**症状**: `Cannot find Python Runtime: runtime\python.exe`
+
+**解決方法**:
+1. `runtime` ディレクトリに完全な Python 3.9 ランタイムが含まれていることを確認
+2. ヘルスチェックを実行: `.\check_runtime.ps1`
+3. [RUNTIME.md](RUNTIME.md) を参照して再設定
+
+### ❌ モジュールのインポートに失敗
+
+**症状**: `ModuleNotFoundError: No module named 'xxx'`
+
+**解決方法**:
+```powershell
+# ランタイムの使用:
+.\install_dependencies.ps1
+
+# システム Python を使用:
+pip install -r requirements.txt
+```
+
+### ❌ 起動直後に終了
+
+**チェックステップ**:
+1. ログファイルを確認: `data/logs/project_local.log`
+2. `.env` 設定が正しいことを確認（API キーなど）
+3. ヘルスチェックを実行: `.\check_runtime.ps1`
+
+### ❌ ctranslate2 エラー
+
+**症状**: `ctranslate2` に関連する DLL ロードエラー
+
+**解決方法**:
+- スタートアップスクリプトは自動的に `CT2_USE_CUDA=0` を設定
+- 問題が続く場合は、環境変数が正しいことを確認
+
+### ❌ 音声機能が機能しない
+
+**症状**: `GPT-SoVITS service not found`
+
+**解決方法**:
+- GPT-SoVITS サービスが正常に実行されているか確認
+- モデルファイルが正しく配置されているか確認
+- ログを確認: `modules/gpt_sovits/gpt_sovits.log`
+
+### ❌ PC制御がアプリを起動できない
+
+**症状**: アプリが開かないか権限エラー
+
+**解決方法**:
+- アプリパスが `config.yaml` のホワイトリストに含まれているか確認
+- パスが正しいことを確認（`\\` または raw 文字列を使用）
+- ログを確認してセキュリティチェックが通ったか確認
+
+---
+
+## 📚 さらに詳しく
+
+- **完全なドキュメント**: [README.md](README.md)
+- **ランタイム詳細ガイド**: [RUNTIME.md](RUNTIME.md)
+- **貢献ガイド**: [CONTRIBUTING_JA.md](CONTRIBUTING_JA.md)
+- **開発スクリプト**: [scripts/dev.ps1](scripts/dev.ps1)
+
+---
+
+## 🆘 ヘルプを求める
+
+1. **ログを確認**: `data/logs/project_local.log`
+2. **診断を実行**: `.\check_runtime.ps1`
+3. **ドキュメントを参照**: 上記のリンクを参照
+4. **Issue を提出**: [GitHub Issues](https://github.com/your-org/local-project/issues)
+
+---
+
+## ✅ インストールの確認
+
+起動に成功すると、以下が表示されます：
+
+```
+============================================
+Project Local - 組み込みランタイムを使用
+============================================
+Python: d:\...\Local-project\runtime\python.exe
+プロジェクトディレクトリ: d:\...\Local-project
+============================================
+
+Project Local を起動中...
+[INFO] 設定ファイルを読み込んでいます...
+[INFO] モジュールを初期化しています...
+[INFO] アバターウィンドウが起動しました
+```
+
+アバターウィンドウが表示されてエラーがなければ、Project Local の起動に成功しました！🎉
+
+---
+
+## ⚙️ ランタイム設定
+
+### 📦 概要
+
+プロジェクトはスタンドアロンの Python 3.9 ランタイム環境（`runtime` に配置）を提供し、システム Python から隔離されており、依存関係の一貫性と移植性を確保します。
+
+### 📁 ランタイム構造
+
+```
+runtime/
+├── python.exe              # Python 3.9 インタプリタ
+├── python39.dll            # Python コアライブラリ
+├── python39._pth           # Python パス設定
+├── python39.zip            # 標準ライブラリ（圧縮）
+├── Lib/                    # Python 標準ライブラリ
+│   └── site-packages/      # サードパーティパッケージディレクトリ
+├── Scripts/                # 実行可能スクリプトディレクトリ
+│   ├── pip.exe             # pip パッケージマネージャー
+│   └── ...
+├── include/                # C/C++ ヘッダーファイル
+└── libs/                   # リンクライブラリ
+```
+
+### ⚙️ モジュール検索パス (python39._pth)
+
+`python39._pth` ファイルは Python モジュール検索パスを定義：
+
+```
+python39.zip                # 圧縮標準ライブラリ
+.                           # ランタイムディレクトリ自体
+Lib                         # 標準ライブラリディレクトリ
+Lib\site-packages           # サードパーティパッケージディレクトリ
+..                          # プロジェクトルートディレクトリ
+..\..\modules               # modules パッケージ
+
+import site                 # site-packages を有効化
+```
+
+### 🚀 ランタイムスクリプト
+
+#### 依存関係のインストール
+
+```powershell
+# 本番依存関係のみをインストール
+.\install_dependencies.ps1
+
+# 本番 + 開発依存関係をインストール
+.\install_dependencies.ps1 -Dev
+
+# ミラーを使用してダウンロード高速化
+.\install_dependencies.ps1 -Mirror
+```
+
+#### プロジェクトを開始
+
+```powershell
+# PowerShell（推奨）
+.\run_with_runtime.ps1
+
+# またはバッチスクリプト
+.\run_with_runtime.bat
+```
+
+#### ヘルスチェック
+
+```powershell
+# ランタイム設定を診断
+.\check_runtime.ps1
+```
+
+#### 手動使用
+
+```batch
+# Python を直接実行
+runtime\python.exe script.py
+
+# pip を使用
+runtime\Scripts\pip.exe install package-name
+```
+
+### 🔧 自動設定される環境変数
+
+| 変数 | 値 | 説明 |
+|-----|-----|------|
+| `CT2_USE_CUDA` | `0` | ctranslate2 CUDA を無効化してパス問題を回避 |
+| `LOKY_MAX_CPU_COUNT` | 自動 | 中国語 Windows でのエンコード問題を修正 |
+
+### 🐛 ランタイムトラブルシューティング
+
+<details>
+<summary><b>python.exe が見つからない</b></summary>
+
+- `runtime/python.exe` が存在することを確認
+- ランタイムディレクトリの完全性を確認
+- `.\check_runtime.ps1` を実行して診断
+
+</details>
+
+<details>
+<summary><b>モジュールインポート失敗 (ModuleNotFoundError)</b></summary>
+
+- `python39._pth` の相対パスを確認
+- 依存関係がインストール済みかを確認：`runtime\Scripts\pip.exe list`
+- `.\install_dependencies.ps1` を再実行
+
+</details>
+
+<details>
+<summary><b>DLL 読み込み失敗</b></summary>
+
+- Visual C++ Redistributable 2015-2022 をインストール
+- 依存パッケージの再インストールを試みる
+- システムライブラリの欠落を確認
+
+</details>
+
+### 📚 高度な設定
+
+**ランタイムを更新**:
+```batch
+# 現在のバージョンをバックアップ
+xcopy runtime runtime_backup /E /I /H
+
+# 新しい Python 3.9 組み込みバージョンに置き換えた後
+.\install_dependencies.ps1
+```
+
+**依存関係管理**:
+```batch
+# インストール済みパッケージをリスト
+runtime\Scripts\pip.exe list
+
+# 依存関係をエクスポート
+runtime\Scripts\pip.exe freeze > requirements.txt
 ```
 
 ---

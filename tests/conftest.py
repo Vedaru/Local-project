@@ -47,7 +47,6 @@ def mock_env_vars(monkeypatch: pytest.MonkeyPatch) -> dict:
     env_vars = {
         "ARK_API_KEY": "test-api-key",
         "MODEL_NAME": "test-model",
-        "GPT_SOVITS_PATH": "/fake/path",
         "SYSTEM_PROMPT": "You are a helpful assistant.",
     }
     for key, value in env_vars.items():

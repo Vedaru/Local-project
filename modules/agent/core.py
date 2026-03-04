@@ -31,7 +31,7 @@ from ..logging_config import get_logger
 logger = get_logger("ManusAgent")
 
 # ---- 确保 OpenManus 在 Python path 中 ----
-_OPENMANUS_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "OpenManus"))
+_OPENMANUS_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "openmanus"))
 if _OPENMANUS_ROOT not in sys.path:
     sys.path.insert(0, _OPENMANUS_ROOT)
 
@@ -298,3 +298,10 @@ class ManusAgent:
     def stop_learning(self) -> str:
         """结束教学模式（空实现）。"""
         return "⚠️ 当前 Agent 后端 (OpenManus) 暂不支持教学模式。"
+
+    # ======= 异步接口 =======
+
+    async def run_task_async(self, task_description: str) -> str:
+        """run_task 的异步包装 — 在线程池中执行同步的 run_task。"""
+        import asyncio
+        return await asyncio.to_thread(self.run_task, task_description)

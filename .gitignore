@@ -1,7 +1,64 @@
+# Environment variables
 .env
+
+# Audio files
 *.wav
+
+# Data directories
 /data
+
+# Python cache
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# System prompt (user-specific)
 SYSTEM_PROMPT.txt
-GPT-SoVITS-v2pro-20250604-nvidia50
-/OpenManus/logs
+
+# Logs
+/modules/openmanus/logs
+*.log
+
+# Runtime (embedded Python distribution)
+# Note: runtime should be obtained separately
+# See RUNTIME.md for setup instructions
+/runtime
+
+# Virtual environments (if using system Python)
+venv/
+.venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+temp/
+tmp/
+modules/gpt_sovits/

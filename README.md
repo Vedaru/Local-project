@@ -21,7 +21,8 @@
 
 [功能特性](#-功能特性) •
 [快速开始](#-快速开始) •
-[配置说明](#️-配置说明) •
+[Runtime 配置](#-runtime-配置) •
+[项目配置](#️-项目配置) •
 [项目结构](#-项目结构) •
 [开发指南](#-开发指南)
 
@@ -70,14 +71,40 @@
 | 操作系统 | Windows / Linux / macOS |
 | GPU | 推荐（用于语音合成加速） |
 
-### 安装步骤
+### 方式一：使用独立 Runtime（推荐，Windows）
+
+项目自带独立的 Python 3.9 运行时，无需安装系统 Python，开箱即用：
+
+```batch
+# 1. 克隆项目
+git clone https://github.com/your-org/local-project.git
+cd local-project
+
+# 2. 安装依赖（使用独立 runtime）
+.\install_dependencies.ps1
+# 或使用批处理脚本：install_dependencies.bat
+
+# 3. 配置环境变量（创建 .env 文件）
+copy .env.example .env
+# 编辑 .env 填写 API 密钥
+
+# 4. 运行项目
+.\run_with_runtime.ps1
+# 或使用批处理脚本：run_with_runtime.bat
+```
+详见下方 [Runtime 配置](#-runtime-配置) 部分
+📖 **详细说明**: 参见 [RUNTIME.md](RUNTIME.md)
+
+### 方式二：使用系统 Python 或虚拟环境
+
+如果你已有 Python 3.9-3.11 环境：
 
 ```bash
 # 1. 克隆项目
 git clone https://github.com/your-org/local-project.git
 cd local-project
 
-# 2. 创建虚拟环境
+# 2. 创建虚拟环境（推荐）
 python -m venv venv
 # Windows:
 .\venv\Scripts\activate
@@ -107,15 +134,264 @@ MODEL_NAME=your_model_name
 # 系统提示词（可选，支持文件路径）
 SYSTEM_PROMPT_FILE=SYSTEM_PROMPT.txt
 
-# GPT-SoVITS 路径
-GPT_SOVITS_PATH=./GPT-SoVITS-v2pro-20250604-nvidia50
-
 # 浏览器 Agent（可选）
 OPENAI_API_KEY=sk-xxxxxx
 ```
 
+### 🎯 功能配置
+
+编辑 `config.yaml` 来启用/禁用功能模块：
+
+```yaml
+# 电脑控制功能
+controller:
+  enabled: true          # 改为 false 禁用
+
+# 语音识别功能
+ear:
+  enabled: false         # 改为 true 启用
+  model_size: "base"     # 模型大小: tiny, base, small, medium
+```
+
 ---
 
+## 🐛 常见问题
+
+### ❌ 找不到 python.exe
+
+**症状**: `找不到 Python Runtime: runtime\python.exe`
+
+**解决**:
+1. 确认 `runtime` 目录下有完整的 Python 3.9 运行时
+2. 运行健康检查: `.\check_runtime.ps1`
+3. 参考 [RUNTIME.md](RUNTIME.md) 重新配置
+
+### ❌ 模块导入失败
+
+**症状**: `ModuleNotFoundError: No module named 'xxx'`
+
+**解决**:
+```powershell
+# 使用 Runtime:
+.\install_dependencies.ps1
+
+# 使用系统 Python:
+pip install -r requirements.txt
+```
+
+### ❌ 启动后立即退出
+
+**检查步骤**:
+1. 查看日志文件: `data/logs/project_local.log`
+2. 确认 `.env` 配置正确（API 密钥等）
+3. 运行健康检查: `.\check_runtime.ps1`
+
+### ❌ ctranslate2 错误
+
+**症状**: 与 `ctranslate2` 相关的 DLL 加载错误
+
+**解决**:
+- 已在启动脚本中自动设置 `CT2_USE_CUDA=0`
+- 如果仍有问题，检查环境变量是否正确
+
+### ❌ 语音功能无法使用
+
+**症状**: `找不到 GPT-SoVITS 服务`
+
+**解决**:
+- 检查 GPT-SoVITS 服务是否正常启动
+- 确认模型文件是否正确放置
+- 查看日志：`modules/gpt_sovits/gpt_sovits.log`
+
+### ❌ 电脑控制无法启动应用
+
+**症状**: 应用无法打开或权限不足
+
+**解决**:
+- 检查应用路径是否在 `config.yaml` 白名单中
+- 确认路径正确（使用 `\\` 或原始字符串）
+- 查看日志确认安全检查是否通过
+
+---
+
+## 📚 延伸阅读
+
+- **完整文档**: [README.md](README.md)
+- **Runtime 详细说明**: [RUNTIME.md](RUNTIME.md)
+- **贡献指南**: [CONTRIBUTING.md](CONTRIBUTING.md)
+- **开发脚本**: [scripts/dev.ps1](scripts/dev.ps1)
+
+---
+
+## 🆘 获取帮助
+
+1. **查看日志**: `data/logs/project_local.log`
+2. **运行诊断**: `.\check_runtime.ps1`
+3. **查阅文档**: 参见上方延伸阅读
+4. **提交 Issue**: [GitHub Issues](https://github.com/your-org/local-project/issues)
+
+---
+
+## ✅ 验证安装
+
+启动成功后，你应该看到：
+
+```
+============================================
+Project Local - 使用独立 Runtime 启动
+============================================
+Python: d:\...\Local-project\runtime\python.exe
+项目目录: d:\...\Local-project
+============================================
+
+启动 Project Local...
+[INFO] 加载配置文件...
+[INFO] 初始化模块...
+[INFO] Avatar 窗口已启动
+```
+
+如果看到 Avatar 窗口并且没有错误，恭喜你成功启动了 Project Local！🎉
+
+---
+Runtime 配置
+
+### 📦 概述
+
+本项目提供独立的 Python 3.9 运行时环境（位于 `runtime`），与系统 Python 环境隔离，确保依赖版本的一致性和项目的可移植性。
+
+### 📁 Runtime 结构
+
+```
+runtime/
+├── python.exe              # Python 3.9 解释器
+├── python39.dll            # Python 核心库
+├── python39._pth           # Python 路径配置文件
+├── python39.zip            # 标准库（压缩包）
+├── Lib/                    # Python 标准库
+│   └── site-packages/      # 第三方依赖包目录
+├── Scripts/                # 可执行脚本目录
+│   ├── pip.exe             # pip 包管理器
+│   └── ...
+├── include/                # C/C++ 头文件
+└── libs/                   # 链接库
+```
+
+### ⚙️ python39._pth 模块搜索路径
+
+`python39._pth` 文件定义了 Python 解释器的搜索路径：
+
+```
+python39.zip                # 标准库压缩包
+.                           # runtime 目录本身
+Lib                         # 标准库目录
+Lib\site-packages           # 第三方包目录
+..                          # 项目根目录
+..\..\modules               # modules 模块
+
+import site                 # 启用 site-packages
+```
+
+### 🚀 使用 Runtime 脚本
+
+#### 安装依赖
+
+```powershell
+# 仅安装生产依赖
+.\install_dependencies.ps1
+
+# 安装生产 + 开发依赖
+.\install_dependencies.ps1 -Dev
+
+# 使用国内镜像加速
+.\install_dependencies.ps1 -Mirror
+```
+
+#### 启动项目
+
+```powershell
+# PowerShell（推荐）
+.\run_with_runtime.ps1
+
+# 或使用批处理脚本
+.\run_with_runtime.bat
+```
+
+#### 健康检查
+
+```powershell
+# 诊断 Runtime 配置
+.\check_runtime.ps1
+```
+
+#### 手动使用
+
+```batch
+# 直接调用 Python
+runtime\python.exe script.py
+
+# 使用 pip
+runtime\Scripts\pip.exe install package-name
+```
+
+### 🔧 自动设置的环境变量
+
+| 变量 | 值 | 说明 |
+|------|-----|------|
+| `CT2_USE_CUDA` | `0` | 禁用 ctranslate2 的 CUDA 以避免路径问题 |
+| `LOKY_MAX_CPU_COUNT` | 自动 | 修复中文 Windows 上的编码问题 |
+
+### 🐛 Runtime 故障排查
+
+<details>
+<summary><b>找不到 python.exe</b></summary>
+
+- 确认 `runtime/python.exe` 存在
+- 检查 runtime 目录完整性
+- 运行 `.\check_runtime.ps1` 诊断
+
+</details>
+
+<details>
+<summary><b>模块导入失败 (ModuleNotFoundError)</b></summary>
+
+- 检查 `python39._pth` 中的相对路径
+- 验证依赖已安装：`runtime\Scripts\pip.exe list`
+- 重新运行 `.\install_dependencies.ps1`
+
+</details>
+
+<details>
+<summary><b>DLL 加载失败</b></summary>
+
+- 安装 Visual C++ Redistributable 2015-2022
+- 尝试重新安装依赖包
+- 检查是否缺少系统库
+
+</details>
+
+### 📚 进阶配置
+
+**更新 Runtime**:
+```batch
+# 备份当前版本
+xcopy runtime runtime_backup /E /I /H
+
+# 替换为新的 Python 3.9 嵌入式版本后运行
+.\install_dependencies.ps1
+```
+
+**依赖管理**:
+```batch
+# 查看已安装的包
+runtime\Scripts\pip.exe list
+
+# 导出依赖
+runtime\Scripts\pip.exe freeze > requirements.txt
+```
+
+---
+
+## ⚙️ 项目配置
 ## ⚙️ 配置说明
 
 配置文件：`config.yaml`

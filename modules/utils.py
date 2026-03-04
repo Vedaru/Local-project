@@ -50,7 +50,7 @@ def extract_entities(text):
 def start_gpt_sovits_api(gpt_sovits_path):
     """启动 GPT-SoVITS API 服务"""
     if not gpt_sovits_path or not os.path.exists(gpt_sovits_path):
-        logger.error("GPT-SoVITS 路径未设置或不存在，请检查环境变量 GPT_SOVITS_PATH")
+        logger.error("GPT-SoVITS 路径未设置或不存在，请检查 modules/gpt_sovits 目录")
         return None
 
     api_script = os.path.join(gpt_sovits_path, "api_v2.py")
@@ -58,8 +58,9 @@ def start_gpt_sovits_api(gpt_sovits_path):
         logger.error(f"未找到 API 脚本: {api_script}")
         return None
 
-    # 使用 runtime\python.exe
-    python_exe = os.path.join(gpt_sovits_path, "runtime", "python.exe")
+    # 使用项目根目录下的 runtime\python.exe
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    python_exe = os.path.join(project_root, "runtime", "python.exe")
     if not os.path.exists(python_exe):
         logger.error(f"未找到 Python 可执行文件: {python_exe}")
         return None

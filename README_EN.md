@@ -21,6 +21,7 @@ Voice Interaction · Smart Memory · PC Control · 3D Avatar
 
 [Features](#-features) •
 [Quick Start](#-quick-start) •
+[Runtime Configuration](#-runtime-configuration) •
 [Configuration](#️-configuration) •
 [Project Structure](#-project-structure) •
 [Development](#-development)
@@ -69,14 +70,38 @@ Voice Interaction · Smart Memory · PC Control · 3D Avatar
 | Python | 3.9 - 3.11 |
 | OS | Windows / Linux / macOS |
 | GPU | Recommended (for TTS acceleration) |
+Option 1: Using Embedded Runtime (Recommended for Windows)
 
-### Installation
+The project includes a standalone Python 3.9 runtime with all dependencies, no system Python installation needed:
+
+```batch
+# 1. Clone the project
+git clone https://github.com/your-org/local-project.git
+cd local-project
+
+# 2. Install dependencies with PowerShell (recommended)
+.\install_dependencies.ps1
+# Or use batch script: install_dependencies.bat
+
+# 3. Configure environment variables (create .env file)
+copy .env.example .env
+# Edit .env and fill in API keys
+
+# 4. Run the project
+.\run_with_runtime.ps1
+# Or use batch script: run_with_runtime.bat
+```
+
+### Option 2: Using System Python or Virtual Environment
+
+If you already have Python 3.9-3.11:
 
 ```bash
 # 1. Clone the project
 git clone https://github.com/your-org/local-project.git
 cd local-project
 
+# 2. Create virtual environment (recommended)
 # 2. Create virtual environment
 python -m venv venv
 # Windows:
@@ -92,7 +117,145 @@ cp .env.example .env
 # Edit .env and fill in API keys
 
 # 5. Run
-python main.py
+pythonRuntime Configuration
+
+### 📦 Overview
+
+The project provides a standalone Python 3.9 runtime environment (located in `runtime`) isolated from system Python, ensuring dependency consistency and portability.
+
+### 📁 Runtime Structure
+
+```
+runtime/
+├── python.exe              # Python 3.9 interpreter
+├── python39.dll            # Python core library
+├── python39._pth           # Python path configuration
+├── python39.zip            # Standard library (compressed)
+├── Lib/                    # Python standard library
+│   └── site-packages/      # Third-party packages directory
+├── Scripts/                # Executable scripts directory
+│   ├── pip.exe             # pip package manager
+│   └── ...
+├── include/                # C/C++ header files
+└── libs/                   # Link libraries
+```
+
+### ⚙️ Module Search Path (python39._pth)
+
+The `python39._pth` file defines the Python module search paths:
+
+```
+python39.zip                # Compressed standard library
+.                           # runtime directory itself
+Lib                         # Standard library directory
+Lib\site-packages           # Third-party packages directory
+..                          # Project root directory
+..\..\modules               # modules package
+
+import site                 # Enable site-packages
+```
+
+### 🚀 Runtime Scripts
+
+#### Install Dependencies
+
+```powershell
+# Install production dependencies only
+.\install_dependencies.ps1
+
+# Install production + development dependencies
+.\install_dependencies.ps1 -Dev
+
+# Use mirror for faster download
+.\install_dependencies.ps1 -Mirror
+```
+
+#### Start Project
+
+```powershell
+# PowerShell (recommended)
+.\run_with_runtime.ps1
+
+# Or use batch script
+.\run_with_runtime.bat
+```
+
+#### Health Check
+
+```powershell
+# Diagnose Runtime configuration
+.\check_runtime.ps1
+```
+
+#### Manual Usage
+
+```batch
+# Direct Python invocation
+runtime\python.exe script.py
+
+# Use pip
+runtime\Scripts\pip.exe install package-name
+```
+
+### 🔧 Auto-configured Environment Variables
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `CT2_USE_CUDA` | `0` | Disable ctranslate2 CUDA to avoid path issues |
+| `LOKY_MAX_CPU_COUNT` | Auto | Fix encoding issue on Chinese Windows |
+
+### 🐛 Runtime Troubleshooting
+
+<details>
+<summary><b>Cannot find python.exe</b></summary>
+
+- Confirm `runtime/python.exe` exists
+- Check runtime directory completeness
+- Run `.\check_runtime.ps1` for diagnosis
+
+</details>
+
+<details>
+<summary><b>Module import failed (ModuleNotFoundError)</b></summary>
+
+- Check relative paths in `python39._pth`
+- Verify dependencies installed: `runtime\Scripts\pip.exe list`
+- Re-run `.\install_dependencies.ps1`
+
+</details>
+
+<details>
+<summary><b>DLL loading failed</b></summary>
+
+- Install Visual C++ Redistributable 2015-2022
+- Try reinstalling dependent packages
+- Check for missing system libraries
+
+</details>
+
+### 📚 Advanced Configuration
+
+**Update Runtime**:
+```batch
+# Backup current version
+xcopy runtime runtime_backup /E /I /H
+
+# After replacing with new Python 3.9 embedded version
+.\install_dependencies.ps1
+```
+
+**Dependency Management**:
+```batch
+# List installed packages
+runtime\Scripts\pip.exe list
+
+# Export dependencies
+runtime\Scripts\pip.exe freeze > requirements.txt
+```
+
+---
+
+## ⚙️  main.py
 ```
 
 ### Environment Variables
@@ -107,12 +270,123 @@ MODEL_NAME=your_model_name
 # System Prompt (optional, supports file path)
 SYSTEM_PROMPT_FILE=SYSTEM_PROMPT.txt
 
-# GPT-SoVITS Path
-GPT_SOVITS_PATH=./GPT-SoVITS-v2pro-20250604-nvidia50
-
 # Browser Agent (optional)
 OPENAI_API_KEY=sk-xxxxxx
 ```
+
+### 🎯 Feature Configuration
+
+Edit `config.yaml` to enable/disable feature modules:
+
+```yaml
+# PC Control Feature
+controller:
+  enabled: true          # Change to false to disable
+
+# Speech Recognition Feature
+ear:
+  enabled: false         # Change to true to enable
+  model_size: "base"     # Model size: tiny, base, small, medium
+```
+
+---
+
+## 🐛 Frequently Asked Questions
+
+### ❌ Cannot find python.exe
+
+**Symptom**: `Cannot find Python Runtime: runtime\python.exe`
+
+**Solution**:
+1. Confirm `runtime` directory contains complete Python 3.9 runtime
+2. Run health check: `.\check_runtime.ps1`
+3. See [RUNTIME.md](RUNTIME.md) for reconfiguration
+
+### ❌ Module import failed
+
+**Symptom**: `ModuleNotFoundError: No module named 'xxx'`
+
+**Solution**:
+```powershell
+# Using Runtime:
+.\install_dependencies.ps1
+
+# Using system Python:
+pip install -r requirements.txt
+```
+
+### ❌ Exit immediately after startup
+
+**Check steps**:
+1. View log file: `data/logs/project_local.log`
+2. Confirm `.env` configuration is correct (API key, etc.)
+3. Run health check: `.\check_runtime.ps1`
+
+### ❌ ctranslate2 error
+
+**Symptom**: DLL loading errors related to `ctranslate2`
+
+**Solution**:
+- Startup scripts automatically set `CT2_USE_CUDA=0`
+- If problem persists, check environment variables are correct
+
+### ❌ Voice features not working
+
+**Symptom**: `GPT-SoVITS service not found`
+
+**Solution**:
+- Check if GPT-SoVITS service is running normally
+- Confirm model files are placed correctly
+- Check logs: `modules/gpt_sovits/gpt_sovits.log`
+
+### ❌ PC Control cannot start apps
+
+**Symptom**: Cannot open app or permission denied
+
+**Solution**:
+- Check if app path is in `config.yaml` whitelist
+- Confirm path is correct (use `\\` or raw strings)
+- Check logs to confirm security check passed
+
+---
+
+## 📚 Further Reading
+
+- **Full Documentation**: [README.md](README.md)
+- **Runtime Detailed Guide**: [RUNTIME.md](RUNTIME.md)
+- **Contributing Guide**: [CONTRIBUTING_EN.md](CONTRIBUTING_EN.md)
+- **Dev Scripts**: [scripts/dev.ps1](scripts/dev.ps1)
+
+---
+
+## 🆘 Getting Help
+
+1. **Check logs**: `data/logs/project_local.log`
+2. **Run diagnostics**: `.\check_runtime.ps1`
+3. **Read documentation**: See links above
+4. **Submit an Issue**: [GitHub Issues](https://github.com/your-org/local-project/issues)
+
+---
+
+## ✅ Verify Installation
+
+After successful startup, you should see:
+
+```
+============================================
+Project Local - Using Embedded Runtime
+============================================
+Python: d:\...\Local-project\runtime\python.exe
+Project Directory: d:\...\Local-project
+============================================
+
+Starting Project Local...
+[INFO] Loading configuration...
+[INFO] Initializing modules...
+[INFO] Avatar window started
+```
+
+If you see the Avatar window and no errors, congratulations on successfully starting Project Local! 🎉
 
 ---
 

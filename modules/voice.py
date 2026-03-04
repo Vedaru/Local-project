@@ -367,3 +367,15 @@ class VoiceManager:
         self.stream.stop_stream()
         self.stream.close()
         self.p.terminate()
+
+    # ==================== 异步接口 ====================
+
+    async def speak_async(self, text: str):
+        """异步版 speak — 在线程池中执行 TTS。"""
+        import asyncio
+        await asyncio.to_thread(self.speak, text)
+
+    async def speak_and_save_async(self, text: str, wav_path: str) -> bool:
+        """异步版 speak_and_save — 在线程池中执行 TTS 合成。"""
+        import asyncio
+        return await asyncio.to_thread(self.speak_and_save, text, wav_path)
