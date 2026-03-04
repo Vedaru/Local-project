@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Optional
 
 import dotenv
 import yaml
@@ -85,7 +85,7 @@ class AppConfig:
     # ---- 电脑控制 ----
     controller_enabled: bool = False
     controller_failsafe: bool = True
-    controller_app_whitelist: Dict[str, str] = field(default_factory=dict)
+    controller_app_whitelist: dict[str, str] = field(default_factory=dict)
 
     # ---- Avatar ----
     avatar_width: int = 400
