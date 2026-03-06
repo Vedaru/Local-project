@@ -1,8 +1,10 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Dict
 
+from app.config import config
 from app.tool.base import BaseTool
 
 
@@ -29,6 +31,7 @@ class PythonExecute(BaseTool):
     ) -> Dict:
         """
         Executes the provided Python code with a timeout.
+        All file operations default to the workspace directory.
 
         Args:
             code (str): The Python code to execute.
@@ -37,11 +40,16 @@ class PythonExecute(BaseTool):
         Returns:
             Dict: Contains 'output' with execution output or error message and 'success' status.
         """
+        # 确保workspace目录存在
+        workspace_path = config.workspace_root
+        workspace_path.mkdir(parents=True, exist_ok=True)
 
         try:
             env = os.environ.copy()
             env.setdefault("PYTHONIOENCODING", "utf-8")
             env.setdefault("PYTHONUTF8", "1")
+            # 设置工作目录为workspace，所有文件操作默认在这里
+            env["WORKSPACE_DIR"] = str(workspace_path)
 
             completed = subprocess.run(
                 [sys.executable, "-X", "utf8", "-c", code],
@@ -51,6 +59,7 @@ class PythonExecute(BaseTool):
                 encoding="utf-8",
                 errors="replace",
                 env=env,
+                cwd=str(workspace_path),  # 将工作目录设为workspace
             )
 
             stdout = (completed.stdout or "").strip()

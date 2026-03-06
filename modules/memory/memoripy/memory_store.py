@@ -1,12 +1,20 @@
 # memory_store.py
 
+import os
 import time
 from collections import defaultdict
+
+# Workaround for joblib/loky UnicodeDecodeError on Chinese Windows.
+# loky executes `wmic` to count physical cores if LOKY_MAX_CPU_COUNT is not set,
+# which may produce a UnicodeDecodeError under GBK.  Setting the variable
+# early avoids the subprocess call entirely.
+if "LOKY_MAX_CPU_COUNT" not in os.environ:
+    os.environ["LOKY_MAX_CPU_COUNT"] = str(os.cpu_count() or 4)
 
 import faiss
 import networkx as nx
 import numpy as np
-from sklearn.cluster import KMeans
+# sklearn imports are deferred where possible to avoid pulling in joblib on import
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import normalize
 
@@ -178,6 +186,9 @@ class MemoryStore:
         return activated_nodes
 
     def cluster_interactions(self):
+        # delay sklearn import until clustering is actually needed
+        from sklearn.cluster import KMeans
+
         print("Clustering interactions to create hierarchical memory...")
         if len(self.embeddings) < 2:
             print("Not enough interactions to perform clustering.")

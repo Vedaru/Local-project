@@ -5,7 +5,15 @@ SYSTEM_PROMPT = (
     "Do not ask clarifying questions about the task - the user has already provided all necessary context. "
     "If the task is to search for information, use the browser or search tools directly with the exact query provided. "
     "For web searches, use BrowserUseTool to navigate and retrieve information. "
-    "The initial directory is: {directory}"
+    "\n"
+    "IMPORTANT - FILE OUTPUT RULES:\n"
+    "- ALL files generated, created, or saved MUST be placed in the workspace directory: {directory}\n"
+    "- When using Python code (python_execute): Save all outputs (markdown, code, data, images, etc.) to files within {directory}\n"
+    "- When creating files (str_replace_editor create/str_replace): Always specify absolute paths within {directory}\n"
+    "- Use relative paths in Python code that will resolve from {directory} as the working directory\n"
+    "- Do NOT create or save files outside of {directory}\n"
+    "\n"
+    "The workspace directory is: {directory}"
 )
 
 

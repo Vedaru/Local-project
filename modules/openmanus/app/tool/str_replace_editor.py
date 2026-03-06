@@ -6,6 +6,7 @@ from typing import Any, DefaultDict, List, Literal, Optional, get_args
 
 from app.config import config
 from app.exceptions import ToolError
+from app.logger import logger
 from app.tool import BaseTool
 from app.tool.base import CLIResult, ToolResult
 from app.tool.file_operators import (
@@ -167,9 +168,20 @@ class StrReplaceEditor(BaseTool):
         self, command: str, path: Path, operator: FileOperator
     ) -> None:
         """Validate path and command combination based on execution environment."""
+        workspace_root = config.workspace_root
+        
         # Check if path is absolute
         if not path.is_absolute():
             raise ToolError(f"The path {path} is not an absolute path")
+        
+        # 检查路径是否在workspace内（警告但不阻止 - 为了兼容性）
+        try:
+            path.relative_to(workspace_root)
+        except ValueError:
+            logger.warning(
+                f"File path {path} is outside workspace directory {workspace_root}. "
+                f"It is recommended to use paths within the workspace."
+            )
 
         # Only check if path exists for non-create commands
         if command != "create":

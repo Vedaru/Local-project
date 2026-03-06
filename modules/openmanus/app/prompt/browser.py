@@ -15,8 +15,10 @@ Example:
 [33]<button>Submit Form</button>
 
 - Only elements with numeric indexes in [] are interactive
-- elements without [] provide only context
+- elements without [] provide only context (including simple page text)
 
+# Page Text
+Some pages include plain textual content that is not associated with an interactive element. This text will be provided under `page_text` in the browser state. Use it to understand the page and decide on appropriate actions.
 # Response Rules
 1. RESPONSE FORMAT: You must ALWAYS respond with valid JSON in this exact format:
 {{"current_state": {{"evaluation_previous_goal": "Success|Failed|Unknown - Analyze the current elements and the image to check if the previous goals/actions are successful like intended by the task. Mention if something unexpected happened. Shortly state why/why not",
@@ -77,6 +79,7 @@ When you see [Current state starts here], focus on the following:
 - Current URL and page title{url_placeholder}
 - Available tabs{tabs_placeholder}
 - Interactive elements and their indices
+- Plain page text content (provided as `page_text` in the state)
 - Content above{content_above_placeholder} or below{content_below_placeholder} the viewport (if indicated)
 - Any action results or errors{results_placeholder}
 

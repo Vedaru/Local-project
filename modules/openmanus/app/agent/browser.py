@@ -64,6 +64,13 @@ class BrowserContextHelper:
                 content_above_info = f" ({pixels_above} pixels)"
             if pixels_below > 0:
                 content_below_info = f" ({pixels_below} pixels)"
+            # also include a small snippet of page_text in the prompt if available
+            page_text = browser_state.get("page_text")
+            if page_text:
+                snippet = page_text.replace("\n", " ")
+                if len(snippet) > 300:
+                    snippet = snippet[:300] + "..."
+                results_info += f"\n   Page text snippet: {snippet}"
 
             if self._current_base64_image:
                 image_message = Message.user_message(

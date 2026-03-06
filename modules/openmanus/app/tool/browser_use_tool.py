@@ -649,6 +649,18 @@ Page content:
             screenshot = base64.b64encode(screenshot).decode("utf-8")
 
             # Build the state info with all required fields
+            # gather simple page text so the agent can use contextual non-interactive content
+            page_text = ""
+            try:
+                # innerText gives readable text without HTML markup
+                page = await ctx.get_current_page()
+                page_text = await page.evaluate("() => document.body.innerText || ''")
+                if page_text and max_content_length:
+                    page_text = page_text[:max_content_length]
+            except Exception:
+                # ignore errors retrieving text
+                page_text = ""
+
             state_info = {
                 "url": state.url,
                 "title": state.title,
@@ -659,6 +671,8 @@ Page content:
                     if state.element_tree
                     else ""
                 ),
+                # include plain text of the page as additional context
+                "page_text": page_text,
                 "scroll_info": {
                     "pixels_above": getattr(state, "pixels_above", 0),
                     "pixels_below": getattr(state, "pixels_below", 0),
