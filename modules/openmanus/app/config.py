@@ -13,7 +13,9 @@ def get_project_root() -> Path:
 
 
 PROJECT_ROOT = get_project_root()
-WORKSPACE_ROOT = PROJECT_ROOT / "workspace"
+WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "workspace"
+# Ensure workspace directory exists on module load
+WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 class LLMSettings(BaseModel):
