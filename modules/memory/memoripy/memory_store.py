@@ -14,6 +14,7 @@ if "LOKY_MAX_CPU_COUNT" not in os.environ:
 import faiss
 import networkx as nx
 import numpy as np
+
 # sklearn imports are deferred where possible to avoid pulling in joblib on import
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import normalize
