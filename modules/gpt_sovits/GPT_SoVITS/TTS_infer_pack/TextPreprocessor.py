@@ -175,11 +175,18 @@ class TextPreprocessor:
             for i in range(len(textlist)):
                 lang = langlist[i]
                 phones, word2ph, norm_text = self.clean_text_inf(textlist[i], lang, version)
+                # skip segments with no normalized text (e.g. input was whitespace or symbols)
+                if norm_text == "":
+                    continue
                 bert = self.get_bert_inf(phones, word2ph, norm_text, lang)
                 phones_list.append(phones)
                 norm_text_list.append(norm_text)
                 bert_list.append(bert)
-            bert = torch.cat(bert_list, dim=1)
+            if bert_list:
+                bert = torch.cat(bert_list, dim=1)
+            else:
+                # no bert features produced; fall back to empty tensor
+                bert = torch.zeros((1024, 0), dtype=torch.float32)
             phones = sum(phones_list, [])
             norm_text = "".join(norm_text_list)
 
@@ -200,6 +207,14 @@ class TextPreprocessor:
         for i in range(len(word2ph)):
             repeat_feature = res[i].repeat(word2ph[i], 1)
             phone_level_feature.append(repeat_feature)
+        # if no phone-level features were generated, avoid torch.cat on empty list
+        if len(phone_level_feature) == 0:
+            # no words produced any phone-level features; this can happen if the
+            # normalized text is empty or word2ph entries are all zero. log
+            # info to aid debugging and return an empty feature tensor.
+            print(f"[TextPreprocessor] warning: no phone-level features for text='{text}' word2ph={word2ph}")
+            feature_dim = res.shape[1] if res.ndim > 1 else 0
+            return torch.zeros((feature_dim, 0), dtype=res.dtype)
         phone_level_feature = torch.cat(phone_level_feature, dim=0)
         return phone_level_feature.T
 
