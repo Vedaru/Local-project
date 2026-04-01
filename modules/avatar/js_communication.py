@@ -10,7 +10,7 @@ there are no dynamic callers.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional, cast
 
 from PyQt6.QtCore import QTimer, QUrl
 
@@ -23,14 +23,19 @@ if TYPE_CHECKING:
 class JSCommunicationMixin:
     """JavaScript 通信功能 Mixin 类"""
 
-    def run_js(self: "AvatarWidget", script: str, callback: Optional[Callable] = None):
+    _page_ready: bool
+    _pending_model: Optional[str]
+    _pending_callback: Optional[Callable]
+
+    def run_js(self, script: str, callback: Optional[Callable] = None):
         """执行 JavaScript 代码"""
+        self = cast("AvatarWidget", self)
         if callback:
             self.web_page.runJavaScript(script, callback)
         else:
             self.web_page.runJavaScript(script)
 
-    def load_model(self: "AvatarWidget", model_path: str, callback: Optional[Callable[[bool], None]] = None):
+    def load_model(self, model_path: str, callback: Optional[Callable[[bool], None]] = None):
         """
         加载 Live2D 模型
 
@@ -38,6 +43,7 @@ class JSCommunicationMixin:
             model_path: 模型文件路径
             callback: 加载结果回调
         """
+        self = cast("AvatarWidget", self)
         resolved_path = model_path
         if not model_path.startswith(("http://", "https://", "file://")):
             path = Path(model_path)
@@ -61,8 +67,9 @@ class JSCommunicationMixin:
 
         self._do_load_model(resolved_path, callback)
 
-    def _do_load_model(self: "AvatarWidget", model_path: str, callback: Optional[Callable[[bool], None]] = None):
+    def _do_load_model(self, model_path: str, callback: Optional[Callable[[bool], None]] = None):
         """实际执行模型加载"""
+        self = cast("AvatarWidget", self)
         result_received = [False]
 
         def check_load_result():
@@ -91,29 +98,33 @@ class JSCommunicationMixin:
 
         QTimer.singleShot(10000, on_timeout)
 
-    def change_expression(self: "AvatarWidget", expression: int | str):
+    def change_expression(self, expression: int | str):
         """切换表情"""
+        self = cast("AvatarWidget", self)
         script = f"setExpression('{expression}')" if isinstance(expression, str) else f"setExpression({expression})"
         self.run_js(script)
 
-    def play_motion(self: "AvatarWidget", group: str, index: Optional[int] = None):
+    def play_motion(self, group: str, index: Optional[int] = None):
         """播放动作"""
+        self = cast("AvatarWidget", self)
         script = f"setMotion('{group}', {index})" if index is not None else f"setMotion('{group}')"
         self.run_js(script)
 
-    def update_lip_sync(self: "AvatarWidget", value: float):
+    def update_lip_sync(self, value: float):
         """更新口型同步"""
+        self = cast("AvatarWidget", self)
         value = max(0.0, min(1.0, value))
         script = f"setMouth({value})"
         self.run_js(script)
 
-    def play_audio(self: "AvatarWidget", audio_path: str):
+    def play_audio(self, audio_path: str):
         """
         让浏览器播放音频并自动驱动口型同步
 
         Args:
             audio_path: 音频文件的绝对路径
         """
+        self = cast("AvatarWidget", self)
         import os
 
         log_info(f"play_audio() called with: {audio_path}")  # 调试日志
@@ -126,39 +137,47 @@ class JSCommunicationMixin:
         self.run_js(script)
         log_info(f"Playing audio in browser: {file_url}")
 
-    def stop_audio(self: "AvatarWidget"):
+    def stop_audio(self):
         """停止音频播放"""
+        self = cast("AvatarWidget", self)
         self.run_js("stopAudio()")
 
-    def get_model_info(self: "AvatarWidget", callback: Callable[[dict], None]):
+    def get_model_info(self, callback: Callable[[dict], None]):
         """获取当前模型信息"""
+        self = cast("AvatarWidget", self)
         self.run_js("getModelInfo()", callback)
 
-    def set_model_position(self: "AvatarWidget", x: int, y: int):
+    def set_model_position(self, x: int, y: int):
         """设置模型位置"""
+        self = cast("AvatarWidget", self)
         script = f"setModelPosition({x}, {y})"
         self.run_js(script)
 
-    def set_model_scale(self: "AvatarWidget", scale: float):
+    def set_model_scale(self, scale: float):
         """设置模型缩放"""
+        self = cast("AvatarWidget", self)
         scale = max(0.1, min(5.0, scale))
         script = f"setModelScale({scale})"
         self.run_js(script)
 
-    def get_model_scale(self: "AvatarWidget", callback: Callable[[float], None]):
+    def get_model_scale(self, callback: Callable[[float], None]):
         """获取当前模型缩放比例"""
+        self = cast("AvatarWidget", self)
         self.run_js("getModelScale()", callback)
 
-    def zoom_in(self: "AvatarWidget", step: float = 0.1):
+    def zoom_in(self, step: float = 0.1):
         """放大模型"""
+        self = cast("AvatarWidget", self)
         script = f"zoomIn({step})"
         self.run_js(script)
 
-    def zoom_out(self: "AvatarWidget", step: float = 0.1):
+    def zoom_out(self, step: float = 0.1):
         """缩小模型"""
+        self = cast("AvatarWidget", self)
         script = f"zoomOut({step})"
         self.run_js(script)
 
-    def reset_model(self: "AvatarWidget"):
+    def reset_model(self):
         """重置模型"""
+        self = cast("AvatarWidget", self)
         self.run_js("resetModel()")

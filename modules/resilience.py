@@ -183,7 +183,9 @@ def retry(
                     else:
                         logger.error(f"All {config.max_retries} retries exhausted for {func.__name__}: {e}")
 
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError(f"{func.__name__} retry failed without captured exception")
 
         return wrapper
 
@@ -238,7 +240,9 @@ def async_retry(
                     else:
                         logger.error(f"All {config.max_retries} retries exhausted for {func.__name__}: {e}")
 
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError(f"{func.__name__} retry failed without captured exception")
 
         return wrapper
 

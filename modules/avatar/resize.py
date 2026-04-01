@@ -2,7 +2,7 @@
 窗口调整大小模块
 """
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 from PyQt6.QtCore import QPoint, QRect, Qt
 
@@ -13,8 +13,9 @@ if TYPE_CHECKING:
 class ResizeMixin:
     """窗口调整大小功能 Mixin 类"""
 
-    def init_resize_state(self: "AvatarWidget"):
+    def init_resize_state(self):
         """初始化调整大小状态"""
+        self = cast("AvatarWidget", self)
         self._resize_edge: Optional[str] = None
         self._resize_start_pos: Optional[QPoint] = None
         self._resize_start_geometry: Optional[QRect] = None
@@ -22,11 +23,12 @@ class ResizeMixin:
         self._is_dragging = False
         self._drag_position: Optional[QPoint] = None
 
-    def get_edge_at_pos(self: "AvatarWidget", pos: QPoint) -> Optional[str]:
+    def get_edge_at_pos(self, pos: QPoint) -> Optional[str]:
         """
         检测鼠标位置对应的窗口边缘
         返回: 'left', 'right', 'top', 'bottom', 'top-left', 'top-right', 'bottom-left', 'bottom-right', 或 None
         """
+        self = cast("AvatarWidget", self)
         rect = self.rect()
         margin = self._edge_margin
 
@@ -53,8 +55,9 @@ class ResizeMixin:
             return "bottom"
         return None
 
-    def update_cursor_for_edge(self: "AvatarWidget", edge: Optional[str]):
+    def update_cursor_for_edge(self, edge: Optional[str]):
         """根据边缘类型更新鼠标光标"""
+        self = cast("AvatarWidget", self)
         cursor_map = {
             "left": Qt.CursorShape.SizeHorCursor,
             "right": Qt.CursorShape.SizeHorCursor,
@@ -74,8 +77,9 @@ class ResizeMixin:
             if hasattr(self, "web_view"):
                 self.web_view.unsetCursor()
 
-    def do_resize(self: "AvatarWidget", global_pos: QPoint):
+    def do_resize(self, global_pos: QPoint):
         """执行窗口调整大小"""
+        self = cast("AvatarWidget", self)
         if not self._resize_start_geometry or not self._resize_start_pos:
             return
 
@@ -85,6 +89,8 @@ class ResizeMixin:
         min_w, min_h = self.minimumWidth(), self.minimumHeight()
 
         edge = self._resize_edge
+        if edge is None:
+            return
 
         # 记录调整前的实际窗口位置
         current_geo = self.geometry()
@@ -123,8 +129,9 @@ class ResizeMixin:
             # 通知 JavaScript 调整模型位置来补偿窗口位置变化
             self.run_js(f"compensateModelPosition({dx}, {dy})")
 
-    def handle_mouse_move(self: "AvatarWidget", global_pos: QPoint, local_pos: QPoint, buttons) -> bool:
+    def handle_mouse_move(self, global_pos: QPoint, local_pos: QPoint, buttons) -> bool:
         """处理鼠标移动事件，返回是否已处理"""
+        self = cast("AvatarWidget", self)
         # 如果正在调整大小
         if self._resize_edge and self._resize_start_pos:
             self.do_resize(global_pos)
@@ -142,8 +149,9 @@ class ResizeMixin:
         self.update_cursor_for_edge(edge)
         return False
 
-    def handle_mouse_press(self: "AvatarWidget", global_pos: QPoint, local_pos: QPoint) -> bool:
+    def handle_mouse_press(self, global_pos: QPoint, local_pos: QPoint) -> bool:
         """处理鼠标按下事件，返回是否已处理"""
+        self = cast("AvatarWidget", self)
         edge = self.get_edge_at_pos(local_pos)
 
         if edge:
@@ -158,8 +166,9 @@ class ResizeMixin:
             self._drag_position = global_pos - self.frameGeometry().topLeft()
             return False
 
-    def handle_mouse_release(self: "AvatarWidget") -> bool:
+    def handle_mouse_release(self) -> bool:
         """处理鼠标释放事件，返回是否正在调整大小"""
+        self = cast("AvatarWidget", self)
         was_resizing = self._resize_edge is not None
         self._is_dragging = False
         self._drag_position = None

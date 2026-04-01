@@ -208,6 +208,8 @@ class Ear:
 
         try:
             while self._running:
+                if self.stream is None:
+                    raise RuntimeError("麦克风输入流未初始化")
                 data = self.stream.read(self.chunk_size, exception_on_overflow=False)
                 samples = np.frombuffer(data, dtype=np.int16)
                 rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
@@ -229,7 +231,9 @@ class Ear:
                         last_voice_time = now
 
                     # 结束条件：末次检测到语音距离当前超过 end_silence，或超出最长录制时间
-                    if (now - last_voice_time) >= self.end_silence or (now - start_time) >= self.max_record_seconds:
+                    silence_elapsed = (now - last_voice_time) if last_voice_time is not None else 0.0
+                    record_elapsed = (now - start_time) if start_time is not None else 0.0
+                    if silence_elapsed >= self.end_silence or record_elapsed >= self.max_record_seconds:
                         logger.debug("⏹️  检测到语音结束，准备转写...")
 
                         # 合并 bytes 并转为 numpy float32（范围 -1..1）

@@ -243,6 +243,8 @@ class ManusAgent:
     async def _async_run_task(self, task_description: str) -> str:
         """异步执行任务（在后台事件循环线程中运行）。"""
         await self._ensure_agent()
+        if self._agent is None:
+            raise RuntimeError("OpenManus agent 初始化失败")
 
         task_description = self._prepare_task_description(task_description)
 
@@ -256,7 +258,7 @@ class ManusAgent:
 
             # 运行任务
             result = await self._agent.run(task_description)
-            return result
+            return self._normalize_result(result)
         except Exception as e:
             logger.exception(f"OpenManus agent 执行失败: {e}")
             return f"❌ Agent 内部错误: {e}"

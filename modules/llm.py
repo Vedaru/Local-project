@@ -20,7 +20,7 @@ logger = get_logger("llm")
 
 # ---- 缓存已拼装的 system prompt ----
 _prompt_cache_lock = threading.Lock()
-_prompt_cache: dict = {}  # key: 原始 system_prompt 的 hash -> 拼装后的完整 prompt
+_prompt_cache: dict[int, str] = {}  # key: 原始 system_prompt 的 hash -> 拼装后的完整 prompt
 
 
 def _build_enhanced_prompt(base_prompt: str) -> str:

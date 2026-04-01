@@ -4,7 +4,7 @@ Windows 点击穿透功能模块
 
 import contextlib
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QWidget
@@ -18,8 +18,21 @@ if TYPE_CHECKING:
 class ClickThroughMixin:
     """点击穿透功能 Mixin 类"""
 
-    def setup_click_through(self: "AvatarWidget"):
+    _GWL_EXSTYLE: int
+    _WS_EX_LAYERED: int
+    _WS_EX_TRANSPARENT: int
+    _MOD_ALT: int
+    _HOTKEY_ID: int
+    _VK_D: int
+    _hwnd: int
+    _user32: Any
+    _hotkey_timer: QTimer
+    _click_through_enabled: bool
+    _click_through_setup_done: bool
+
+    def setup_click_through(self):
         """设置 Windows 窗口点击穿透"""
+        self = cast("AvatarWidget", self)
         if sys.platform != "win32":
             return
 
@@ -44,8 +57,9 @@ class ClickThroughMixin:
             self._click_through_enabled = False
             self._click_through_setup_done = False
 
-    def _setup_global_hotkey(self: "AvatarWidget"):
+    def _setup_global_hotkey(self):
         """设置全局热键 Alt+D"""
+        self = cast("AvatarWidget", self)
         try:
 
             # 热键常量
@@ -68,8 +82,9 @@ class ClickThroughMixin:
         except Exception as e:
             log_warning(f"Failed to setup global hotkey: {e}")
 
-    def _check_hotkey(self: "AvatarWidget"):
+    def _check_hotkey(self):
         """检查全局热键是否被按下"""
+        self = cast("AvatarWidget", self)
         try:
             import ctypes
             from ctypes import byref, wintypes
@@ -99,8 +114,9 @@ class ClickThroughMixin:
         except Exception as e:
             log_error(f"Hotkey check error: {e}")
 
-    def cleanup_global_hotkey(self: "AvatarWidget"):
+    def cleanup_global_hotkey(self):
         """清理全局热键"""
+        self = cast("AvatarWidget", self)
         try:
             if hasattr(self, "_hotkey_timer"):
                 self._hotkey_timer.stop()
@@ -109,16 +125,18 @@ class ClickThroughMixin:
         except Exception:
             pass
 
-    def apply_click_through(self: "AvatarWidget"):
+    def apply_click_through(self):
         """应用点击穿透设置"""
+        self = cast("AvatarWidget", self)
         try:
             self._hwnd = int(self.winId())
             self._update_click_through()
         except Exception as e:
             log_warning(f"Failed to apply click-through: {e}")
 
-    def _update_click_through(self: "AvatarWidget"):
+    def _update_click_through(self):
         """更新点击穿透状态"""
+        self = cast("AvatarWidget", self)
         try:
             current_geometry = self.geometry()
             was_visible = self.isVisible()
@@ -153,12 +171,14 @@ class ClickThroughMixin:
         except Exception as e:
             log_warning(f"Failed to update click-through: {e}")
 
-    def _set_all_child_windows_click_through(self: "AvatarWidget", parent_hwnd, enabled):
+    def _set_all_child_windows_click_through(self, parent_hwnd: int, enabled: bool):
         """递归设置所有子窗口的点击穿透"""
+        self = cast("AvatarWidget", self)
         import ctypes
         from ctypes import wintypes
 
-        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        winfunctype = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+        WNDENUMPROC = winfunctype(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         child_windows = []
 
         def enum_callback(hwnd, _lparam):
@@ -172,8 +192,9 @@ class ClickThroughMixin:
             with contextlib.suppress(Exception):
                 self._set_window_click_through(child_hwnd, enabled)
 
-    def _set_window_click_through(self: "AvatarWidget", hwnd, enabled):
+    def _set_window_click_through(self, hwnd: int, enabled: bool):
         """设置指定窗口的点击穿透"""
+        self = cast("AvatarWidget", self)
         current_style = self._user32.GetWindowLongW(hwnd, self._GWL_EXSTYLE)
 
         if enabled:
@@ -189,8 +210,9 @@ class ClickThroughMixin:
         SWP_FRAMECHANGED = 0x0020
         self._user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
-    def toggle_click_through(self: "AvatarWidget"):
+    def toggle_click_through(self):
         """切换点击穿透模式"""
+        self = cast("AvatarWidget", self)
         if hasattr(self, "_click_through_enabled"):
             self._click_through_enabled = not self._click_through_enabled
             self._update_click_through()
@@ -207,8 +229,9 @@ class ClickThroughMixin:
             return self._click_through_enabled
         return None
 
-    def set_click_through(self: "AvatarWidget", enabled: bool):
+    def set_click_through(self, enabled: bool):
         """设置点击穿透状态"""
+        self = cast("AvatarWidget", self)
         if hasattr(self, "_click_through_enabled"):
             self._click_through_enabled = enabled
             self._update_click_through()

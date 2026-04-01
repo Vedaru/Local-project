@@ -2,7 +2,7 @@
 系统托盘模块
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
@@ -17,8 +17,9 @@ if TYPE_CHECKING:
 class TrayMixin:
     """系统托盘功能 Mixin 类"""
 
-    def setup_tray(self: "AvatarWidget"):
+    def setup_tray(self):
         """设置系统托盘图标"""
+        self = cast("AvatarWidget", self)
         # 创建托盘图标（简单的彩色圆形）
         pixmap = QPixmap(32, 32)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -54,7 +55,11 @@ class TrayMixin:
 
         # 退出
         quit_action = QAction("❌ 退出", self)
-        quit_action.triggered.connect(QApplication.instance().quit)
+        app = QApplication.instance()
+        if app is not None:
+            quit_action.triggered.connect(app.quit)
+        else:
+            quit_action.triggered.connect(self.close)
         tray_menu.addAction(quit_action)
 
         self.tray_icon.setContextMenu(tray_menu)
@@ -66,13 +71,15 @@ class TrayMixin:
         self.tray_icon.show()
         log_info("System tray initialized")
 
-    def _on_tray_activated(self: "AvatarWidget", reason):
+    def _on_tray_activated(self, reason):
         """托盘图标点击事件"""
+        self = cast("AvatarWidget", self)
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self._on_toggle_drag()
 
-    def _on_toggle_drag(self: "AvatarWidget"):
+    def _on_toggle_drag(self):
         """切换拖拽模式"""
+        self = cast("AvatarWidget", self)
         result = self.toggle_click_through()
         if result is not None:
             if result:
@@ -86,8 +93,9 @@ class TrayMixin:
                     "Avatar", "拖拽模式 - 可以拖动窗口位置", QSystemTrayIcon.MessageIcon.Information, 2000
                 )
 
-    def _on_toggle_visibility(self: "AvatarWidget"):
+    def _on_toggle_visibility(self):
         """切换窗口可见性"""
+        self = cast("AvatarWidget", self)
         if self.isVisible():
             self.hide()
             log_info("Window hidden")
@@ -95,8 +103,9 @@ class TrayMixin:
             self.show()
             log_info("Window shown")
 
-    def _reset_window(self: "AvatarWidget"):
+    def _reset_window(self):
         """重置窗口位置和大小到初始值"""
+        self = cast("AvatarWidget", self)
         self.setGeometry(self._initial_x, self._initial_y, self._initial_width, self._initial_height)
         # 同时重置模型缩放
         self.run_js("resetModelScale()")

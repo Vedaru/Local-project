@@ -161,7 +161,7 @@ class LipSyncAnalyzer:
                     # 计算音量（RMS）
                     if sampwidth == 2:
                         fmt = f"<{samples_per_frame * n_channels}h"
-                        samples = struct.unpack(fmt, raw_data)
+                        samples = list(struct.unpack(fmt, raw_data))
                     else:
                         samples = list(raw_data)
 
@@ -227,7 +227,7 @@ class LipSyncPlayer:
         log_debug(f"Starting lip sync playback: {len(self._frames)} frames")
         start_time = time.time()
         frame_index = 0
-        last_log_time = 0
+        last_log_time = 0.0
 
         while frame_index < len(self._frames) and not self._stop_event.is_set():
             current_time = time.time() - start_time

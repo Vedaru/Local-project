@@ -257,11 +257,11 @@ class EmotionAnalyzer:
         exclaim_count = text.count("！") + text.count("!")
         if exclaim_count >= 2:
             # 增强当前最高情感
-            max_emotion = max(scores, key=scores.get)
+            max_emotion = max(scores, key=lambda emotion: scores[emotion])
             scores[max_emotion] += exclaim_count * 0.2
 
         # 找出最高分的情感
-        max_emotion = max(scores, key=scores.get)
+        max_emotion = max(scores, key=lambda emotion: scores[emotion])
         max_score = scores[max_emotion]
 
         # 如果分数太低，返回中性

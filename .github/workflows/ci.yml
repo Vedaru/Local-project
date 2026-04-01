@@ -95,8 +95,7 @@ jobs:
 
       - name: Type check with mypy
         run: |
-          mypy modules/ --ignore-missing-imports
-        continue-on-error: true  # Don't fail on type errors initially
+          python -m mypy modules/ --ignore-missing-imports
 
   # ============================================================
   # Unit Tests

@@ -97,12 +97,13 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
         self.web_page.setBackgroundColor(QColor(0, 0, 0, 0))
 
         settings = self.web_view.settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
+        if settings is not None:
+            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
 
         layout.addWidget(self.web_view)
 
@@ -120,12 +121,14 @@ class AvatarWidget(QMainWindow, ClickThroughMixin, TrayMixin, ResizeMixin, JSCom
         for child in self.web_view.findChildren(QWidget):
             child.installEventFilter(self)
             child.setMouseTracking(True)
-        if self.web_view.focusProxy():
-            self.web_view.focusProxy().installEventFilter(self)
-            self.web_view.focusProxy().setMouseTracking(True)
-        if self.centralWidget():
-            self.centralWidget().setMouseTracking(True)
-            self.centralWidget().installEventFilter(self)
+        focus_proxy = self.web_view.focusProxy()
+        if focus_proxy is not None:
+            focus_proxy.installEventFilter(self)
+            focus_proxy.setMouseTracking(True)
+        central_widget = self.centralWidget()
+        if central_widget is not None:
+            central_widget.setMouseTracking(True)
+            central_widget.installEventFilter(self)
 
     def _load_viewer(self):
         """加载 HTML 查看器页面"""

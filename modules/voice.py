@@ -4,6 +4,7 @@ import os
 import queue
 import threading
 import wave
+from typing import Optional
 
 import requests
 
@@ -25,8 +26,8 @@ class VoiceManager:
         self.sovits_url = sovits_url
         self.ref_audio = ref_audio
         self.prompt_text = prompt_text
-        self.text_queue: queue.Queue[str] = queue.Queue()
-        self.audio_queue: queue.Queue[bytes] = queue.Queue()
+        self.text_queue: queue.Queue[Optional[str]] = queue.Queue()
+        self.audio_queue: queue.Queue[Optional[bytes]] = queue.Queue()
         self.session = requests.Session()
 
         # 验证参考音频是否存在 —— GPT-SoVITS 要求必须提供 `ref_audio_path`，若文件缺失会导致 400 错误。

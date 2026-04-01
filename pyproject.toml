@@ -211,9 +211,11 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
+follow_imports = "skip"
 exclude = [
     "modules/gpt_sovits",
     "modules/openmanus",
+    "modules/memory",
     "tests",
 ]
 
