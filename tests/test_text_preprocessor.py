@@ -33,7 +33,7 @@ langseg = types.ModuleType("text.LangSegmenter")
 
 class LangSegmenter:
     @staticmethod
-    def getTexts(text, lang=None):
+    def getTexts(_text, _lang=None):
         return []
 
 
@@ -45,7 +45,7 @@ sys.modules["text"].LangSegmenter = LangSegmenter
 segmod = types.ModuleType("TTS_infer_pack.text_segmentation_method")
 segmod.split_big_text = lambda x: [x]
 segmod.splits = ""
-segmod.get_method = lambda m: (lambda t: t)
+segmod.get_method = lambda _m: (lambda t: t)
 sys.modules["TTS_infer_pack.text_segmentation_method"] = segmod
 
 # stub tools.i18n.i18n module

@@ -51,8 +51,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install black isort ruff mypy
 
-      - name: Auto-format with isort and Black
+      - name: Auto-fix with Ruff, isort and Black
         run: |
+          ruff check --fix --exit-zero modules/ tests/ main.py
           isort modules/ tests/ main.py
           black modules/ tests/ main.py
 
@@ -69,7 +70,7 @@ jobs:
         if: steps.format_changes.outputs.changed == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "style(ci): auto-format with isort and black"
+          commit_message: "style(ci): auto-fix with ruff/isort/black"
           file_pattern: "modules/**/*.py tests/**/*.py main.py"
           commit_user_name: github-actions[bot]
           commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com

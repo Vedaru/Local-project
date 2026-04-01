@@ -13,7 +13,7 @@ from modules.agent.core import ManusAgent
 def lightweight_agent(monkeypatch: pytest.MonkeyPatch) -> Generator[ManusAgent, None, None]:
     """Create a lightweight ManusAgent instance without starting real OpenManus runtime."""
     monkeypatch.setattr(agent_core, "_sync_openmanus_config", lambda: None)
-    monkeypatch.setattr(ManusAgent, "_start_event_loop", lambda self: None)
+    monkeypatch.setattr(ManusAgent, "_start_event_loop", lambda _self: None)
 
     agent = ManusAgent(system_prompt="", max_steps=3, task_timeout_seconds=1.0)
     yield agent

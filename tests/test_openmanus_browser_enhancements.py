@@ -1,4 +1,5 @@
 import asyncio
+import importlib.machinery
 import json
 import sys
 import types
@@ -28,6 +29,7 @@ if "tiktoken" not in sys.modules:
 
     tiktoken_stub.encoding_for_model = lambda _model: _DummyEncoding()
     tiktoken_stub.get_encoding = lambda _name: _DummyEncoding()
+    tiktoken_stub.__spec__ = importlib.machinery.ModuleSpec("tiktoken", loader=None)
     sys.modules["tiktoken"] = tiktoken_stub
 
 if "browser_use" not in sys.modules:
@@ -75,8 +77,8 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "modules" / "openmanus"))
 
-from modules.openmanus.app.agent.browser import BrowserContextHelper
-from modules.openmanus.app.tool.browser_use_tool import BrowserUseTool
+from modules.openmanus.app.agent.browser import BrowserContextHelper  # noqa: E402
+from modules.openmanus.app.tool.browser_use_tool import BrowserUseTool  # noqa: E402
 
 
 class _DummyTab:

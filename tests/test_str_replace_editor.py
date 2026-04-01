@@ -1,4 +1,6 @@
 import asyncio
+import importlib.machinery
+import importlib.util
 import sys
 import types
 from pathlib import Path
@@ -32,14 +34,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # also add the openmanus/app directory so `import app` resolves correctly
 sys.path.insert(0, str(Path(__file__).parent.parent / "modules" / "openmanus"))
 
-import importlib.util
-
 # create stubs for third-party libraries that aren't installed in the
 # test environment but are imported by modules under test
-import types
 
 # tiktoken is imported by app.llm
-sys.modules["tiktoken"] = types.ModuleType("tiktoken")
+tiktoken_stub = types.ModuleType("tiktoken")
+tiktoken_stub.__spec__ = importlib.machinery.ModuleSpec("tiktoken", loader=None)
+sys.modules["tiktoken"] = tiktoken_stub
 # loguru is imported by app.logger
 loguru_stub = types.ModuleType("loguru")
 
@@ -66,7 +67,7 @@ spec.loader.exec_module(module)  # type: ignore
 StrReplaceEditor = module.StrReplaceEditor
 
 # we still need a file operator for running commands
-from modules.openmanus.app.tool.file_operators import LocalFileOperator
+from modules.openmanus.app.tool.file_operators import LocalFileOperator  # noqa: E402
 
 
 def test_view_directory_skips_hidden(tmp_path):
