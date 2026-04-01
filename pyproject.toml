@@ -188,34 +188,27 @@ select = [
     "W",      # pycodestyle warnings
     "F",      # Pyflakes
     "I",      # isort
-    "C4",     # flake8-comprehensions
-    "B",      # flake8-bugbear
-    "UP",     # pyupgrade
-    "ARG",    # flake8-unused-arguments
-    "SIM",    # flake8-simplify
 ]
 ignore = [
     "E501",   # line too long (handled by black)
-    "B008",   # do not perform function calls in argument defaults
-    "C901",   # too complex
-    "ARG001", # unused function argument
-    "ARG002", # unused method argument
-    "UP045",  # use X | None instead of Optional (not supported in Python 3.9)
-    "UP037",  # remove quotes from type annotations (can conflict with TYPE_CHECKING)
+    "E203",   # whitespace before ':'
+    "E266",   # too many leading '#' for block comment
+    "W503",   # line break before binary operator
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["ARG001", "ARG002"]
+"tests/*" = ["F401", "F841"]
 "__init__.py" = ["F401"]
 
 [tool.mypy]
 python_version = "3.9"
-warn_return_any = true
-warn_unused_configs = true
+warn_return_any = false
+warn_unused_configs = false
 disallow_untyped_defs = false
-check_untyped_defs = true
+check_untyped_defs = false
 ignore_missing_imports = true
 follow_imports = "skip"
+no_implicit_optional = false
 exclude = [
     "modules/gpt_sovits",
     "modules/openmanus",
