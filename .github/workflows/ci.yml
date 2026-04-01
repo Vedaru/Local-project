@@ -49,7 +49,7 @@ jobs:
       - name: Install linting tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install black isort ruff mypy
+          python -m pip install black isort ruff mypy types-requests types-PyYAML
 
       - name: Auto-fix with Ruff, isort and Black
         run: |
@@ -134,7 +134,7 @@ jobs:
           # Always install test framework first
           python -m pip install pytest pytest-cov pytest-asyncio pytest-mock
           # Install minimal required deps for tests (must succeed)
-          python -m pip install pyyaml python-dotenv requests jieba pydantic networkx openai sentence-transformers scikit-learn faiss-cpu numpy
+          python -m pip install pyyaml python-dotenv requests jieba pydantic networkx openai sentence-transformers scikit-learn faiss-cpu numpy tenacity tomli
           # Try to install full requirements (optional deps may fail on some platforms)
           python -m pip install -r requirements.txt || true
 
@@ -171,7 +171,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest pytest-cov pytest-asyncio pytest-mock
-          python -m pip install pyyaml python-dotenv requests jieba pydantic networkx openai sentence-transformers scikit-learn faiss-cpu numpy
+          python -m pip install pyyaml python-dotenv requests jieba pydantic networkx openai sentence-transformers scikit-learn faiss-cpu numpy tenacity tomli
           python -m pip install -r requirements.txt || true
 
       - name: Run tests with coverage

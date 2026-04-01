@@ -6,17 +6,28 @@ modules/_patch_ctranslate2.py
 """
 
 import os
+from typing import Any, Callable, Optional
 
-# 立即修补 os.add_dll_directory 以处理不存在的 ROCm 路径
-_original_add_dll_directory = os.add_dll_directory
+# 仅在支持 add_dll_directory 的平台上启用补丁（通常是 Windows / Python 3.8+）
+AddDllDirectoryFn = Callable[[str], Any]
+_original_add_dll_directory: Optional[AddDllDirectoryFn] = getattr(os, "add_dll_directory", None)
+
+
+def _call_original_add_dll_directory(path: str) -> Any:
+    if _original_add_dll_directory is None:
+        return None
+    return _original_add_dll_directory(path)
 
 
 def _patched_add_dll_directory(path):
     """
     包装 os.add_dll_directory 以忽略不存在的 ROCm 路径和 CUDA 版本不匹配的路径。
     """
+    if _original_add_dll_directory is None:
+        return None
+
     if not path or not isinstance(path, str):
-        return _original_add_dll_directory(path)
+        return _call_original_add_dll_directory(path)
 
     # 过滤 ROCm 相关路径（ctranslate2 不需要 ROCm）
     if "rocm" in path.lower():
@@ -30,15 +41,18 @@ def _patched_add_dll_directory(path):
 
     # 如果路径有效，添加到 DLL 搜索路径
     try:
-        return _original_add_dll_directory(path)
+        return _call_original_add_dll_directory(path)
     except (FileNotFoundError, OSError) as e:
         print(f"[PATCH] 添加 DLL 目录失败: {path}, 错误: {e}")
         return None
 
 
 # 立即应用补丁
-os.add_dll_directory = _patched_add_dll_directory
-print("[PATCH] ctranslate2 补丁已应用：os.add_dll_directory 已被修补")
+if _original_add_dll_directory is not None:
+    os.__dict__["add_dll_directory"] = _patched_add_dll_directory
+    print("[PATCH] ctranslate2 补丁已应用：os.add_dll_directory 已被修补")
+else:
+    print("[PATCH] 当前平台无 os.add_dll_directory，跳过 ctranslate2 DLL 补丁")
 
 # 添加 PyTorch CUDA 库路径，以解决 CUDA 版本不匹配的问题
 # ctranslate2 可能在寻找 cublas64_12.dll，但 PyTorch CUDA 13 提供 cublas64_13.dll
@@ -47,9 +61,9 @@ try:
     import torch
 
     torch_lib_dir = os.path.join(os.path.dirname(torch.__file__), "lib")
-    if os.path.exists(torch_lib_dir):
+    if _original_add_dll_directory is not None and os.path.exists(torch_lib_dir):
         try:
-            _original_add_dll_directory(torch_lib_dir)
+            _call_original_add_dll_directory(torch_lib_dir)
             print(f"[PATCH] 已添加 PyTorch CUDA 库路径: {torch_lib_dir}")
         except Exception as e:
             print(f"[PATCH] 添加 PyTorch 库路径失败: {e}")
