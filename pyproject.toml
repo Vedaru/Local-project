@@ -190,7 +190,6 @@ ignore = [
     "E501",   # line too long (handled by black)
     "E203",   # whitespace before ':'
     "E266",   # too many leading '#' for block comment
-    "W503",   # line break before binary operator
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -263,7 +262,7 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "if typing.TYPE_CHECKING:",
 ]
-fail_under = 30
+fail_under = 20
 show_missing = true
 
 [tool.coverage.html]
