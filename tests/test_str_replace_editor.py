@@ -1,7 +1,7 @@
-import sys
 import asyncio
-from pathlib import Path
+import sys
 import types
+from pathlib import Path
 
 # pre-create a minimal stub for the `browser_use` package which is imported by
 # app.tool.browser_use_tool. The real package isn't installed in the test

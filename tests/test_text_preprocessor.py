@@ -1,10 +1,10 @@
-import torch
-import pytest
-
 import importlib.util
 import os
 import sys
 import types
+
+import pytest
+import torch
 
 # create minimal stubs for modules referenced by TextPreprocessor
 sys.modules.setdefault("text", types.ModuleType("text"))

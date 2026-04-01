@@ -31,6 +31,8 @@ jobs:
     name: Code Quality
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,6 +50,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install black isort ruff mypy
+
+      - name: Auto-format with isort and Black
+        run: |
+          isort modules/ tests/ main.py
+          black modules/ tests/ main.py
+
+      - name: Detect formatting changes
+        id: format_changes
+        run: |
+          if git diff --quiet -- modules/ tests/ main.py; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit formatting changes
+        if: steps.format_changes.outputs.changed == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style(ci): auto-format with isort and black"
+          file_pattern: "modules/**/*.py tests/**/*.py main.py"
+          commit_user_name: github-actions[bot]
+          commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com
+
+      - name: Warn when fork PR cannot be auto-formatted
+        if: steps.format_changes.outputs.changed == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::warning::Formatting changes detected but cannot push to fork PR branch."
+          git --no-pager diff -- modules/ tests/ main.py
 
       - name: Check code formatting with Black
         run: |
