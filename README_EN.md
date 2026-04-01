@@ -10,7 +10,7 @@
 
 # 🤖 Project Local
 
-[![Python](https://img.shields.io/badge/Python-3.9--3.11-blue?logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.10--3.11-blue?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![CI](https://img.shields.io/badge/CI-GitHub_Actions-orange?logo=github-actions&logoColor=white)](.github/workflows/ci.yml)
 [![Code Style](https://img.shields.io/badge/Code%20Style-Black-black)](https://github.com/psf/black)
@@ -67,7 +67,7 @@ Voice Interaction · Smart Memory · PC Control · 3D Avatar
 
 | Requirement | Version |
 |-------------|---------|
-| Python | 3.9 - 3.11 |
+| Python | 3.10 - 3.11 |
 | OS | Windows / Linux / macOS |
 | GPU | Recommended (for TTS acceleration) |
 Option 1: Using Embedded Runtime (Recommended for Windows)
@@ -94,7 +94,7 @@ copy .env.example .env
 
 ### Option 2: Using System Python or Virtual Environment
 
-If you already have Python 3.9-3.11:
+If you already have Python 3.10-3.11:
 
 ```bash
 # 1. Clone the project
@@ -564,6 +564,37 @@ Local-project/
 - 📝 **mypy** - Type checking
 
 See [CONTRIBUTING_EN.md](CONTRIBUTING_EN.md) for details.
+
+---
+
+## 🧪 Testing and CI
+
+### Local Tests
+
+```powershell
+# Run all tests
+python -m pytest tests/ -v
+
+# Run quick fail mode (stop on first failure)
+python -m pytest tests/ -x
+
+# Run coverage check
+python -m pytest tests/ --cov=modules --cov-report=html
+```
+
+### CI/CD Pipeline
+
+The project uses **GitHub Actions** for continuous integration:
+
+| Check | Description | Status |
+|-------|-------------|--------|
+| 🧪 **Tests** | 91 unit tests (Python 3.10, 3.11 matrix) | ✅ Strict |
+| 🎨 **Format** | Black, isort, Ruff checks | ⚠️ Optional |
+| 📝 **Types** | mypy type checking | ⚠️ Optional |
+| 📊 **Coverage** | 20% minimum coverage | ⚠️ Optional |
+| 🔒 **Security** | Bandit, pip-audit scans | ⚠️ Informational |
+
+**Note**: Code quality checks are warnings only and do not cause CI to fail. Only test failures will block merges.
 
 ---
 

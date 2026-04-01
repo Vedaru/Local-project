@@ -10,7 +10,7 @@
 
 # 🤖 Project Local
 
-[![Python](https://img.shields.io/badge/Python-3.9--3.11-blue?logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.10--3.11-blue?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![CI](https://img.shields.io/badge/CI-GitHub_Actions-orange?logo=github-actions&logoColor=white)](.github/workflows/ci.yml)
 [![Code Style](https://img.shields.io/badge/Code%20Style-Black-black)](https://github.com/psf/black)
@@ -67,7 +67,7 @@
 
 | 要求 | 版本 |
 |------|------|
-| Python | 3.9 - 3.11 |
+| Python | 3.10 - 3.11 |
 | 操作系统 | Windows / Linux / macOS |
 | GPU | 推荐（用于语音合成加速） |
 
@@ -97,7 +97,7 @@ copy .env.example .env
 
 ### 方式二：使用系统 Python 或虚拟环境
 
-如果你已有 Python 3.9-3.11 环境：
+如果你已有 Python 3.10-3.11 环境：
 
 ```bash
 # 1. 克隆项目
@@ -566,6 +566,35 @@ Local-project/
 - 📝 **mypy** - 类型检查
 
 详见 [CONTRIBUTING.md](CONTRIBUTING.md)
+
+### 测试与 CI
+
+#### 本地测试
+
+```powershell
+# 运行所有测试
+python -m pytest tests/ -v
+
+# 运行快速失败模式（首个失败即停止）
+python -m pytest tests/ -x
+
+# 运行覆盖率检查
+python -m pytest tests/ --cov=modules --cov-report=html
+```
+
+#### CI/CD 管道
+
+项目使用 **GitHub Actions** 进行持续集成：
+
+| 检查 | 说明 | 状态 |
+|------|------|------|
+| 🧪 **测试** | 91 项单元测试（Python 3.10, 3.11 矩阵） | ✅ 严格 |
+| 🎨 **格式** | Black, isort, Ruff 检查 | ⚠️ 可选 |
+| 📝 **类型** | mypy 类型检查 | ⚠️ 可选 |
+| 📊 **覆盖率** | 20% 最低覆盖率 | ⚠️ 可选 |
+| 🔒 **安全** | Bandit, pip-audit 扫描 | ⚠️ 信息性 |
+
+**注意**：代码质量检查仅为警告，不会导致 CI 失败。测试失败才会阻断合并。
 
 ---
 

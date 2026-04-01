@@ -10,7 +10,7 @@
 
 # 🤖 Project Local
 
-[![Python](https://img.shields.io/badge/Python-3.9--3.11-blue?logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.10--3.11-blue?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![CI](https://img.shields.io/badge/CI-GitHub_Actions-orange?logo=github-actions&logoColor=white)](.github/workflows/ci.yml)
 [![Code Style](https://img.shields.io/badge/Code%20Style-Black-black)](https://github.com/psf/black)
@@ -67,7 +67,7 @@
 
 | 要件 | バージョン |
 |------|----------|
-| Python | 3.9 - 3.11 |
+| Python | 3.10 - 3.11 |
 | OS | Windows / Linux / macOS |
 | GPU | 推奨（音声合成の高速化用） |
 オプション 1: 組み込みランタイムを使用（Windows推奨）
@@ -94,7 +94,7 @@ copy .env.example .env
 
 ### オプション 2: システム Python または仮想環境を使用
 
-既に Python 3.9-3.11 がある場合：
+既に Python 3.10-3.11 がある場合：
 
 ```bash
 # 1. プロジェクトをクローン
@@ -564,6 +564,37 @@ Local-project/
 - 📝 **mypy** - 型チェック
 
 詳しくは[CONTRIBUTING_JA.md](CONTRIBUTING_JA.md)を参照してください。
+
+---
+
+## 🧪 テストと CI
+
+### ローカルテスト
+
+```powershell
+# すべてのテストを実行
+python -m pytest tests/ -v
+
+# 高速フェイルモードを実行（最初の失敗で停止）
+python -m pytest tests/ -x
+
+# カバレッジチェックを実行
+python -m pytest tests/ --cov=modules --cov-report=html
+```
+
+### CI/CDパイプライン
+
+プロジェクトは継続的統合に **GitHub Actions** を使用：
+
+| チェック | 説明 | ステータス |
+|----------|------|----------|
+| 🧪 **テスト** | 91個のユニットテスト（Python 3.10、3.11 マトリックス） | ✅ 厳密 |
+| 🎨 **フォーマット** | Black、isort、Ruff チェック | ⚠️ オプション |
+| 📝 **型** | mypy 型チェック | ⚠️ オプション |
+| 📊 **カバレッジ** | 最小カバレッジ 20% | ⚠️ オプション |
+| 🔒 **セキュリティ** | Bandit、pip-audit スキャン | ⚠️ 情報提供 |
+
+**注意**：コード品質チェックは警告のみで、CIは失敗しません。テスト失敗のみがマージをブロックします。
 
 ---
 
