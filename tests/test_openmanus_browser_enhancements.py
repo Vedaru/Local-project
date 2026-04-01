@@ -15,6 +15,43 @@ class _DummyLogger:
 
 
 # Keep tests independent from optional runtime dependencies.
+if "mcp" not in sys.modules:
+    mcp_stub = types.ModuleType("mcp")
+
+    class _DummyClientSession:
+        pass
+
+    class _DummyStdioServerParameters:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    mcp_stub.ClientSession = _DummyClientSession
+    mcp_stub.StdioServerParameters = _DummyStdioServerParameters
+
+    mcp_client = types.ModuleType("mcp.client")
+    mcp_sse = types.ModuleType("mcp.client.sse")
+    mcp_stdio = types.ModuleType("mcp.client.stdio")
+
+    mcp_sse.sse_client = lambda *args, **kwargs: None
+    mcp_stdio.stdio_client = lambda *args, **kwargs: None
+
+    mcp_types = types.ModuleType("mcp.types")
+
+    class _DummyListToolsResult:
+        pass
+
+    class _DummyTextContent:
+        pass
+
+    mcp_types.ListToolsResult = _DummyListToolsResult
+    mcp_types.TextContent = _DummyTextContent
+
+    sys.modules["mcp"] = mcp_stub
+    sys.modules["mcp.client"] = mcp_client
+    sys.modules["mcp.client.sse"] = mcp_sse
+    sys.modules["mcp.client.stdio"] = mcp_stdio
+    sys.modules["mcp.types"] = mcp_types
+
 if "loguru" not in sys.modules:
     loguru_stub = types.ModuleType("loguru")
     loguru_stub.logger = _DummyLogger()

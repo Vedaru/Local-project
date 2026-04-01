@@ -48,9 +48,6 @@ httpx>=0.27.0
 beautifulsoup4>=4.12.0
 requests>=2.31.0
 
-# MCP (Model Context Protocol)
-mcp>=0.1.0
-
 # OCR（Tesseract 后端）
 # - Python 端库：pytesseract
 # - 还需在系统上安装 Tesseract 可执行文件（Windows 可通过 winget/choco 或官网安装），
