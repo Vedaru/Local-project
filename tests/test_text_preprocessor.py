@@ -7,53 +7,69 @@ import sys
 import types
 
 # create minimal stubs for modules referenced by TextPreprocessor
-sys.modules.setdefault('text', types.ModuleType('text'))
+sys.modules.setdefault("text", types.ModuleType("text"))
 # stub cleaner submodule
-cleaner = types.ModuleType('text.cleaner')
+cleaner = types.ModuleType("text.cleaner")
+
+
 def clean_text(t, language, version):
     # return text, empty word2ph, normalized text equal input
     return t, [], t
 
+
 def cleaned_text_to_sequence(phones, version):
     return []
+
+
 cleaner.clean_text = clean_text
-sys.modules['text.cleaner'] = cleaner
-sys.modules['text'].cleaner = cleaner
-sys.modules['text'].cleaned_text_to_sequence = cleaned_text_to_sequence
+sys.modules["text.cleaner"] = cleaner
+sys.modules["text"].cleaner = cleaner
+sys.modules["text"].cleaned_text_to_sequence = cleaned_text_to_sequence
 # stub chinese module
-sys.modules['text.chinese'] = types.ModuleType('text.chinese')
+sys.modules["text.chinese"] = types.ModuleType("text.chinese")
 # stub LangSegmenter
-langseg = types.ModuleType('text.LangSegmenter')
+langseg = types.ModuleType("text.LangSegmenter")
+
+
 class LangSegmenter:
     @staticmethod
     def getTexts(text, lang=None):
         return []
+
+
 langseg.LangSegmenter = LangSegmenter
-sys.modules['text.LangSegmenter'] = langseg
-sys.modules['text'].LangSegmenter = LangSegmenter
+sys.modules["text.LangSegmenter"] = langseg
+sys.modules["text"].LangSegmenter = LangSegmenter
 
 # stub segmentation package
-segmod = types.ModuleType('TTS_infer_pack.text_segmentation_method')
+segmod = types.ModuleType("TTS_infer_pack.text_segmentation_method")
 segmod.split_big_text = lambda x: [x]
 segmod.splits = ""
 segmod.get_method = lambda m: (lambda t: t)
-sys.modules['TTS_infer_pack.text_segmentation_method'] = segmod
+sys.modules["TTS_infer_pack.text_segmentation_method"] = segmod
 
 # stub tools.i18n.i18n module
-sys.modules.setdefault('tools', types.ModuleType('tools'))
-sys.modules.setdefault('tools.i18n', types.ModuleType('tools.i18n'))
-i18nmod = types.ModuleType('tools.i18n.i18n')
+sys.modules.setdefault("tools", types.ModuleType("tools"))
+sys.modules.setdefault("tools.i18n", types.ModuleType("tools.i18n"))
+i18nmod = types.ModuleType("tools.i18n.i18n")
+
+
 def I18nAuto(language=None):
     class C:
         def __call__(self, s):
             return s
+
     return C()
+
+
 def scan_language_list():
     return []
+
+
 i18nmod.I18nAuto = I18nAuto
 i18nmod.scan_language_list = scan_language_list
-sys.modules['tools.i18n.i18n'] = i18nmod
-sys.modules['tools.i18n'].__dict__['i18n'] = i18nmod
+sys.modules["tools.i18n.i18n"] = i18nmod
+sys.modules["tools.i18n"].__dict__["i18n"] = i18nmod
 
 # load TextPreprocessor as a standalone module to avoid importing TTS (which requires torchaudio)
 _text_preprocessor_path = os.path.join(

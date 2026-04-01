@@ -19,6 +19,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.10"
+  LINT_PYTHON_VERSION: "3.11"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PYTHONUNBUFFERED: "1"
 
@@ -37,7 +38,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ env.LINT_PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: |
             requirements.txt

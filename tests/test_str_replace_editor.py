@@ -42,12 +42,17 @@ import types
 sys.modules["tiktoken"] = types.ModuleType("tiktoken")
 # loguru is imported by app.logger
 loguru_stub = types.ModuleType("loguru")
+
+
 # provide a dummy logger object with basic interface
 class DummyLogger:
     def __getattr__(self, name):
         def _(*args, **kwargs):
             pass
+
         return _
+
+
 loguru_stub.logger = DummyLogger()
 sys.modules["loguru"] = loguru_stub
 

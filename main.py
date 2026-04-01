@@ -30,6 +30,7 @@ import modules._patch_ctranslate2  # noqa: F401, E402
 from modules.config import load_config
 from modules.logging_config import get_logger
 
+
 def main():
     """Main entry -- integrate asyncio with PyQt6 via qasync."""
     logger = get_logger("ProjectLocal")

@@ -144,8 +144,7 @@ class ManusAgent:
         _sync_openmanus_config()
 
         logger.info(
-            "ManusAgent 初始化 (OpenManus 后端, "
-            f"max_steps={self.max_steps}, timeout={self.task_timeout_seconds}s)"
+            "ManusAgent 初始化 (OpenManus 后端, " f"max_steps={self.max_steps}, timeout={self.task_timeout_seconds}s)"
         )
 
         # 启动后台事件循环线程
@@ -232,10 +231,7 @@ class ManusAgent:
             with self._run_lock:
                 result = self._run_coro(self._async_run_task(task_description), timeout=self.task_timeout_seconds)
             normalized = self._normalize_result(result)
-            logger.info(
-                "ManusAgent.run_task 完成 — result(len)="
-                f"{len(normalized)}"
-            )
+            logger.info("ManusAgent.run_task 完成 — result(len)=" f"{len(normalized)}")
             return normalized
         except TimeoutError as e:
             logger.error(f"ManusAgent.run_task 超时: {e}")
