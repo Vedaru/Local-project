@@ -10,7 +10,7 @@ there are no dynamic callers.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional, cast
+from typing import TYPE_CHECKING, Callable, Optional, Union, cast
 
 from PyQt6.QtCore import QTimer, QUrl
 
@@ -98,7 +98,7 @@ class JSCommunicationMixin:
 
         QTimer.singleShot(10000, on_timeout)
 
-    def change_expression(self, expression: int | str):
+    def change_expression(self, expression: Union[int, str]):
         """切换表情"""
         self = cast("AvatarWidget", self)
         script = f"setExpression('{expression}')" if isinstance(expression, str) else f"setExpression({expression})"

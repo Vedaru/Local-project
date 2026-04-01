@@ -4,7 +4,7 @@ Avatar 管理器 - 用于在子线程中安全地控制 Avatar
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 from PyQt6.QtWidgets import QApplication
 
@@ -51,7 +51,7 @@ class AvatarManager:
         if self.widget:
             self.widget.update_lip_sync(value)
 
-    def change_expression(self, expression: int | str):
+    def change_expression(self, expression: Union[int, str]):
         """切换表情"""
         if self.widget:
             self.widget.change_expression(expression)

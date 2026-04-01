@@ -650,7 +650,7 @@ class LLM:
         tool_choice: TOOL_CHOICE_TYPE = ToolChoice.AUTO,  # type: ignore
         temperature: Optional[float] = None,
         **kwargs,
-    ) -> ChatCompletionMessage | None:
+    ) -> Optional[ChatCompletionMessage]:
         """
         Ask LLM using functions/tools and return the response.
 

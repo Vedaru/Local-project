@@ -117,11 +117,11 @@ class StrReplaceEditor(BaseTool):
         *,
         command: Command,
         path: str,
-        file_text: str | None = None,
-        view_range: list[int] | None = None,
-        old_str: str | None = None,
-        new_str: str | None = None,
-        insert_line: int | None = None,
+        file_text: Optional[str] = None,
+        view_range: Optional[List[int]] = None,
+        old_str: Optional[str] = None,
+        new_str: Optional[str] = None,
+        insert_line: Optional[int] = None,
         **kwargs: Any,
     ) -> str:
         """Execute a file operation command."""
