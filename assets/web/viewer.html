@@ -232,8 +232,12 @@
                     currentModel = null;
                 }
                 
-                // 加载新模型
-                const model = await PIXI.live2d.Live2DModel.from(url);
+                // 加载新模型（禁用库内置的 idle/auto 交互，改为由本地逻辑控制）
+                const model = await PIXI.live2d.Live2DModel.from(url, {
+                    autoInteract: false,
+                    motionPreload: "NONE",
+                    idleMotionGroup: "__NO_IDLE__"
+                });
                 
                 currentModel = model;
                 app.stage.addChild(model);
@@ -241,7 +245,7 @@
                 // 适应屏幕
                 fitModelToScreen(model);
                 
-                // 启用模型交互（点击触发动作）
+                // 启用模型交互（仅用于阻止事件冒泡，不触发随机动作）
                 model.interactive = true;
                 model.buttonMode = true;
                 
@@ -251,14 +255,16 @@
                     event.stopPropagation();
                 });
                 
-                model.on('pointertap', () => {
-                    // 点击时播放随机动作
-                    const motionGroups = Object.keys(model.internalModel.motionManager.definitions || {});
-                    if (motionGroups.length > 0) {
-                        const randomGroup = motionGroups[Math.floor(Math.random() * motionGroups.length)];
-                        model.motion(randomGroup);
+                // 明确清空 idle 动作触发条件，防止模型自循环
+                const motionManager = model?.internalModel?.motionManager;
+                if (motionManager) {
+                    if (motionManager.groups) {
+                        motionManager.groups.idle = "__NO_IDLE__";
                     }
-                });
+                    if (typeof motionManager.stopAllMotions === 'function') {
+                        motionManager.stopAllMotions();
+                    }
+                }
                 
                 // 启用眼睛跟随鼠标
                 app.ticker.add(() => {
@@ -339,6 +345,110 @@
             return "loading";  // 立即返回，表示正在加载
         }
 
+        function getMotionGroups() {
+            if (!currentModel || !currentModel.internalModel || !currentModel.internalModel.motionManager) {
+                return [];
+            }
+            return Object.keys(currentModel.internalModel.motionManager.definitions || {});
+        }
+
+        function normalizeMotionGroupName(name) {
+            return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        }
+
+        function resolveMotionGroup(group) {
+            const groups = getMotionGroups();
+            if (!groups.length) {
+                return null;
+            }
+
+            if (!group) {
+                return groups[0];
+            }
+
+            if (groups.includes(group)) {
+                return group;
+            }
+
+            const lower = String(group).toLowerCase();
+            const caseInsensitive = groups.find(g => g.toLowerCase() === lower);
+            if (caseInsensitive) {
+                return caseInsensitive;
+            }
+
+            const normalized = normalizeMotionGroupName(group);
+            const aliasMap = {
+                tapbody: 'Tap@Body',
+                flickbody: 'Flick@Body',
+                happy: 'Tap@Body',
+                sad: 'FlickDown',
+                angry: 'Flick@Body',
+                surprised: 'Flick',
+                confused: 'Flick',
+                thinking: 'Tap',
+                neutral: 'Idle'
+            };
+
+            const alias = aliasMap[normalized];
+            if (alias) {
+                const aliasExact = groups.find(g => g === alias);
+                if (aliasExact) {
+                    return aliasExact;
+                }
+                const aliasCaseInsensitive = groups.find(g => g.toLowerCase() === alias.toLowerCase());
+                if (aliasCaseInsensitive) {
+                    return aliasCaseInsensitive;
+                }
+                const aliasNormalized = normalizeMotionGroupName(alias);
+                const aliasNormalizedMatch = groups.find(g => normalizeMotionGroupName(g) === aliasNormalized);
+                if (aliasNormalizedMatch) {
+                    return aliasNormalizedMatch;
+                }
+            }
+
+            const normalizedMatch = groups.find(g => normalizeMotionGroupName(g) === normalized);
+            if (normalizedMatch) {
+                return normalizedMatch;
+            }
+
+            return null;
+        }
+
+        function resolveExpressionFallbackMotion(expressionKey) {
+            const mapByIndex = {
+                0: 'Idle',
+                1: 'Tap',
+                2: 'Tap@Body',
+                3: 'FlickDown',
+                4: 'Flick@Body',
+                5: 'Flick',
+                6: 'Tap',
+                7: 'Flick'
+            };
+
+            const mapByName = {
+                neutral: 'Idle',
+                thinking: 'Tap',
+                happy: 'Tap@Body',
+                sad: 'FlickDown',
+                angry: 'Flick@Body',
+                surprised: 'Flick',
+                shy: 'Tap',
+                confused: 'Flick'
+            };
+
+            if (typeof expressionKey === 'number' && mapByIndex.hasOwnProperty(expressionKey)) {
+                return resolveMotionGroup(mapByIndex[expressionKey]);
+            }
+
+            const normalized = normalizeMotionGroupName(expressionKey);
+            if (normalized && mapByName.hasOwnProperty(normalized)) {
+                return resolveMotionGroup(mapByName[normalized]);
+            }
+
+            return resolveMotionGroup('Tap') || resolveMotionGroup('Idle');
+        }
+
         /**
          * 设置表情
          * @param {number|string} index - 表情索引或名称
@@ -350,13 +460,28 @@
             }
             
             try {
-                if (typeof index === 'number') {
+                const expressionManager = currentModel.internalModel && currentModel.internalModel.motionManager
+                    ? currentModel.internalModel.motionManager.expressionManager
+                    : null;
+                const hasExpressions = expressionManager
+                    && Array.isArray(expressionManager.definitions)
+                    && expressionManager.definitions.length > 0;
+
+                if (hasExpressions) {
                     currentModel.expression(index);
-                } else {
-                    currentModel.expression(index);
+                    console.log('[Live2D Viewer] Expression set:', index);
+                    return true;
                 }
-                console.log('[Live2D Viewer] Expression set:', index);
-                return true;
+
+                // 当前模型没有 expression 定义时，回退为可见动作控制
+                const fallbackMotion = resolveExpressionFallbackMotion(index);
+                if (!fallbackMotion) {
+                    console.warn('[Live2D Viewer] No expression definitions and no fallback motion available');
+                    return false;
+                }
+
+                console.log('[Live2D Viewer] Expression fallback to motion:', index, '->', fallbackMotion);
+                return setMotion(fallbackMotion, 0);
             } catch (error) {
                 console.error('[Live2D Viewer] Failed to set expression:', error);
                 return false;
@@ -366,7 +491,7 @@
         /**
          * 播放动作
          * @param {string} group - 动作组名称
-         * @param {number} index - 动作索引（可选，默认随机）
+         * @param {number} index - 动作索引（可选，默认 0）
          */
         function setMotion(group, index = undefined) {
             if (!currentModel) {
@@ -375,12 +500,26 @@
             }
             
             try {
-                if (index !== undefined) {
-                    currentModel.motion(group, index);
-                } else {
-                    currentModel.motion(group);
+                const resolvedGroup = resolveMotionGroup(group);
+                if (!resolvedGroup) {
+                    console.warn('[Live2D Viewer] Motion group not found:', group);
+                    return false;
                 }
-                console.log('[Live2D Viewer] Motion set:', group, index);
+
+                const defs = currentModel.internalModel.motionManager.definitions || {};
+                const motions = defs[resolvedGroup] || [];
+                if (!motions.length) {
+                    console.warn('[Live2D Viewer] Motion group has no entries:', resolvedGroup);
+                    return false;
+                }
+
+                let motionIndex = (index !== undefined && index !== null) ? index : 0;
+                if (motionIndex < 0 || motionIndex >= motions.length) {
+                    motionIndex = 0;
+                }
+
+                currentModel.motion(resolvedGroup, motionIndex);
+                console.log('[Live2D Viewer] Motion set:', group, '->', resolvedGroup, motionIndex);
                 return true;
             } catch (error) {
                 console.error('[Live2D Viewer] Failed to set motion:', error);

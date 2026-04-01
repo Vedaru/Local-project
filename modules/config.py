@@ -49,6 +49,22 @@ def _clean_env_value(value):
     return value
 
 
+def _to_int(value, default: int) -> int:
+    """安全转换为 int，失败时回退默认值。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_float(value, default: float) -> float:
+    """安全转换为 float，失败时回退默认值。"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ===================== AppConfig 数据类 =====================
 
 
@@ -95,6 +111,7 @@ class AppConfig:
 
     # ---- Agent ----
     agent_max_steps: int = 100
+    agent_task_timeout_seconds: float = 300.0
 
     # ---- 听觉模块 ----
     ear_enabled: bool = True
@@ -142,6 +159,7 @@ def load_config(config_path: Optional[str] = None, env_path: Optional[str] = Non
     logging_cfg = yaml_cfg.get("logging", {})
     controller_cfg = yaml_cfg.get("controller", {})
     ear_cfg = yaml_cfg.get("ear", {})
+    agent_cfg = yaml_cfg.get("agent", {})
 
     return AppConfig(
         project_root=PROJECT_ROOT,
@@ -171,7 +189,8 @@ def load_config(config_path: Optional[str] = None, env_path: Optional[str] = Non
         controller_failsafe=controller_cfg.get("failsafe", True),
         controller_app_whitelist=controller_cfg.get("app_whitelist", {}),
         # Agent
-        agent_max_steps=100,
+        agent_max_steps=_to_int(agent_cfg.get("max_steps", 100), 100),
+        agent_task_timeout_seconds=_to_float(agent_cfg.get("task_timeout_seconds", 300), 300.0),
         # 听觉
         ear_enabled=ear_cfg.get("enabled", True),
         ear_model_size=ear_cfg.get("model_size", "base"),

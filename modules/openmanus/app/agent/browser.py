@@ -57,20 +57,43 @@ class BrowserContextHelper:
             url_info = f"\n   URL: {browser_state.get('url', 'N/A')}\n   Title: {browser_state.get('title', 'N/A')}"
             tabs = browser_state.get("tabs", [])
             if tabs:
-                tabs_info = f"\n   {len(tabs)} tab(s) available"
-            pixels_above = browser_state.get("pixels_above", 0)
-            pixels_below = browser_state.get("pixels_below", 0)
+                tab_lines = [f"\n   {len(tabs)} tab(s) available"]
+                for tab in tabs[:8]:
+                    if not isinstance(tab, dict):
+                        continue
+                    tab_lines.append(
+                        "\n   - "
+                        f"index={tab.get('index', '?')}, "
+                        f"id={tab.get('id', 'N/A')}, "
+                        f"title={str(tab.get('title') or '(untitled)')[:80]}, "
+                        f"url={str(tab.get('url') or '(no-url)')[:120]}"
+                    )
+                if len(tabs) > 8:
+                    tab_lines.append(f"\n   - ... and {len(tabs) - 8} more tabs")
+                tabs_info = "".join(tab_lines)
+            scroll_info = browser_state.get("scroll_info", {})
+            if not isinstance(scroll_info, dict):
+                scroll_info = {}
+            pixels_above = scroll_info.get("pixels_above", 0)
+            pixels_below = scroll_info.get("pixels_below", 0)
             if pixels_above > 0:
                 content_above_info = f" ({pixels_above} pixels)"
             if pixels_below > 0:
                 content_below_info = f" ({pixels_below} pixels)"
             # also include a small snippet of page_text in the prompt if available
             page_text = browser_state.get("page_text")
+            page_text_length = browser_state.get("page_text_length", 0)
             if page_text:
                 snippet = page_text.replace("\n", " ")
-                if len(snippet) > 300:
-                    snippet = snippet[:300] + "..."
-                results_info += f"\n   Page text snippet: {snippet}"
+                if len(snippet) > 1200:
+                    snippet = snippet[:1200] + "..."
+                if page_text_length:
+                    results_info += (
+                        f"\n   Page text preview ({page_text_length} chars total): "
+                        f"{snippet}"
+                    )
+                else:
+                    results_info += f"\n   Page text preview: {snippet}"
 
             if self._current_base64_image:
                 image_message = Message.user_message(

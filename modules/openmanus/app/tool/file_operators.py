@@ -1,6 +1,7 @@
 """File operation interfaces and implementations for local and sandbox environments."""
 
 import asyncio
+import locale
 from pathlib import Path
 from typing import Optional, Protocol, Tuple, Union, runtime_checkable
 
@@ -42,7 +43,10 @@ class FileOperator(Protocol):
 class LocalFileOperator(FileOperator):
     """File operations implementation for local filesystem."""
 
-    encoding: str = "utf-8"
+    # Default to the system preferred encoding (e.g. CP936/GBK on Chinese
+    # Windows) so that subprocess output is decoded correctly. The encoding can
+    # still be overridden on the instance if needed.
+    encoding: str = locale.getpreferredencoding(False) or "utf-8"
 
     async def read_file(self, path: PathLike) -> str:
         """Read content from a local file."""
@@ -78,10 +82,14 @@ class LocalFileOperator(FileOperator):
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=timeout
             )
+            # decode using configured encoding but fall back gracefully if
+            # bytes can't be decoded (e.g. Windows OEM output like GBK). We
+            # also allow the caller to change `.encoding` if needed.
+            encoding = getattr(self, "encoding", "utf-8")
             return (
                 process.returncode or 0,
-                stdout.decode(),
-                stderr.decode(),
+                stdout.decode(encoding, errors="replace"),
+                stderr.decode(encoding, errors="replace"),
             )
         except asyncio.TimeoutError as exc:
             try:

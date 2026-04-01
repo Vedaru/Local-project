@@ -39,6 +39,11 @@ Common action sequences:
 3. ELEMENT INTERACTION:
 - Only use indexes of the interactive elements
 - Elements marked with "[]Non-interactive text" are non-interactive
+- Do NOT blindly click index 0 or any index with unclear intent. Prefer text-based clicks first.
+- Before uncertain clicks, call `inspect_element` to check element appearance/attributes and predicted click effect.
+- After each click, inspect the returned page transition (before_url/after_url and changed flag) before deciding the next action.
+- If click feedback shows `outcome=likely_misclick` or tool returns "Low-confidence click detected", do NOT call `click_element` again immediately.
+- After a misclick signal, you must first recover state (go_back/switch_tab/go_to_url) and then switch strategy (click_text, scroll, or extract_content).
 
 4. NAVIGATION & ERROR HANDLING:
 - If no suitable elements exist, use other functions to complete the task
@@ -69,6 +74,8 @@ Common action sequences:
 
 9. Extraction:
 - If your task is to find information - call extract_content on the specific pages to get and store the information.
+- For long pages, do iterative extraction: extract -> scroll -> extract until the needed information is complete.
+- If extracted results are too generic, refine the goal and extract again with a narrower instruction.
 Your responses must be always JSON with the specified format.
 """
 
@@ -85,10 +92,24 @@ When you see [Current state starts here], focus on the following:
 
 For browser interactions:
 - To navigate: browser_use with action="go_to_url", url="..."
+- To inspect a candidate element first: browser_use with action="inspect_element", index=N
 - To click: browser_use with action="click_element", index=N
+- To click by visible label/text: browser_use with action="click_text", text="..."
 - To type: browser_use with action="input_text", index=N, text="..."
 - To extract: browser_use with action="extract_content", goal="..."
 - To scroll: browser_use with action="scroll_down" or "scroll_up"
+- To inspect tabs: browser_use with action="list_tabs"
+- To switch tabs: browser_use with action="switch_tab", tab_id=N
+- To verify playback: browser_use with action="get_media_status"
+
+For information retrieval on long pages, do not rely on a single extraction pass.
+Use extraction with a clear goal, then scroll and extract again when there is content below.
+
+When a click opens a new tab, continue from that new tab instead of staying on the old one.
+For tasks like "进入某分区并播放任意视频", decompose the goal: enter section -> identify candidate card by text/index -> click -> verify playback.
+Choose elements whose predicted effect aligns with the goal (e.g., avoid global nav links when searching for content cards).
+
+Never repeat the same failed click pattern more than once (e.g., random index clicks with unrelated href/text).
 
 Consider both what's visible and what might be beyond the current viewport.
 Be methodical - remember your progress and what you've learned so far.

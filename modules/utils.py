@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import time
+from typing import Optional
 
 import jieba.posseg as pseg
 import requests
@@ -14,8 +15,12 @@ logger = get_logger("utils")
 
 PUNCTUATION = ["。", "！", "？", "!", "?", "\n", "；", ";", "：", ":", "，", ","]
 
-# 预编译情绪标签正则，避免每次调用都重新编译
-_EMOTION_TAG_RE = re.compile(r"\[开心\]|\[生气\]|\[委屈\]|\[疑惑\]|\[嘲笑\]|\[宕机\]")
+# 预编译 Avatar 控制标签正则，避免每次调用都重新编译
+_EMOTION_TAG_RE = re.compile(r"\[(开心|生气|委屈|疑惑|嘲笑|宕机)\]")
+_MOTION_TAG_RE = re.compile(
+    r"\[(?:动作|motion)\s*[:：]\s*([^\]:：\s]+)(?:\s*[:：]\s*(-?\d+))?\s*\]",
+    re.IGNORECASE,
+)
 
 
 def clean_text(text):
@@ -93,9 +98,41 @@ def start_gpt_sovits_api(gpt_sovits_path):
 
 
 def filter_emotion_tags(text):
-    """过滤掉表情标签，避免在语音中读出"""
-    text = _EMOTION_TAG_RE.sub("", text)
-    return text.strip()
+    """过滤掉 Avatar 控制标签，避免在语音中读出。"""
+    return strip_avatar_control_tags(text)
+
+
+def extract_emotion_tags(text: str) -> list[str]:
+    """提取文本中的情绪标签（按出现顺序）。"""
+    if not text:
+        return []
+    return _EMOTION_TAG_RE.findall(text)
+
+
+def extract_motion_commands(text: str) -> list[tuple[str, Optional[int]]]:
+    """提取文本中的动作标签，格式支持 [动作:Group] 或 [动作:Group:Index]。"""
+    if not text:
+        return []
+
+    commands: list[tuple[str, Optional[int]]] = []
+    for m in _MOTION_TAG_RE.finditer(text):
+        group = m.group(1).strip()
+        index_raw = m.group(2)
+        index = int(index_raw) if index_raw is not None else None
+        if group:
+            commands.append((group, index))
+
+    return commands
+
+
+def strip_avatar_control_tags(text: str) -> str:
+    """移除情绪/动作控制标签，保留其余文本。"""
+    if not text:
+        return ""
+
+    cleaned = _EMOTION_TAG_RE.sub("", text)
+    cleaned = _MOTION_TAG_RE.sub("", cleaned)
+    return cleaned.strip()
 
 
 def check_sovits_service(url="http://127.0.0.1:9880/docs"):

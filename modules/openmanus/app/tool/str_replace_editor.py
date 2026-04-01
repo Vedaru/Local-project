@@ -229,19 +229,42 @@ class StrReplaceEditor(BaseTool):
 
     @staticmethod
     async def _view_directory(path: PathLike, operator: FileOperator) -> CLIResult:
-        """Display directory contents."""
-        find_cmd = f"find {path} -maxdepth 2 -not -path '*/\\.*'"
+        """Display directory contents up to two levels deep, excluding hidden items.
 
-        # Execute command using the operator
-        returncode, stdout, stderr = await operator.run_command(find_cmd)
+        We avoid shelling out to `find` because the Windows `find` utility has
+        different semantics (and localized error messages) which caused decoding
+        issues. Instead, perform the traversal using Python so the tool behaves
+        consistently across platforms.
+        """
+        from pathlib import Path
+        base = Path(path)
+        if not base.exists():
+            return CLIResult(output="", error=f"Path does not exist: {path}")
 
-        if not stderr:
-            stdout = (
-                f"Here's the files and directories up to 2 levels deep in {path}, "
-                f"excluding hidden items:\n{stdout}\n"
-            )
+        lines: list[str] = []
+        # top level
+        lines.append(str(base))
 
-        return CLIResult(output=stdout, error=stderr)
+        for child in base.iterdir():
+            if child.name.startswith("."):
+                continue
+            lines.append(str(child))
+            # second level
+            if child.is_dir():
+                try:
+                    for sub in child.iterdir():
+                        if sub.name.startswith("."):
+                            continue
+                        lines.append(str(sub))
+                except PermissionError:
+                    # ignore directories we can't read
+                    continue
+
+        output = (
+            f"Here are the files and directories up to 2 levels deep in {path}, "
+            "excluding hidden items:\n" + "\n".join(lines) + "\n"
+        )
+        return CLIResult(output=output, error="")
 
     async def _view_file(
         self,

@@ -285,14 +285,14 @@ class ExpressionManager:
 
     # 默认表情配置
     DEFAULT_EXPRESSIONS: dict[Emotion, ExpressionConfig] = {
-        Emotion.NEUTRAL: ExpressionConfig(Emotion.NEUTRAL, 0, None, None, 1),
-        Emotion.HAPPY: ExpressionConfig(Emotion.HAPPY, 2, "TapBody", None, 2),
-        Emotion.SAD: ExpressionConfig(Emotion.SAD, 3, None, None, 2),
-        Emotion.ANGRY: ExpressionConfig(Emotion.ANGRY, 4, None, None, 3),
-        Emotion.SURPRISED: ExpressionConfig(Emotion.SURPRISED, 5, None, None, 3),
-        Emotion.THINKING: ExpressionConfig(Emotion.THINKING, 1, None, None, 1),
-        Emotion.SHY: ExpressionConfig(Emotion.SHY, 6, None, None, 2),
-        Emotion.CONFUSED: ExpressionConfig(Emotion.CONFUSED, 7, None, None, 1),
+        Emotion.NEUTRAL: ExpressionConfig(Emotion.NEUTRAL, 0, "Idle", 0, 1),
+        Emotion.HAPPY: ExpressionConfig(Emotion.HAPPY, 2, "Tap@Body", 0, 2),
+        Emotion.SAD: ExpressionConfig(Emotion.SAD, 3, "FlickDown", 0, 2),
+        Emotion.ANGRY: ExpressionConfig(Emotion.ANGRY, 4, "Flick@Body", 0, 3),
+        Emotion.SURPRISED: ExpressionConfig(Emotion.SURPRISED, 5, "Flick", 0, 3),
+        Emotion.THINKING: ExpressionConfig(Emotion.THINKING, 1, "Tap", 0, 1),
+        Emotion.SHY: ExpressionConfig(Emotion.SHY, 6, "Tap", 0, 2),
+        Emotion.CONFUSED: ExpressionConfig(Emotion.CONFUSED, 7, "Flick", 0, 1),
     }
 
     def __init__(

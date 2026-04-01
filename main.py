@@ -30,24 +30,22 @@ import modules._patch_ctranslate2  # noqa: F401, E402
 from modules.config import load_config
 from modules.logging_config import get_logger
 
-
-def signal_handler(sig, frame):
-    print("\n正在退出...")
-    sys.exit(0)
-
-
 def main():
     """Main entry -- integrate asyncio with PyQt6 via qasync."""
     logger = get_logger("ProjectLocal")
     logger.info("启动 Project Local...")
-
-    signal.signal(signal.SIGINT, signal_handler)
 
     # Load centralized config
     app_config = load_config()
 
     # Create Qt application (must precede any Widget)
     qt_app = QApplication(sys.argv)
+
+    def _signal_handler(sig, frame):
+        logger.info("收到中断信号，正在请求 Qt 主循环退出...")
+        qt_app.quit()
+
+    signal.signal(signal.SIGINT, _signal_handler)
 
     # qasync bridges asyncio <-> Qt event loops
     try:
@@ -68,11 +66,18 @@ def main():
     gui_app = LocalProjectApplication(app_config, qt_app)
     gui_app.setup()
 
+    quit_event = asyncio.Event()
+
+    def _on_about_to_quit():
+        if not quit_event.is_set():
+            quit_event.set()
+
+    qt_app.aboutToQuit.connect(_on_about_to_quit)
+
     async def _run():
         gui_app.show_and_start()
-        # qasync shares the event loop between asyncio and Qt;
-        # we wait until Qt quits (which stops the loop).
-        await asyncio.Event().wait()
+        # Wait until Qt emits aboutToQuit to end coroutine gracefully.
+        await quit_event.wait()
 
     try:
         with loop:

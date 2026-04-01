@@ -225,7 +225,7 @@ class AICoreService:
 
         # ---- 自动检测 LLM 直接输出工具调用 JSON ----
         handled = await self._try_handle_tool_json(ai_response, cleaned_input, system_prompt, model_name)
-        if handled:
+        if handled is not None:
             skip_tts = True
             ai_response = handled  # agent 结果替换原响应
 

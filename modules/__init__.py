@@ -51,9 +51,12 @@ from .resilience import (  # noqa: F401
 from .utils import (  # noqa: F401
     check_sovits_service,
     clean_text,
+    extract_emotion_tags,
     extract_entities,
+    extract_motion_commands,
     filter_emotion_tags,
     start_gpt_sovits_api,
+    strip_avatar_control_tags,
 )
 from .voice import VoiceManager  # noqa: F401
 

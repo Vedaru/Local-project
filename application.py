@@ -33,10 +33,19 @@ from modules.avatar.logger import log_info as avatar_log_info
 from modules.config import AppConfig
 from modules.logging_config import get_logger
 from modules.memory import MemoryManager
-from modules.utils import filter_emotion_tags, start_gpt_sovits_api
+from modules.utils import extract_emotion_tags, extract_motion_commands, filter_emotion_tags, start_gpt_sovits_api
 from modules.voice import VoiceManager
 
 logger = get_logger("Application")
+
+_EMOTION_TAG_TO_EMOTION = {
+    "开心": Emotion.HAPPY,
+    "生气": Emotion.ANGRY,
+    "委屈": Emotion.SAD,
+    "疑惑": Emotion.CONFUSED,
+    "嘲笑": Emotion.HAPPY,
+    "宕机": Emotion.CONFUSED,
+}
 
 
 # ---- Qt 信号桥接 ----
@@ -135,6 +144,7 @@ class LocalProjectApplication:
         # 控制台输入
         self._can_input = threading.Event()
         self._can_input.set()
+        self._cleaned_up = False
 
     # ==================== 初始化 ====================
 
@@ -159,6 +169,7 @@ class LocalProjectApplication:
         self.agent = ManusAgent(
             system_prompt=self.config.system_prompt or "",
             max_steps=self.config.agent_max_steps,
+            task_timeout_seconds=self.config.agent_task_timeout_seconds,
         )
         logger.info("OpenManus 智能体已初始化")
 
@@ -264,7 +275,22 @@ class LocalProjectApplication:
             if isinstance(expression, Emotion):
                 self.expression_manager.set_emotion(expression)
             elif isinstance(expression, str):
-                self.expression_manager.set_expression_from_text(expression)
+                emotion_tags = extract_emotion_tags(expression)
+                motion_commands = extract_motion_commands(expression)
+                has_explicit_motion = bool(motion_commands)
+
+                # 优先使用显式情绪标签；无标签时再回退到文本情绪分析
+                if emotion_tags:
+                    mapped = _EMOTION_TAG_TO_EMOTION.get(emotion_tags[-1])
+                    if mapped is not None:
+                        self.expression_manager.set_emotion(mapped, play_motion=not has_explicit_motion)
+                else:
+                    self.expression_manager.set_expression_from_text(expression, play_motion=not has_explicit_motion)
+
+                # 动作标签为显式控制，按顺序执行
+                if self.avatar:
+                    for group, index in motion_commands:
+                        self.avatar.play_motion(group, index)
 
     def _on_motion_play(self, group: str, index: int):
         if self.avatar:
@@ -367,24 +393,34 @@ class LocalProjectApplication:
 
     def cleanup(self):
         """同步清理所有资源。"""
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+
         if self.lip_sync_manager:
             self.lip_sync_manager.stop()
+            self.lip_sync_manager = None
 
         if self.ear_worker:
             self.ear_worker.stop()
+            self.ear_worker = None
 
         # 停止 core_service（通过提交 None）
         if self.core_service:
             self.core_service.submit(None)
+            self.core_service = None
 
         if self.memory_manager:
             self.memory_manager.summarize_day()
             self.memory_manager.close()
+            self.memory_manager = None
 
         if self.agent:
             self.agent.cleanup()
+            self.agent = None
 
         if self.sovits_process:
             self.sovits_process.terminate()
             self.sovits_process.wait()
             logger.info("GPT-SoVITS API 服务已停止。")
+            self.sovits_process = None

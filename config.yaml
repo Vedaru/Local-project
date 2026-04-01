@@ -39,3 +39,8 @@ controller:
 ear:
   enabled: false                    # 是否启用语音识别功能
   model_size: "base"               # 模型大小: tiny, base, small, medium, large
+
+# Agent 配置
+agent:
+  max_steps: 100
+  task_timeout_seconds: 300         # 单次任务超时（秒）

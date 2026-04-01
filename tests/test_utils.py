@@ -129,6 +129,33 @@ class TestFilterEmotionTags:
         result = filter_emotion_tags(text)
         assert "[普通]" in result
 
+    def test_filter_emotion_tags_removes_motion_tags(self):
+        """Test that motion control tags are removed from speak text."""
+        from modules.utils import filter_emotion_tags
+
+        text = "准备好了[动作:TapBody:0]"
+        result = filter_emotion_tags(text)
+        assert "[动作:TapBody:0]" not in result
+        assert "准备好了" in result
+
+
+class TestAvatarControlTags:
+    """Tests for extracting avatar control tags."""
+
+    def test_extract_emotion_tags_in_order(self):
+        from modules.utils import extract_emotion_tags
+
+        text = "你好[开心]再见[疑惑]"
+        tags = extract_emotion_tags(text)
+        assert tags == ["开心", "疑惑"]
+
+    def test_extract_motion_commands_with_and_without_index(self):
+        from modules.utils import extract_motion_commands
+
+        text = "开始[动作:TapBody:2]然后[motion:Idle]"
+        commands = extract_motion_commands(text)
+        assert commands == [("TapBody", 2), ("Idle", None)]
+
 
 class TestCheckSovitsService:
     """Tests for check_sovits_service function."""
