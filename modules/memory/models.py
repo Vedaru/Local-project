@@ -2,13 +2,15 @@
 Model adapters for memoripy integration.
 
 ChatModel: uses the project's Volcengine/Ark OpenAI-compatible API
-EmbeddingModel (priority order):
-  1. ArkEmbeddingModel: Volcengine/Ark API embeddings (requires EMBEDDING_MODEL_NAME in .env)
-  2. LocalEmbeddingModel: sentence-transformers locally (requires HuggingFace download)
-  3. HashEmbeddingModel: lightweight sklearn hash-based embedding (no downloads needed)
+EmbeddingModel backends:
+    - RustHashEmbeddingModel: Rust extension-backed hash embedding (fast local path)
+    - ArkEmbeddingModel: Volcengine/Ark API embeddings (network path)
+    - HashEmbeddingModel: lightweight sklearn hash-based embedding (local fallback)
+    - LocalEmbeddingModel: sentence-transformers locally (higher resource usage)
 """
 
 import json
+import os
 from typing import Optional
 
 import numpy as np
@@ -28,6 +30,7 @@ class ArkChatModel(ChatModel):
 
         self._client = ark_client
         self.model_name = model_name or MODEL_NAME
+        self.concept_mode = (os.environ.get("MEMORY_CONCEPT_MODE") or "fast").strip().lower()
         logger.info(f"ArkChatModel 初始化: model={self.model_name}")
 
     def invoke(self, messages: list) -> str:
@@ -50,6 +53,14 @@ class ArkChatModel(ChatModel):
 
     def extract_concepts(self, text: str) -> list[str]:
         """Extract key concepts from text using the LLM."""
+        text = (text or "").strip()
+        if not text:
+            return []
+
+        # Fast mode is the default to keep memory retrieval latency low.
+        if self.concept_mode != "llm":
+            return _simple_extract_concepts(text)
+
         prompt = (
             "从以下文本中提取关键概念。返回一个 JSON 对象，包含 'concepts' 键，"
             "其值为一个字符串列表。只返回 JSON，不要其他内容。\n"
@@ -63,18 +74,28 @@ class ArkChatModel(ChatModel):
                 max_tokens=300,
             )
             content = response.choices[0].message.content.strip()
+            
             # Try to extract JSON from the response
             # Sometimes LLM wraps in markdown code blocks
             if "```" in content:
                 import re
-
                 json_match = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
                 if json_match:
-                    content = json_match.group(1)
+                    content = json_match.group(1).strip()
+            
+            # Ensure content is not empty before parsing
+            if not content:
+                logger.debug("LLM 返回空内容，使用简单提取")
+                return _simple_extract_concepts(text)
+            
             result = json.loads(content)
             concepts = result.get("concepts", [])
             logger.debug(f"提取到 {len(concepts)} 个概念")
             return [str(c) for c in concepts]
+        except json.JSONDecodeError as e:
+            logger.debug(f"JSON 解析失败: {e}，使用简单提取")
+            # Fallback: simple keyword extraction
+            return _simple_extract_concepts(text)
         except Exception as e:
             logger.warning(f"概念提取失败: {e}")
             # Fallback: simple keyword extraction
@@ -129,6 +150,30 @@ class ArkEmbeddingModel(EmbeddingModel):
 
     def initialize_embedding_dimension(self) -> int:
         return self.dimension
+
+
+class RustHashEmbeddingModel(EmbeddingModel):
+    """Embedding model using the Rust memory extension for fast local hashing."""
+
+    def __init__(self, dimension: int = 384) -> None:
+        from .memoripy import rust_accel
+
+        self._dimension = int(dimension)
+        backend = rust_accel._load_rust_backend()
+        if backend is None:
+            raise RuntimeError("Rust backend unavailable")
+        if not hasattr(backend, "hash_embed_text"):
+            raise RuntimeError("Rust backend does not expose hash_embed_text")
+
+        self._backend = backend
+        logger.info(f"RustHashEmbeddingModel 已就绪: 维度={self._dimension}")
+
+    def get_embedding(self, text: str) -> np.ndarray:
+        vector = self._backend.hash_embed_text(text or "", self._dimension)
+        return np.asarray(vector, dtype=np.float32)
+
+    def initialize_embedding_dimension(self) -> int:
+        return self._dimension
 
 
 class LocalEmbeddingModel(EmbeddingModel):

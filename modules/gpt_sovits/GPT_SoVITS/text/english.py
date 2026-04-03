@@ -1,15 +1,34 @@
 import pickle
 import os
 import re
-import wordsegment
-from g2p_en import G2p
+import importlib
+try:
+    wordsegment = importlib.import_module("wordsegment")
+except Exception:
+    wordsegment = None
+try:
+    G2p = importlib.import_module("g2p_en").G2p
+    G2P_EN_AVAILABLE = True
+except Exception:
+    G2P_EN_AVAILABLE = False
+
+    class G2p:  # type: ignore[override]
+        def __init__(self):
+            self.homograph2features = {}
+
+        def predict(self, _word):
+            return []
 
 from text.symbols import punctuation
 
 from text.symbols2 import symbols
 
 from builtins import str as unicode
-from text.en_normalization.expend import normalize
+try:
+    from text.en_normalization.expend import normalize
+except Exception:
+    def normalize(text):
+        return text
 from nltk.tokenize import TweetTokenizer
 
 word_tokenize = TweetTokenizer().tokenize
@@ -123,7 +142,7 @@ def replace_phs(phs):
 
 def replace_consecutive_punctuation(text):
     punctuations = "".join(re.escape(p) for p in punctuation)
-    pattern = f"([{punctuations}\s])([{punctuations}])+"
+    pattern = f"([{punctuations}\\s])([{punctuations}])+"
     result = re.sub(pattern, r"\1", text)
     return result
 
@@ -248,8 +267,10 @@ def text_normalize(text):
 class en_G2p(G2p):
     def __init__(self):
         super().__init__()
+        self.g2p_en_available = G2P_EN_AVAILABLE
         # 分词初始化
-        wordsegment.load()
+        if wordsegment is not None:
+            wordsegment.load()
 
         # 扩展过时字典, 添加姓名字典
         self.cmu = get_dict()
@@ -259,18 +280,36 @@ class en_G2p(G2p):
         for word in ["AE", "AI", "AR", "IOS", "HUD", "OS"]:
             del self.cmu[word.lower()]
 
-        # 修正多音字
-        self.homograph2features["read"] = (["R", "IY1", "D"], ["R", "EH1", "D"], "VBP")
-        self.homograph2features["complex"] = (
-            ["K", "AH0", "M", "P", "L", "EH1", "K", "S"],
-            ["K", "AA1", "M", "P", "L", "EH0", "K", "S"],
-            "JJ",
-        )
+        # 修正多音字（仅 g2p_en 可用时）
+        if self.g2p_en_available:
+            self.homograph2features["read"] = (["R", "IY1", "D"], ["R", "EH1", "D"], "VBP")
+            self.homograph2features["complex"] = (
+                ["K", "AH0", "M", "P", "L", "EH1", "K", "S"],
+                ["K", "AA1", "M", "P", "L", "EH0", "K", "S"],
+                "JJ",
+            )
+
+    def _predict_without_g2p_en(self, word):
+        phones = []
+        for w in word.lower():
+            if w == "a":
+                phones.extend(["EY1"])
+            elif not w.isalpha():
+                phones.extend([w])
+            elif w in self.cmu and self.cmu[w]:
+                phones.extend(self.cmu[w][0])
+            else:
+                phones.extend(["AH0"])
+        return phones
 
     def __call__(self, text):
         # tokenization
         words = word_tokenize(text)
-        tokens = pos_tag(words)  # tuples of (word, tag)
+        try:
+            tokens = pos_tag(words)  # tuples of (word, tag)
+        except Exception:
+            # NLTK tagger resource might be unavailable in minimal environments.
+            tokens = [(word, "NN") for word in words]
 
         # steps
         prons = []
@@ -346,12 +385,17 @@ class en_G2p(G2p):
                 phones.extend(["Z"])
             return phones
 
-        # 尝试进行分词，应对复合词
-        comps = wordsegment.segment(word.lower())
+        # 尝试进行分词，应对复合词；缺少可选依赖时退化为整词预测
+        if wordsegment is None:
+            comps = [word.lower()]
+        else:
+            comps = wordsegment.segment(word.lower())
 
         # 无法分词的送回去预测
         if len(comps) == 1:
-            return self.predict(word)
+            if self.g2p_en_available:
+                return self.predict(word)
+            return self._predict_without_g2p_en(word)
 
         # 可以分词的递归处理
         return [phone for comp in comps for phone in self.qryword(comp)]

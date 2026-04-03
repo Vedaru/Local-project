@@ -8,14 +8,14 @@ Internally, all memory operations are delegated to memoripy's MemoryManager.
 
 import os
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from typing import Any, Optional
 
 from ..config import PROJECT_ROOT
 from ..logging_config import get_logger
 from .memoripy import JSONStorage
 from .memoripy import MemoryManager as MemoripyManager
-from .models import ArkChatModel, ArkEmbeddingModel, HashEmbeddingModel, LocalEmbeddingModel
+from .models import ArkChatModel, ArkEmbeddingModel, HashEmbeddingModel, LocalEmbeddingModel, RustHashEmbeddingModel
 
 logger = get_logger("Memory")
 
@@ -41,6 +41,9 @@ class MemoryManager:
         self.current_emotion: str = "neutral"
         self.enabled: bool = False
         self._manager: Optional[MemoripyManager] = None
+        self._short_term_cache: OrderedDict[str, tuple[float, list[dict[str, Any]]]] = OrderedDict()
+        self._short_term_cache_size: int = max(0, int(os.environ.get("MEMORY_SHORT_TERM_QUERY_CACHE_SIZE", "64")))
+        self._short_term_cache_ttl_sec: float = max(0.0, float(os.environ.get("MEMORY_SHORT_TERM_QUERY_CACHE_TTL", "8")))
 
         # Storage path
         memory_dir = os.path.join(PROJECT_ROOT, "data", "memoripy")
@@ -80,32 +83,36 @@ class MemoryManager:
 
     @staticmethod
     def _create_embedding_model() -> Any:
-        """创建嵌入模型：优先 Ark API → 本地哈希嵌入 → 本地 sentence-transformers。"""
-        # 1. 尝试 Ark API 嵌入模型（需要 EMBEDDING_MODEL_NAME 配置）
+        """创建嵌入模型：默认 Rust hash，仅保留最小回退。"""
+        backend = (os.environ.get("MEMORY_EMBEDDING_BACKEND") or "rust_hash").strip().lower()
+        factories = {
+            "rust_hash": RustHashEmbeddingModel,
+            "ark": ArkEmbeddingModel,
+            "hash": HashEmbeddingModel,
+            "local": LocalEmbeddingModel,
+        }
+
+        if backend not in factories:
+            logger.warning(f"未知 MEMORY_EMBEDDING_BACKEND={backend!r}，改用 rust_hash")
+            backend = "rust_hash"
+
         try:
-            model = ArkEmbeddingModel()
-            logger.info("使用 Ark API 嵌入模型")
+            model = factories[backend]()
+            logger.info(f"使用嵌入后端: {backend}")
             return model
         except Exception as e:
-            logger.warning(f"Ark 嵌入模型不可用: {e}")
+            logger.warning(f"嵌入后端 {backend} 初始化失败: {e}")
 
-        # 2. 本地哈希嵌入（无需任何下载，即开即用）
-        try:
-            model = HashEmbeddingModel()
-            logger.info("使用本地轻量哈希嵌入模型（无需网络）")
-            return model
-        except Exception as e:
-            logger.warning(f"本地哈希嵌入模型不可用: {e}")
+        # 单一回退，避免层层兜底导致初始化耗时膨胀。
+        if backend != "hash":
+            try:
+                model = HashEmbeddingModel()
+                logger.info("回退到本地 hash 嵌入后端")
+                return model
+            except Exception as e:
+                logger.warning(f"本地 hash 嵌入后端初始化失败: {e}")
 
-        # 3. 最终回退：本地 sentence-transformers（需要下载模型）
-        try:
-            model = LocalEmbeddingModel()
-            logger.info("使用本地 sentence-transformers 嵌入模型")
-            return model
-        except Exception as e:
-            logger.warning(f"本地 sentence-transformers 不可用: {e}")
-
-        raise RuntimeError("无法初始化任何嵌入模型")
+        raise RuntimeError("无法初始化嵌入模型")
 
     # ==================== 短期记忆 ====================
 
@@ -165,7 +172,164 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"记忆存储失败: {e}")
 
+    def record_interaction(self, user_text: str, ai_text: str, add_ai_to_short_term: bool = True):
+        """原子化记录一轮交互，减少上层重复拼接与调用。"""
+        user_text = (user_text or "").strip()
+        ai_text = (ai_text or "").strip()
+        if not user_text or not ai_text:
+            return
+
+        if add_ai_to_short_term:
+            self.add_to_short_term("AI", ai_text)
+
+        self.store_memory(f"用户: {user_text}\nAI: {ai_text}")
+
     # ==================== 检索接口 ====================
+
+    @staticmethod
+    def _normalize_query_key(query: str) -> str:
+        return " ".join((query or "").strip().lower().split())
+
+    def _cache_get(self, query: str) -> Optional[list[dict[str, Any]]]:
+        if self._short_term_cache_size <= 0:
+            return None
+
+        key = self._normalize_query_key(query)
+        if not key:
+            return None
+
+        item = self._short_term_cache.get(key)
+        if item is None:
+            return None
+
+        expires_at, payload = item
+        if expires_at <= time.time():
+            self._short_term_cache.pop(key, None)
+            return None
+
+        self._short_term_cache.move_to_end(key)
+        return list(payload)
+
+    def _cache_put(self, query: str, payload: list[dict[str, Any]]) -> None:
+        if self._short_term_cache_size <= 0:
+            return
+
+        key = self._normalize_query_key(query)
+        if not key:
+            return
+
+        self._short_term_cache[key] = (time.time() + self._short_term_cache_ttl_sec, list(payload))
+        self._short_term_cache.move_to_end(key)
+        while len(self._short_term_cache) > self._short_term_cache_size:
+            self._short_term_cache.popitem(last=False)
+
+    def _extract_concepts(self, query: str) -> list[str]:
+        if not self._manager:
+            return []
+        try:
+            return [str(c).strip().lower() for c in self._manager.extract_concepts(query) if str(c).strip()]
+        except Exception:
+            return []
+
+    def _concept_based_retrieval(self, concepts: list[str], exclude_last_n: int = 0) -> list[dict[str, Any]]:
+        if not self._manager:
+            return []
+
+        store = self._manager.memory_store
+        if not store.short_term_memory:
+            return []
+
+        concept_set = set(concepts)
+        if not concept_set:
+            return []
+
+        now = time.time()
+        search_limit = max(0, len(store.short_term_memory) - max(0, int(exclude_last_n)))
+        if search_limit <= 0:
+            return []
+
+        scored: list[dict[str, Any]] = []
+        for idx in range(search_limit):
+            item_concepts = {str(c).strip().lower() for c in (store.concepts_list[idx] or set()) if str(c).strip()}
+            overlap = len(concept_set.intersection(item_concepts))
+            if overlap <= 0:
+                continue
+
+            interaction = dict(store.short_term_memory[idx])
+            recency_bonus = max(0.0, 1.0 - ((now - float(interaction.get("timestamp", now))) / 3600.0))
+            access_bonus = min(2.0, float(interaction.get("access_count", 1)) * 0.1)
+            interaction["total_score"] = overlap * 10.0 + recency_bonus + access_bonus
+            scored.append(interaction)
+
+        scored.sort(key=lambda x: float(x.get("total_score", 0.0)), reverse=True)
+        return scored
+
+    def _faiss_semantic_search(self, query: str, exclude_last_n: int = 0) -> list[dict[str, Any]]:
+        if not self._manager:
+            return []
+        return self._manager.retrieve_relevant_interactions(query, exclude_last_n=exclude_last_n)
+
+    def _format_memory_context(self, short_term: str, relevant: list[dict[str, Any]], n_results: int) -> str:
+        parts = []
+        if short_term:
+            parts.append(f"【最近对话】\n{short_term}")
+
+        if relevant:
+            memory_lines = []
+            for r in relevant[:n_results]:
+                p = r.get("prompt", "")
+                o = r.get("output", "")
+                if p and o:
+                    memory_lines.append(f"用户: {p}\nAI: {o}")
+                elif p:
+                    memory_lines.append(f"用户: {p}")
+            if memory_lines:
+                parts.append("【相关记忆】\n" + "\n".join(memory_lines))
+
+        return "\n\n".join(parts)
+
+    def retrieve_memories_optimized(self, query: str, n_results: int = 3) -> str:
+        if not self.enabled or not self._manager:
+            short_term = self.get_short_term_context()
+            return short_term if short_term else ""
+
+        short_term = self.get_short_term_context()
+        exclude_last_n = min(5, len(self._manager.memory_store.short_term_memory))
+
+        # 1) 短期记忆缓存（LRU + TTL）
+        cached = self._cache_get(query)
+        if cached is not None:
+            result = self._format_memory_context(short_term, cached, n_results)
+            if result:
+                logger.debug(f"[检索][L1缓存命中] 返回 {len(cached)} 条")
+            return result
+
+        # 2) 概念图快速检索
+        relevant: list[dict[str, Any]] = []
+        concepts = self._extract_concepts(query)
+        if concepts:
+            concept_hits = self._concept_based_retrieval(concepts, exclude_last_n=exclude_last_n)
+            if concept_hits:
+                relevant.extend(concept_hits)
+
+        # 3) FAISS 语义检索（兜底 + 补齐）
+        if len(relevant) < n_results:
+            faiss_hits = self._faiss_semantic_search(query, exclude_last_n=exclude_last_n)
+            if faiss_hits:
+                seen_ids = {str(x.get("id", "")) for x in relevant if x.get("id")}
+                for item in faiss_hits:
+                    item_id = str(item.get("id", ""))
+                    if item_id and item_id in seen_ids:
+                        continue
+                    relevant.append(item)
+                    if item_id:
+                        seen_ids.add(item_id)
+
+        self._cache_put(query, relevant)
+        result = self._format_memory_context(short_term, relevant, n_results)
+        if result:
+            logger.debug(f"[检索] 返回 {len(relevant)} 条相关记忆")
+        return result
 
     def retrieve_memories(self, query: str, n_results: int = 3) -> str:
         """
@@ -178,38 +342,8 @@ class MemoryManager:
         Returns:
             格式化的记忆上下文字符串
         """
-        if not self.enabled or not self._manager:
-            short_term = self.get_short_term_context()
-            return short_term if short_term else ""
-
         try:
-            # Retrieve relevant interactions from memoripy
-            relevant = self._manager.retrieve_relevant_interactions(
-                query, exclude_last_n=min(5, len(self._manager.memory_store.short_term_memory))
-            )
-
-            parts = []
-            short_term = self.get_short_term_context()
-            if short_term:
-                parts.append(f"【最近对话】\n{short_term}")
-
-            if relevant:
-                memory_lines = []
-                for r in relevant[:n_results]:
-                    p = r.get("prompt", "")
-                    o = r.get("output", "")
-                    if p and o:
-                        memory_lines.append(f"用户: {p}\nAI: {o}")
-                    elif p:
-                        memory_lines.append(f"用户: {p}")
-                if memory_lines:
-                    parts.append("【相关记忆】\n" + "\n".join(memory_lines))
-
-            result = "\n\n".join(parts)
-            if result:
-                logger.debug(f"[检索] 返回 {len(relevant)} 条相关记忆")
-            return result
-
+            return self.retrieve_memories_optimized(query, n_results=n_results)
         except Exception as e:
             logger.error(f"记忆检索失败: {e}")
             return self.get_short_term_context()
@@ -309,6 +443,12 @@ class MemoryManager:
         import asyncio
 
         await asyncio.to_thread(self.store_memory, conversation)
+
+    async def record_interaction_async(self, user_text: str, ai_text: str, add_ai_to_short_term: bool = True):
+        """异步版 record_interaction。"""
+        import asyncio
+
+        await asyncio.to_thread(self.record_interaction, user_text, ai_text, add_ai_to_short_term)
 
     async def get_memory_stats_async(self) -> dict:
         """异步版 get_memory_stats。"""

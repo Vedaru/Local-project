@@ -1,3 +1,4 @@
+import os
 import json
 import threading
 from pathlib import Path
@@ -20,6 +21,50 @@ PROJECT_ROOT = get_project_root()
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "workspace"
 # Ensure workspace directory exists on module load
 WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _discover_desktop_path() -> Optional[Path]:
+    """Try to find the user's desktop directory on local machine."""
+    candidates: list[Path] = []
+
+    home = Path.home()
+    candidates.append(home / "Desktop")
+
+    userprofile = os.environ.get("USERPROFILE")
+    if userprofile:
+        candidates.append(Path(userprofile) / "Desktop")
+
+    onedrive = os.environ.get("OneDrive")
+    if onedrive:
+        candidates.append(Path(onedrive) / "Desktop")
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = os.path.normcase(str(candidate))
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
+    return None
+
+
+def _build_workspace_roots() -> tuple[Path, ...]:
+    """Build local allowed workspace roots used by Local agent tools."""
+    roots: list[Path] = [WORKSPACE_ROOT]
+
+    desktop = _discover_desktop_path()
+    if desktop:
+        desktop_key = os.path.normcase(str(desktop))
+        workspace_key = os.path.normcase(str(WORKSPACE_ROOT))
+        if desktop_key != workspace_key:
+            roots.append(desktop)
+
+    return tuple(roots)
+
+
+WORKSPACE_ROOTS = _build_workspace_roots()
 
 
 class LLMSettings(BaseModel):
@@ -45,15 +90,15 @@ class ProxySettings(BaseModel):
 class SearchSettings(BaseModel):
     engine: str = Field(default="Google", description="Search engine the llm to use")
     fallback_engines: List[str] = Field(
-        default_factory=lambda: ["DuckDuckGo", "Baidu", "Bing"],
+        default_factory=list,
         description="Fallback search engines to try if the primary engine fails",
     )
     retry_delay: int = Field(
-        default=60,
+        default=3,
         description="Seconds to wait before retrying all engines again after they all fail",
     )
     max_retries: int = Field(
-        default=3,
+        default=0,
         description="Maximum number of times to retry all engines when all fail",
     )
     lang: str = Field(
@@ -368,6 +413,11 @@ class Config:
     def workspace_root(self) -> Path:
         """Get the workspace root directory"""
         return WORKSPACE_ROOT
+
+    @property
+    def workspace_roots(self) -> tuple[Path, ...]:
+        """Get all local allowed workspace roots."""
+        return WORKSPACE_ROOTS
 
     @property
     def root_path(self) -> Path:

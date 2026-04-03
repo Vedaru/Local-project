@@ -12,7 +12,14 @@ class PythonExecute(BaseTool):
     """A tool for executing Python code with timeout and safety restrictions."""
 
     name: str = "python_execute"
-    description: str = "Executes Python code string. Note: Only print outputs are visible, function return values are not captured. Use print statements to see results."
+    description: str = (
+        "Executes Python code string. Note: Only print outputs are visible, "
+        "function return values are not captured. Use print statements to see results. "
+        "For PPT/Word/PDF tasks, prefer using `document_skill` first. "
+        "If custom Python rendering is needed, follow a CSS-first workflow: generate "
+        "a local style draft (for example theme.css) and then map it in Python to "
+        "python-pptx/python-docx/reportlab objects to export binary files."
+    )
     parameters: dict = {
         "type": "object",
         "properties": {

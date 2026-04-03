@@ -121,13 +121,15 @@ class TestFilterEmotionTags:
         assert "你好" in result
         assert "世界" in result
 
-    def test_filter_emotion_tags_preserves_normal_brackets(self):
-        """Test that normal brackets are preserved."""
+    def test_filter_emotion_tags_removes_normal_brackets(self):
+        """Test that bracket symbols are removed while content is preserved."""
         from modules.utils import filter_emotion_tags
 
         text = "这是[普通]括号"
         result = filter_emotion_tags(text)
-        assert "[普通]" in result
+        assert "[" not in result
+        assert "]" not in result
+        assert result == "这是普通括号"
 
     def test_filter_emotion_tags_removes_motion_tags(self):
         """Test that motion control tags are removed from speak text."""
@@ -138,6 +140,52 @@ class TestFilterEmotionTags:
         assert "[动作:TapBody:0]" not in result
         assert "准备好了" in result
 
+    def test_filter_emotion_tags_removes_fullwidth_emotion_tag(self):
+        """Test that full-width emotion tags are removed."""
+        from modules.utils import filter_emotion_tags
+
+        text = "【开心】你好"
+        result = filter_emotion_tags(text)
+        assert "【开心】" not in result
+        assert result == "你好"
+
+    def test_filter_emotion_tags_removes_parenthetical_stage_direction(self):
+        """Test that short emotional stage directions are removed."""
+        from modules.utils import filter_emotion_tags
+
+        text = "你好（微笑）呀"
+        result = filter_emotion_tags(text)
+        assert "（微笑）" not in result
+        assert result == "你好呀"
+
+    def test_filter_emotion_tags_removes_parentheses_symbols(self):
+        """Test that bracket symbols are removed from final dialogue text."""
+        from modules.utils import filter_emotion_tags
+
+        text = "版本(v2)可用"
+        result = filter_emotion_tags(text)
+        assert "(" not in result
+        assert ")" not in result
+        assert result == "版本v2可用"
+
+    def test_filter_emotion_tags_removes_prefix_style_emotion_marker(self):
+        """Test that prefix-style emotion metadata is removed."""
+        from modules.utils import filter_emotion_tags
+
+        text = "你好（表情:微笑）呀"
+        result = filter_emotion_tags(text)
+        assert "（表情:微笑）" not in result
+        assert result == "你好呀"
+
+    def test_filter_emotion_tags_removes_emoticon_package_text(self):
+        """Test that emoticon-package stage text is removed."""
+        from modules.utils import filter_emotion_tags
+
+        text = "这是（表情包）测试"
+        result = filter_emotion_tags(text)
+        assert "表情包" not in result
+        assert result == "这是测试"
+
 
 class TestAvatarControlTags:
     """Tests for extracting avatar control tags."""
@@ -146,6 +194,13 @@ class TestAvatarControlTags:
         from modules.utils import extract_emotion_tags
 
         text = "你好[开心]再见[疑惑]"
+        tags = extract_emotion_tags(text)
+        assert tags == ["开心", "疑惑"]
+
+    def test_extract_emotion_tags_supports_fullwidth_brackets(self):
+        from modules.utils import extract_emotion_tags
+
+        text = "【开心】你好[疑惑]"
         tags = extract_emotion_tags(text)
         assert tags == ["开心", "疑惑"]
 

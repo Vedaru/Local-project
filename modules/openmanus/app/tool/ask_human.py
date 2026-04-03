@@ -1,4 +1,26 @@
+from __future__ import annotations
+
+from typing import Callable, Optional
+
 from app.tool import BaseTool
+
+_ask_human_voice_callback: Optional[Callable[[str], None]] = None
+
+
+def set_ask_human_voice_callback(callback: Optional[Callable[[str], None]]) -> None:
+    """Register a callback used to speak ask_human prompts in local app."""
+    global _ask_human_voice_callback
+    _ask_human_voice_callback = callback
+
+
+def _emit_voice_prompt(prompt: str) -> None:
+    if _ask_human_voice_callback is None:
+        return
+    try:
+        _ask_human_voice_callback(prompt)
+    except Exception:
+        # Voice callback failures should not break ask_human interaction.
+        pass
 
 
 class AskHuman(BaseTool):
@@ -18,4 +40,7 @@ class AskHuman(BaseTool):
     }
 
     async def execute(self, inquire: str) -> str:
-        return input(f"""Bot: {inquire}\n\nYou: """).strip()
+        prompt = (inquire or "").strip()
+        if prompt:
+            _emit_voice_prompt(prompt)
+        return input(f"""Bot: {prompt}\n\nYou: """).strip()

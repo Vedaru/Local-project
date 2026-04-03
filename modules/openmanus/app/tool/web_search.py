@@ -1,14 +1,19 @@
 import asyncio
+import importlib
+import importlib.machinery
+import importlib.util
+import os
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
-from bs4 import BeautifulSoup
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import config
 from app.logger import logger
 from app.tool.base import BaseTool, ToolResult
+from app.tool.browser_text_extractor import normalize_whitespace_text
 from app.tool.search import (
     BaiduSearchEngine,
     BingSearchEngine,
@@ -106,8 +111,255 @@ class SearchResponse(ToolResult):
 class WebContentFetcher:
     """Utility class for fetching web content."""
 
-    @staticmethod
-    async def fetch_content(url: str, timeout: int = 10) -> Optional[str]:
+    MAX_CONTENT_CHARS = 10000
+    MIN_VALID_CONTENT_CHARS = 220
+    RUST_FETCHER_EXT_ENV = "WEB_FETCHER_RS_PY_EXT"
+    RUST_FETCHER_EXT_MODULE = "_web_fetcher_rs"
+    RUST_FETCHER_EXT_RELATIVE_PATHS = (
+        ("rust_modules", "web_fetcher_rs", "target", "release"),
+        ("rust_modules", "web_fetcher_rs", "target", "debug"),
+    )
+    _rust_fetcher_module_cache: Optional[Any] = None
+    _rust_fetcher_module_attempted: bool = False
+    _rust_fetcher_extension_missing_logged: bool = False
+    _rust_fetcher_stats: Dict[str, int] = {
+        "requests": 0,
+        "extension_attempts": 0,
+        "extension_success": 0,
+        "extension_empty_or_error": 0,
+        "extension_unusable": 0,
+        "extension_unavailable": 0,
+    }
+    BLOCKED_PAGE_HINTS = (
+        "captcha",
+        "access denied",
+        "forbidden",
+        "security check",
+        "verify",
+        "are you human",
+        "enable javascript",
+        "request blocked",
+        "temporarily unavailable",
+        "限制本次访问",
+        "知乎小管家",
+        "请求参数异常",
+        "升级客户端后重试",
+        '"code":40362',
+        '"code":10003',
+    )
+
+    @classmethod
+    def _increment_rust_fetcher_stat(cls, key: str) -> None:
+        cls._rust_fetcher_stats[key] = int(cls._rust_fetcher_stats.get(key, 0)) + 1
+
+    @classmethod
+    def reset_rust_fetcher_stats(cls) -> None:
+        for key in cls._rust_fetcher_stats:
+            cls._rust_fetcher_stats[key] = 0
+
+    @classmethod
+    def get_rust_fetcher_stats(cls) -> Dict[str, Any]:
+        return dict(cls._rust_fetcher_stats)
+
+    @classmethod
+    def _trim_output(cls, text: str) -> str:
+        normalized = normalize_whitespace_text(text)
+        return normalized[: cls.MAX_CONTENT_CHARS] if normalized else ""
+
+    @classmethod
+    def _project_root(cls) -> Path:
+        return Path(__file__).resolve().parents[4]
+
+    @classmethod
+    def _candidate_extension_paths(cls) -> List[Path]:
+        candidates: List[Path] = []
+        seen: set[str] = set()
+
+        def _append_candidate(candidate_path: Path) -> None:
+            try:
+                resolved = candidate_path.expanduser().resolve()
+            except Exception:
+                return
+
+            if not resolved.exists() or not resolved.is_file():
+                return
+
+            key = str(resolved)
+            if key in seen:
+                return
+
+            seen.add(key)
+            candidates.append(resolved)
+
+        def _append_from_directory(directory: Path) -> None:
+            if not directory.exists() or not directory.is_dir():
+                return
+
+            for suffix in importlib.machinery.EXTENSION_SUFFIXES:
+                _append_candidate(directory / f"{cls.RUST_FETCHER_EXT_MODULE}{suffix}")
+
+            for pattern in (
+                f"{cls.RUST_FETCHER_EXT_MODULE}*.pyd",
+                f"{cls.RUST_FETCHER_EXT_MODULE}*.so",
+                f"{cls.RUST_FETCHER_EXT_MODULE}*.dll",
+                f"{cls.RUST_FETCHER_EXT_MODULE}*.dylib",
+            ):
+                for path in sorted(directory.glob(pattern)):
+                    _append_candidate(path)
+
+        env_path = os.environ.get(cls.RUST_FETCHER_EXT_ENV)
+        if env_path:
+            env_candidate = Path(env_path).expanduser()
+            if env_candidate.is_dir():
+                _append_from_directory(env_candidate)
+            else:
+                _append_candidate(env_candidate)
+
+        project_root = cls._project_root()
+        for relative_path in cls.RUST_FETCHER_EXT_RELATIVE_PATHS:
+            _append_from_directory(project_root.joinpath(*relative_path))
+
+        return candidates
+
+    @classmethod
+    def _load_extension_module_from_path(cls, extension_path: Path) -> Optional[Any]:
+        module_name = cls.RUST_FETCHER_EXT_MODULE
+        loader = importlib.machinery.ExtensionFileLoader(module_name, str(extension_path))
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            str(extension_path),
+            loader=loader,
+        )
+        if spec is None or spec.loader is None:
+            return None
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(module_name, None)
+            raise
+
+        if not hasattr(module, "fetch_content"):
+            sys.modules.pop(module_name, None)
+            return None
+
+        return module
+
+    @classmethod
+    def _load_rust_fetcher_module(cls) -> Optional[Any]:
+        if cls._rust_fetcher_module_cache is not None:
+            return cls._rust_fetcher_module_cache
+
+        if cls._rust_fetcher_module_attempted:
+            return None
+
+        cls._rust_fetcher_module_attempted = True
+
+        try:
+            module = importlib.import_module(cls.RUST_FETCHER_EXT_MODULE)
+            if hasattr(module, "fetch_content"):
+                cls._rust_fetcher_module_cache = module
+                return module
+        except Exception as exc:
+            logger.debug(f"Rust extension import by module name failed: {exc}")
+
+        for extension_path in cls._candidate_extension_paths():
+            try:
+                module = cls._load_extension_module_from_path(extension_path)
+                if module is not None:
+                    cls._rust_fetcher_module_cache = module
+                    return module
+            except Exception as exc:
+                logger.debug(
+                    f"Rust extension import failed from {extension_path}: {exc}"
+                )
+
+        return None
+
+    @classmethod
+    def _run_rust_extension_sync(cls, rust_module: Any, url: str, timeout: int) -> str:
+        try:
+            payload = rust_module.fetch_content(url, timeout, cls.MAX_CONTENT_CHARS)
+        except Exception as exc:
+            logger.warning(f"Rust extension fetch failed for {url}: {exc}")
+            return ""
+
+        if not isinstance(payload, (tuple, list)) or len(payload) != 3:
+            logger.warning(f"Rust extension returned unexpected payload for {url}")
+            return ""
+
+        success, content, error = payload
+        if bool(success) and isinstance(content, str):
+            return cls._trim_output(content)
+
+        error_message = normalize_whitespace_text(str(error or ""))[:300]
+        if error_message:
+            logger.warning(
+                f"Rust extension reported no usable content for {url}: {error_message}"
+            )
+
+        if isinstance(content, str):
+            return cls._trim_output(content)
+        return ""
+
+    @classmethod
+    async def _fetch_with_rust(cls, url: str, timeout: int) -> str:
+        cls._increment_rust_fetcher_stat("requests")
+
+        rust_module = cls._load_rust_fetcher_module()
+        extension_content = ""
+        if rust_module is not None:
+            try:
+                cls._increment_rust_fetcher_stat("extension_attempts")
+                loop = asyncio.get_running_loop()
+                extension_content = await loop.run_in_executor(
+                    None,
+                    lambda: cls._run_rust_extension_sync(rust_module, url, timeout),
+                )
+                if extension_content:
+                    if cls._is_usable_content(extension_content):
+                        cls._increment_rust_fetcher_stat("extension_success")
+                        return extension_content
+                    cls._increment_rust_fetcher_stat("extension_unusable")
+                else:
+                    cls._increment_rust_fetcher_stat("extension_empty_or_error")
+            except Exception as e:
+                logger.warning(f"Error fetching content from {url} with Rust extension: {e}")
+                cls._increment_rust_fetcher_stat("extension_empty_or_error")
+        elif not cls._rust_fetcher_extension_missing_logged:
+            logger.warning(
+                "Rust web fetcher extension is unavailable. "
+                "Build/install rust_modules/web_fetcher_rs or set WEB_FETCHER_RS_PY_EXT."
+            )
+            cls._rust_fetcher_extension_missing_logged = True
+            cls._increment_rust_fetcher_stat("extension_unavailable")
+
+        return extension_content
+
+    @classmethod
+    def _looks_like_blocked_page(cls, text: str) -> bool:
+        normalized = normalize_whitespace_text(text).lower()
+        if not normalized:
+            return False
+
+        if not any(hint in normalized for hint in cls.BLOCKED_PAGE_HINTS):
+            return False
+
+        return len(normalized) < cls.MIN_VALID_CONTENT_CHARS * 3
+
+    @classmethod
+    def _is_usable_content(cls, text: str) -> bool:
+        normalized = normalize_whitespace_text(text)
+        if len(normalized) < cls.MIN_VALID_CONTENT_CHARS:
+            return False
+        if cls._looks_like_blocked_page(normalized):
+            return False
+        return True
+
+    @classmethod
+    async def fetch_content(cls, url: str, timeout: int = 10) -> Optional[str]:
         """
         Fetch and extract the main content from a webpage.
 
@@ -118,39 +370,19 @@ class WebContentFetcher:
         Returns:
             Extracted text content or None if fetching fails
         """
-        headers = {
-            "WebSearch": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
+        normalized_timeout = max(5, timeout)
 
-        try:
-            # Use asyncio to run requests in a thread pool
-            response = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: requests.get(url, headers=headers, timeout=timeout)
-            )
+        rust_content = await cls._fetch_with_rust(url, normalized_timeout)
+        if cls._is_usable_content(rust_content):
+            return rust_content
 
-            if response.status_code != 200:
-                logger.warning(
-                    f"Failed to fetch content from {url}: HTTP {response.status_code}"
-                )
-                return None
-
-            # Parse HTML with BeautifulSoup
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            # Remove script and style elements
-            for script in soup(["script", "style", "header", "footer", "nav"]):
-                script.extract()
-
-            # Get text content
-            text = soup.get_text(separator="\n", strip=True)
-
-            # Clean up whitespace and limit size (100KB max)
-            text = " ".join(text.split())
-            return text[:10000] if text else None
-
-        except Exception as e:
-            logger.warning(f"Error fetching content from {url}: {e}")
+        if not rust_content:
             return None
+
+        if cls._looks_like_blocked_page(rust_content):
+            return None
+
+        return cls._trim_output(rust_content)
 
 
 class WebSearch(BaseTool):
@@ -159,7 +391,7 @@ class WebSearch(BaseTool):
     name: str = "web_search"
     description: str = """Search the web for real-time information about any topic.
     This tool returns comprehensive search results with relevant information, URLs, titles, and descriptions.
-    If the primary search engine fails, it automatically falls back to alternative engines."""
+    Search fallback and retry behavior is intentionally minimal to keep response latency low."""
     parameters: dict = {
         "type": "object",
         "properties": {
@@ -230,6 +462,8 @@ class WebSearch(BaseTool):
             if config.search_config
             else 3
         )
+        retry_delay = max(0, int(retry_delay))
+        max_retries = max(0, int(max_retries))
 
         # Use config values for lang and country if not specified
         if lang is None:
@@ -302,6 +536,7 @@ class WebSearch(BaseTool):
             )
 
             if not search_items:
+                failed_engines.append(engine_name)
                 continue
 
             if failed_engines:
@@ -371,7 +606,7 @@ class WebSearch(BaseTool):
             else []
         )
 
-        # Start with preferred engine, then fallbacks, then remaining engines
+        # Start with preferred engine, then configured fallbacks only.
         engine_order = [preferred] if preferred in self._search_engine else []
         engine_order.extend(
             [
@@ -380,8 +615,9 @@ class WebSearch(BaseTool):
                 if fb in self._search_engine and fb not in engine_order
             ]
         )
-        engine_order.extend([e for e in self._search_engine if e not in engine_order])
 
+        if not engine_order:
+            return ["google"]
         return engine_order
 
     @retry(

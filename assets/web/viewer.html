@@ -72,6 +72,25 @@
         let modelOriginalWidth = 0;     // 模型原始宽度
         let modelOriginalHeight = 0;    // 模型原始高度
 
+        // 自主注视变量（不再跟随鼠标）
+        let autonomousGazeEnabled = true;
+        let gazeTicker = null;
+        let gazeCurrentTarget = { x: 0, y: 0 };
+        let gazeDesiredTarget = { x: 0, y: 0 };
+        let gazeVelocity = { x: 0, y: 0 };
+        let gazeLastAppliedTarget = { x: 0, y: 0 };
+        let nextGazeRetargetAt = 0;
+        const GAZE_MIN_INTERVAL_MS = 2600;
+        const GAZE_MAX_INTERVAL_MS = 6200;
+        const GAZE_MAX_RETARGET_SHIFT_RATIO = 1;
+        const GAZE_SMOOTH_TIME_SEC = 0.48;
+        const GAZE_NEAR_TARGET_EXTRA_SMOOTH_SEC = 0.18;
+        const GAZE_NEAR_TARGET_DISTANCE = 28;
+        const GAZE_MAX_SPEED_PX_PER_SEC = 160;
+        const GAZE_SNAP_DISTANCE = 0.45;
+        const GAZE_VELOCITY_EPSILON = 2.5;
+        const GAZE_MIN_MOVE_TO_APPLY = 0.06;
+
         // 初始化 PixiJS 应用
         function initApp() {
             const container = document.getElementById('canvas-container');
@@ -216,6 +235,209 @@
             console.log('[Live2D Viewer] Model reset to initial scale and position');
         }
 
+        function clamp(value, min, max) {
+            return Math.max(min, Math.min(max, value));
+        }
+
+        // 采用临界阻尼曲线平滑目标过渡，避免突然加速导致的抽动。
+        function smoothDamp(current, target, currentVelocity, smoothTimeSec, maxSpeed, deltaTimeSec) {
+            const safeDelta = Math.max(1 / 240, deltaTimeSec);
+            const smoothTime = Math.max(0.0001, smoothTimeSec);
+            const omega = 2 / smoothTime;
+            const x = omega * safeDelta;
+            const exp = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+
+            let change = current - target;
+            const originalTarget = target;
+            const maxChange = maxSpeed * smoothTime;
+            change = clamp(change, -maxChange, maxChange);
+            target = current - change;
+
+            const temp = (currentVelocity + omega * change) * safeDelta;
+            let nextVelocity = (currentVelocity - omega * temp) * exp;
+            let nextValue = target + (change + temp) * exp;
+
+            if ((originalTarget - current > 0) === (nextValue > originalTarget)) {
+                nextValue = originalTarget;
+                nextVelocity = 0;
+            }
+
+            return {
+                value: nextValue,
+                velocity: nextVelocity,
+            };
+        }
+
+        function pickAutonomousGazeTarget(model) {
+            const fallbackX = window.innerWidth / 2;
+            const fallbackY = window.innerHeight / 2;
+
+            if (!model) {
+                return { x: fallbackX, y: fallbackY };
+            }
+
+            let bounds = null;
+            try {
+                bounds = model.getBounds();
+            } catch (error) {
+                bounds = null;
+            }
+
+            if (!bounds || !isFinite(bounds.width) || !isFinite(bounds.height) || bounds.width <= 0 || bounds.height <= 0) {
+                return {
+                    x: Number.isFinite(model.x) ? model.x : fallbackX,
+                    y: Number.isFinite(model.y) ? model.y : fallbackY,
+                };
+            }
+
+            const centerX = bounds.x + bounds.width * 0.5;
+            const eyeLineY = bounds.y + bounds.height * 0.35;
+            const radiusX = Math.max(20, bounds.width * 0.22);
+            const radiusY = Math.max(16, bounds.height * 0.16);
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 0.2 + Math.random() * 0.8;
+
+            return {
+                x: clamp(centerX + Math.cos(angle) * radiusX * distance, 0, window.innerWidth),
+                y: clamp(eyeLineY + Math.sin(angle) * radiusY * distance, 0, window.innerHeight),
+            };
+        }
+
+        function retargetAutonomousGaze(model, force = false) {
+            const now = Date.now();
+            if (!force && now < nextGazeRetargetAt) {
+                return;
+            }
+
+            const candidate = pickAutonomousGazeTarget(model);
+
+            if (force) {
+                gazeDesiredTarget = candidate;
+            } else {
+                let maxShiftX = Math.max(18, window.innerWidth * 0.06);
+                let maxShiftY = Math.max(14, window.innerHeight * 0.055);
+
+                try {
+                    const bounds = model ? model.getBounds() : null;
+                    if (bounds && isFinite(bounds.width) && isFinite(bounds.height) && bounds.width > 0 && bounds.height > 0) {
+                        maxShiftX = Math.max(16, bounds.width * GAZE_MAX_RETARGET_SHIFT_RATIO);
+                        maxShiftY = Math.max(12, bounds.height * GAZE_MAX_RETARGET_SHIFT_RATIO);
+                    }
+                } catch (error) {
+                    // ignore bounds errors and use fallback shifts
+                }
+
+                const shiftX = clamp(candidate.x - gazeDesiredTarget.x, -maxShiftX, maxShiftX);
+                const shiftY = clamp(candidate.y - gazeDesiredTarget.y, -maxShiftY, maxShiftY);
+
+                gazeDesiredTarget = {
+                    x: clamp(gazeDesiredTarget.x + shiftX, 0, window.innerWidth),
+                    y: clamp(gazeDesiredTarget.y + shiftY, 0, window.innerHeight),
+                };
+            }
+
+            const interval = GAZE_MIN_INTERVAL_MS + Math.random() * (GAZE_MAX_INTERVAL_MS - GAZE_MIN_INTERVAL_MS);
+            nextGazeRetargetAt = now + interval;
+        }
+
+        function startAutonomousGaze(model) {
+            if (!app || !model) {
+                return;
+            }
+
+            if (gazeTicker) {
+                app.ticker.remove(gazeTicker);
+                gazeTicker = null;
+            }
+
+            gazeCurrentTarget = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+            gazeDesiredTarget = { x: gazeCurrentTarget.x, y: gazeCurrentTarget.y };
+            gazeVelocity = { x: 0, y: 0 };
+            gazeLastAppliedTarget = { x: gazeCurrentTarget.x, y: gazeCurrentTarget.y };
+            nextGazeRetargetAt = 0;
+            retargetAutonomousGaze(model, true);
+
+            gazeTicker = (delta) => {
+                if (!autonomousGazeEnabled || !currentModel || currentModel !== model || !model.internalModel) {
+                    return;
+                }
+
+                retargetAutonomousGaze(model, false);
+
+                const dx = gazeDesiredTarget.x - gazeCurrentTarget.x;
+                const dy = gazeDesiredTarget.y - gazeCurrentTarget.y;
+                const distance = Math.hypot(dx, dy);
+                const dtFrames = Math.max(0.5, Math.min((typeof delta === 'number' ? delta : 1), 2.5));
+                const dtSeconds = dtFrames / 60;
+
+                if (distance <= GAZE_SNAP_DISTANCE && Math.hypot(gazeVelocity.x, gazeVelocity.y) < GAZE_VELOCITY_EPSILON) {
+                    gazeCurrentTarget.x = gazeDesiredTarget.x;
+                    gazeCurrentTarget.y = gazeDesiredTarget.y;
+                    gazeVelocity.x = 0;
+                    gazeVelocity.y = 0;
+                } else {
+                    const nearRatio = clamp(distance / GAZE_NEAR_TARGET_DISTANCE, 0, 1);
+                    const smoothTime = GAZE_SMOOTH_TIME_SEC + (1 - nearRatio) * GAZE_NEAR_TARGET_EXTRA_SMOOTH_SEC;
+
+                    const nextX = smoothDamp(
+                        gazeCurrentTarget.x,
+                        gazeDesiredTarget.x,
+                        gazeVelocity.x,
+                        smoothTime,
+                        GAZE_MAX_SPEED_PX_PER_SEC,
+                        dtSeconds,
+                    );
+                    const nextY = smoothDamp(
+                        gazeCurrentTarget.y,
+                        gazeDesiredTarget.y,
+                        gazeVelocity.y,
+                        smoothTime,
+                        GAZE_MAX_SPEED_PX_PER_SEC,
+                        dtSeconds,
+                    );
+
+                    gazeCurrentTarget.x = nextX.value;
+                    gazeCurrentTarget.y = nextY.value;
+                    gazeVelocity.x = nextX.velocity;
+                    gazeVelocity.y = nextY.velocity;
+                }
+
+                const applyDx = gazeCurrentTarget.x - gazeLastAppliedTarget.x;
+                const applyDy = gazeCurrentTarget.y - gazeLastAppliedTarget.y;
+                if (Math.hypot(applyDx, applyDy) < GAZE_MIN_MOVE_TO_APPLY) {
+                    return;
+                }
+
+                model.focus(gazeCurrentTarget.x, gazeCurrentTarget.y);
+                gazeLastAppliedTarget.x = gazeCurrentTarget.x;
+                gazeLastAppliedTarget.y = gazeCurrentTarget.y;
+            };
+
+            app.ticker.add(gazeTicker);
+        }
+
+        function setAutonomousGaze(enabled) {
+            autonomousGazeEnabled = Boolean(enabled);
+
+            if (!currentModel) {
+                return true;
+            }
+
+            if (autonomousGazeEnabled) {
+                startAutonomousGaze(currentModel);
+            } else {
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
+                gazeCurrentTarget = { x: centerX, y: centerY };
+                gazeDesiredTarget = { x: centerX, y: centerY };
+                gazeVelocity = { x: 0, y: 0 };
+                gazeLastAppliedTarget = { x: centerX, y: centerY };
+                currentModel.focus(centerX, centerY);
+            }
+
+            return true;
+        }
+
         /**
          * 加载 Live2D 模型
          * @param {string} url - 模型文件路径 (.model3.json 或 .model.json)
@@ -227,6 +449,10 @@
                 
                 // 移除旧模型
                 if (currentModel) {
+                    if (gazeTicker && app) {
+                        app.ticker.remove(gazeTicker);
+                        gazeTicker = null;
+                    }
                     app.stage.removeChild(currentModel);
                     currentModel.destroy();
                     currentModel = null;
@@ -266,15 +492,8 @@
                     }
                 }
                 
-                // 启用眼睛跟随鼠标
-                app.ticker.add(() => {
-                    if (model && model.internalModel) {
-                        // 使模型眼睛跟随鼠标
-                        const mouseX = app.renderer.plugins.interaction.mouse.global.x;
-                        const mouseY = app.renderer.plugins.interaction.mouse.global.y;
-                        model.focus(mouseX, mouseY);
-                    }
-                });
+                // 启用自主注视
+                startAutonomousGaze(model);
                 
                 // ===========================================================
                 // ⚔️ 核心修复：双层劫持确保口型同步不被表情覆盖
@@ -793,6 +1012,7 @@
         window.resetModel = resetModel;
         window.playAudio = playAudio;
         window.stopAudio = stopAudio;
+        window.setAutonomousGaze = setAutonomousGaze;
     </script>
 </body>
 </html>

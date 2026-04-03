@@ -21,15 +21,118 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import datetime
 import os
 import sys
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
 from ..logging_config import get_logger
 from ..task_completion import TaskCompletionHelper
 
 logger = get_logger("ManusAgent")
+
+# 全局 speak 回调，用于在 agent 执行时输出语音
+_global_speak_callback: Optional[Callable[[str], None]] = None
+
+
+class AgentTaskCancelledError(RuntimeError):
+    """Raised when an in-flight agent task is cancelled by user request."""
+
+
+def set_agent_speak_callback(callback: Optional[Callable[[str], None]]) -> None:
+    """设置全局 speak 回调函数，用于 agent 执行时的语音输出。
+    
+    Parameters
+    ----------
+    callback : Optional[Callable[[str], None]]
+        语音回调函数，接收要说的文本。设为 None 禁用 speak。
+    """
+    global _global_speak_callback
+    _global_speak_callback = callback
+    if callback:
+        logger.info("Agent speak 回调已设置")
+    else:
+        logger.info("Agent speak 回调已禁用")
+
+
+def _agent_speak(text: str) -> None:
+    """在 agent 执行时调用此函数以输出语音。
+    
+    Parameters
+    ----------
+    text : str
+        要说的文本。
+    """
+    global _global_speak_callback
+    if _global_speak_callback and text and text.strip():
+        try:
+            _global_speak_callback(text.strip())
+        except Exception as e:
+            logger.error(f"Agent speak 回调异常: {e}")
+
+
+# 在module导入时创建一个自定义的Manus类，支持speak功能
+_speaking_manus_class = None
+
+
+def _create_speaking_manus_class():
+    """动态创建一个支持speak的Manus agent类。"""
+    global _speaking_manus_class
+    if _speaking_manus_class is not None:
+        return _speaking_manus_class
+    
+    try:
+        from app.agent.manus import Manus
+        
+        class SpeakingManus(Manus):
+            """支持语音输出的 Manus agent。
+            
+            在think和act中添加语音描述，让用户能听到agent的思考过程和操作步骤。
+            """
+            
+            async def think(self) -> bool:
+                """执行think步骤，并输出思考过程的语音描述。"""
+                result = await super().think()
+                
+                # 在think后输出思考内容和选择的工具
+                if result and self.tool_calls and len(self.tool_calls) > 0:
+                    tool_names = [call.function.name for call in self.tool_calls]
+                    if len(tool_names) == 1:
+                        speak_text = f"我现在需要使用工具: {tool_names[0]}"
+                    else:
+                        tools_str = "、".join(tool_names)
+                        speak_text = f"我现在需要依次使用以下工具: {tools_str}"
+                    _agent_speak(speak_text)
+                
+                return result
+            
+            async def act(self) -> str:
+                """执行act步骤，并输出执行内容的语音描述。"""
+                if self.tool_calls:
+                    # 在执行前输出即将执行的工具
+                    for i, call in enumerate(self.tool_calls):
+                        tool_name = call.function.name
+                        if len(self.tool_calls) > 1:
+                            speak_text = f"执行第 {i+1} 个工具: {tool_name}"
+                        else:
+                            speak_text = f"正在执行工具: {tool_name}"
+                        _agent_speak(speak_text)
+                
+                result = await super().act()
+                
+                # 执行完成后输出完成信息
+                if self.tool_calls:
+                    _agent_speak("工具执行已完成，分析结果中")
+                
+                return result
+        
+        _speaking_manus_class = SpeakingManus
+        return _speaking_manus_class
+    except Exception as e:
+        logger.warning(f"创建 SpeakingManus 类失败: {e}，回退到普通 Manus")
+        return None
+
 
 # ---- 确保 OpenManus 在 Python path 中 ----
 _OPENMANUS_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "openmanus"))
@@ -123,6 +226,8 @@ class ManusAgent:
         附加的 system prompt（会注入到 Manus agent 中）。
     max_steps : int
         最大执行步骤数，默认 100。
+    speak_callback : Optional[Callable[[str], None]]
+        语音回调函数，用于在 agent 执行时输出语音描述。
     """
 
     def __init__(
@@ -130,14 +235,23 @@ class ManusAgent:
         system_prompt: str = "",
         max_steps: int = 100,
         task_timeout_seconds: float = 300.0,
+        speak_callback: Optional[Callable[[str], None]] = None,
     ):
         self.system_prompt = system_prompt or ""
         self.max_steps = max_steps
         self.task_timeout_seconds = max(0.0, float(task_timeout_seconds))
+        self.speak_callback = speak_callback
+        
+        # 设置全局 speak 回调
+        if speak_callback:
+            set_agent_speak_callback(speak_callback)
+        
         self._agent = None  # 延迟创建（在 async 上下文中初始化）
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
         self._run_lock = threading.Lock()
+        self._active_future_lock = threading.Lock()
+        self._active_future: Optional[concurrent.futures.Future] = None
         self._initialized = False
 
         # 在任何 OpenManus 模块被导入之前，先将项目 API 设置同步到 config.toml
@@ -173,12 +287,33 @@ class ManusAgent:
         if self._loop is None or self._loop.is_closed():
             raise RuntimeError("后台事件循环未启动或已关闭")
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        with self._active_future_lock:
+            self._active_future = future
         try:
             return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError as e:
             future.cancel()
             timeout_label = timeout if timeout is not None else self.task_timeout_seconds
             raise TimeoutError(f"Agent 执行超时（>{timeout_label}s）") from e
+        except concurrent.futures.CancelledError as e:
+            raise AgentTaskCancelledError("Agent 任务已取消") from e
+        finally:
+            with self._active_future_lock:
+                if self._active_future is future:
+                    self._active_future = None
+
+    def request_cancel(self) -> bool:
+        """请求取消当前正在执行的任务。"""
+        with self._active_future_lock:
+            future = self._active_future
+
+        if future is None or future.done():
+            return False
+
+        cancelled = future.cancel()
+        if cancelled:
+            logger.info("ManusAgent 收到取消请求，已尝试取消当前任务")
+        return cancelled
 
     async def _ensure_agent(self):
         """确保 OpenManus Manus agent 已创建（延迟初始化）。"""
@@ -186,22 +321,44 @@ class ManusAgent:
             return
 
         # 延迟导入 — config.toml 此时已由 __init__ 中的 _sync_openmanus_config() 写好
-        from app.agent.manus import Manus
         from app.config import config
+
+        allowed_directories = "\n".join(
+            f"- {path}" for path in config.workspace_roots
+        )
 
         # 构建自定义的 system prompt
         base_prompt = (
             "你是一个强大的 AI 智能体，能够解决用户提出的各种任务。你拥有多种工具可以调用，"
             "包括浏览器自动化、Python 代码执行、文件编辑、网页搜索等。"
+            "你还拥有 memory_md 工具，可将稳定偏好、项目约定和过程性笔记写入 Markdown 记忆文件。"
+            "\n\n【执行风格】"
             "请用中文回答和思考。"
+            "为了让用户了解你的进行，请在每个思考步骤中使用 JSON 格式的思考内容，例如："
+            '{"thought": "我现在需要使用搜索工具来查找相关信息", "next_step": "search"}'
+            "\n\n【文件操作规范】"
             "严禁将纯文本内容直接写入 .pptx/.docx/.xlsx/.pdf 这类二进制格式文件。"
-            "若用户要求生成 PPTX，必须通过 python_execute 运行 Python 代码生成合法的 Office 文件。"
-            f"\n工作目录: {config.workspace_root}"
+            "若用户要求生成 PPTX/DOCX/PDF，优先使用 document_skill 工具；"
+            "仅在需要非常定制的底层逻辑时，再使用 python_execute。"
+            "当任务是制作或美化 PPT/Word/PDF 时，默认采用两阶段流程："
+            "第一阶段在本地目录先生成样式草案（优先 CSS 文件，如 theme.css）；"
+            "第二阶段通过 document_skill 将样式映射到目标格式对象样式并导出文件。"
+            "若转换失败，先保留 CSS 与中间产物，再调整映射规则重试，不要直接写二进制文本。"
+            f"\n\n【工作目录】"
+            f"主工作目录: {config.workspace_root}"
+            f"\n本地可访问目录:\n{allowed_directories}"
+            "\n以上目录仅用于 Local 端文件处理，不影响 IDE 工作区。"
         )
         if self.system_prompt:
             base_prompt = self.system_prompt + "\n\n" + base_prompt
 
-        self._agent = await Manus.create(
+        # 尝试使用 SpeakingManus（支持语音描述）；如果失败则回落到普通 Manus
+        agent_class = _create_speaking_manus_class()
+        if agent_class is None:
+            from app.agent.manus import Manus
+            agent_class = Manus
+
+        self._agent = await agent_class.create(
             system_prompt=base_prompt,
             max_steps=self.max_steps,
         )
@@ -231,14 +388,55 @@ class ManusAgent:
             with self._run_lock:
                 result = self._run_coro(self._async_run_task(task_description), timeout=self.task_timeout_seconds)
             normalized = self._normalize_result(result)
+            self._persist_session_memory_note(task_description, normalized)
             logger.info("ManusAgent.run_task 完成 — result(len)=" f"{len(normalized)}")
             return normalized
         except TimeoutError as e:
             logger.error(f"ManusAgent.run_task 超时: {e}")
-            return f"⏱️ Agent 执行超时，请简化任务后重试（{self.task_timeout_seconds:.0f}s）"
+            timeout_msg = f"⏱️ Agent 执行超时，请简化任务后重试（{self.task_timeout_seconds:.0f}s）"
+            self._persist_session_memory_note(task_description, timeout_msg)
+            return timeout_msg
+        except AgentTaskCancelledError:
+            canceled_msg = "⚠️ Agent 任务已被用户中止"
+            self._persist_session_memory_note(task_description, canceled_msg)
+            logger.info("ManusAgent.run_task 被取消")
+            return canceled_msg
         except Exception as e:
             logger.exception(f"ManusAgent.run_task 异常: {e}")
-            return f"❌ Agent 执行异常: {e}"
+            error_msg = f"❌ Agent 执行异常: {e}"
+            self._persist_session_memory_note(task_description, error_msg)
+            return error_msg
+
+    def _persist_session_memory_note(self, task_description: str, result: str) -> None:
+        """Best-effort persistence of task/result to session markdown memory."""
+        if not self._initialized:
+            return
+
+        try:
+            self._run_coro(self._async_persist_session_memory_note(task_description, result), timeout=10)
+        except Exception as e:
+            logger.debug(f"写入 memory_md 会话笔记失败: {e}")
+
+    async def _async_persist_session_memory_note(self, task_description: str, result: str) -> None:
+        """Append task execution trace into session/task_runs.md via memory_md tool."""
+        from app.tool.memory_md import MemoryMarkdownTool
+
+        tool = MemoryMarkdownTool()
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        safe_task = (task_description or "").strip() or "(empty task)"
+        safe_result = (result or "").strip() or "(empty result)"
+        entry = (
+            f"\n## {timestamp}\n"
+            f"### task\n{safe_task}\n\n"
+            "### result\n"
+            f"```\n{safe_result}\n```\n"
+        )
+        await tool.execute(
+            command="append",
+            scope="session",
+            file="task_runs.md",
+            content=entry,
+        )
 
     async def _async_run_task(self, task_description: str) -> str:
         """异步执行任务（在后台事件循环线程中运行）。"""

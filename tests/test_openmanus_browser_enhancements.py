@@ -5,6 +5,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 class _DummyLogger:
     def __getattr__(self, name):
@@ -157,6 +159,9 @@ class _DummyPage:
     async def screenshot(self, *args, **kwargs):
         return b"jpeg-bytes"
 
+    async def content(self):
+        return f"<html><body>{self._page_text}</body></html>"
+
     async def evaluate(self, _script):
         return self._page_text
 
@@ -171,6 +176,83 @@ class _DummyContext:
 
     async def get_current_page(self):
         return self._page
+
+
+class _DummyContextWithPage:
+    def __init__(self, page):
+        self._page = page
+        self.config = types.SimpleNamespace(browser_window_size={"height": 720})
+
+    async def get_state(self, *args, **kwargs):
+        return _DummyState()
+
+    async def get_current_page(self):
+        return self._page
+
+
+class _StructuredExtractPage(_DummyPage):
+    async def evaluate(self, script):
+        if "candidateSelectors" in script:
+            return {
+                "mainText": "Main article paragraph " * 120,
+                "bodyText": "navigation " * 900,
+            }
+        if "visibleTextBlocks" in script:
+            return "Visible line A Visible line B"
+        return self._page_text
+
+
+class _ViewportExtractPage(_DummyPage):
+    async def evaluate(self, script):
+        if "candidateSelectors" in script:
+            return {
+                "mainText": "",
+                "bodyText": "",
+            }
+        if "visibleTextBlocks" in script:
+            return "Visible paragraph one. Visible paragraph two."
+        return self._page_text
+
+
+class _HtmlOnlyFallbackPage(_DummyPage):
+    async def evaluate(self, script):
+        # Simulate DOM extraction returning empty so HTML fallback path is exercised.
+        if "candidateSelectors" in script:
+            return {
+                "mainText": "",
+                "bodyText": "",
+            }
+        if "document.body && (document.body.innerText || document.body.textContent)" in script:
+            return ""
+        if "visibleTextBlocks" in script:
+            return ""
+        return ""
+
+    async def content(self):
+        return """
+<div class=\"J-lemma-content\">
+  <h2>字符库函数</h2>
+  <div class=\"para\">int isalpha(int ch) 返回非0值</div>
+  <div class=\"para\">int toupper(int ch) 返回相应的大写字母</div>
+</div>
+"""
+
+
+class _ElementInspectPage(_DummyPage):
+    async def evaluate(self, _script, _xpath):
+        return {
+            "tag": "div",
+            "text": "字符库函数",
+            "text_preview": "字符库函数 int isalpha(int ch) 返回非0值 int toupper(int ch) 返回相应的大写字母",
+            "text_length": 96,
+            "href": "",
+            "target": "",
+            "role": "",
+            "aria_label": "",
+            "class_name": "J-lemma-content",
+            "id": "",
+            "rect": {"x": 1, "y": 2, "width": 300, "height": 180},
+        }
 
 
 class _DummyToolCollection:
@@ -205,6 +287,15 @@ def test_build_text_preview_preserves_head_and_tail():
     assert preview.startswith("A" * 10)
     assert preview.endswith("B" * 10)
     assert "[60 chars omitted]" in preview
+
+
+def test_select_preferred_page_text_prefers_main_when_substantial():
+    main_text = "Article body " * 80
+    body_text = "Nav " * 500
+
+    selected = BrowserUseTool._select_preferred_page_text(main_text, body_text)
+
+    assert selected.startswith("Article body")
 
 
 def test_normalize_tabs_returns_index_id_and_meta():
@@ -324,6 +415,55 @@ def test_get_current_state_contains_text_length_and_preview():
     assert "chars omitted" in payload["page_text"]
 
 
+def test_get_current_state_prefers_structured_main_text():
+    tool = BrowserUseTool(llm=None)
+    page = _StructuredExtractPage(page_text="fallback")
+    context = _DummyContextWithPage(page)
+
+    result = asyncio.run(tool.get_current_state(context))
+
+    assert not result.error
+    payload = json.loads(result.output)
+    assert "Main article paragraph" in payload["page_text"]
+
+
+def test_get_current_state_includes_viewport_text_preview():
+    tool = BrowserUseTool(llm=None)
+    page = _ViewportExtractPage(page_text="fallback page text")
+    context = _DummyContextWithPage(page)
+
+    result = asyncio.run(tool.get_current_state(context))
+
+    assert not result.error
+    payload = json.loads(result.output)
+    assert payload["viewport_text_length"] > 0
+    assert "Visible paragraph" in payload["viewport_text"]
+
+
+def test_extract_page_text_falls_back_to_html_text_for_nested_markup():
+    tool = BrowserUseTool(llm=None)
+    page = _HtmlOnlyFallbackPage(page_text="")
+
+    extracted_text, extracted_length = asyncio.run(tool._extract_page_text(page))
+
+    assert extracted_length > 0
+    assert "字符库函数" in extracted_text
+    assert "isalpha" in extracted_text
+    assert "toupper" in extracted_text
+
+
+def test_get_element_brief_includes_text_preview_and_length():
+    tool = BrowserUseTool(llm=None)
+    page = _ElementInspectPage(page_text="")
+
+    brief = asyncio.run(tool._get_element_brief_by_xpath(page, "//div"))
+
+    assert brief["tag"] == "div"
+    assert brief["text"] == "字符库函数"
+    assert brief["text_length"] == 96
+    assert "isalpha" in brief["text_preview"]
+
+
 def test_browser_context_helper_reads_scroll_info_from_state():
     helper = BrowserContextHelper(_DummyAgent())
 
@@ -346,6 +486,8 @@ def test_browser_context_helper_reads_scroll_info_from_state():
                 },
             ],
             "scroll_info": {"pixels_above": 120, "pixels_below": 340},
+            "viewport_text": "visible paragraph",
+            "viewport_text_length": 17,
             "page_text": "hello world",
             "page_text_length": 11,
         }
@@ -355,5 +497,169 @@ def test_browser_context_helper_reads_scroll_info_from_state():
 
     assert "(120 pixels)" in prompt
     assert "(340 pixels)" in prompt
-    assert "Page text preview (11 chars total)" in prompt
+    assert "Visible viewport text (17 chars total)" in prompt
+    assert "Full-page text preview (11 chars total)" in prompt
     assert "index=1, id=7" in prompt
+
+
+def test_browser_context_helper_keeps_tail_in_long_page_preview():
+    helper = BrowserContextHelper(_DummyAgent())
+    long_text = ("NAV " * 600) + "ARTICLE_TAIL_MARKER"
+
+    async def fake_get_browser_state():
+        return {
+            "url": "https://example.com",
+            "title": "Example",
+            "tabs": [],
+            "scroll_info": {"pixels_above": 0, "pixels_below": 0},
+            "viewport_text": "CURRENT_VIEW_MARKER",
+            "viewport_text_length": 19,
+            "page_text": long_text,
+            "page_text_length": len(long_text),
+        }
+
+    helper.get_browser_state = fake_get_browser_state  # type: ignore[method-assign]
+    prompt = asyncio.run(helper.format_next_step_prompt())
+
+    assert "chars omitted" in prompt
+    assert "CURRENT_VIEW_MARKER" in prompt
+    assert "ARTICLE_TAIL_MARKER" in prompt
+
+
+def test_execute_dispatches_click_element_to_helper(monkeypatch: pytest.MonkeyPatch):
+    tool = BrowserUseTool(llm=None)
+    sentinel_context = object()
+    captured = {}
+
+    async def _fake_init():
+        return sentinel_context
+
+    async def _fake_click_handler(context, index):
+        captured["context"] = context
+        captured["index"] = index
+        return types.SimpleNamespace(output="clicked", error=None)
+
+    monkeypatch.setattr(tool, "_ensure_browser_initialized", _fake_init)
+    monkeypatch.setattr(tool, "_get_max_content_length", lambda: 2000)
+    monkeypatch.setattr(tool, "_handle_navigation_action", lambda *args, **kwargs: asyncio.sleep(0, result=None))
+    monkeypatch.setattr(tool, "_handle_click_element_action", _fake_click_handler)
+
+    result = asyncio.run(tool.execute(action="click_element", index=7))
+
+    assert result.output == "clicked"
+    assert result.error is None
+    assert captured["context"] is sentinel_context
+    assert captured["index"] == 7
+
+
+def test_execute_dispatches_interaction_action_to_helper(monkeypatch: pytest.MonkeyPatch):
+    tool = BrowserUseTool(llm=None)
+    sentinel_context = object()
+    captured = {}
+
+    async def _fake_init():
+        return sentinel_context
+
+    async def _fake_interaction_handler(context, action, index, text, scroll_amount, keys):
+        captured["context"] = context
+        captured["action"] = action
+        captured["keys"] = keys
+        return types.SimpleNamespace(output="interaction-ok", error=None)
+
+    monkeypatch.setattr(tool, "_ensure_browser_initialized", _fake_init)
+    monkeypatch.setattr(tool, "_get_max_content_length", lambda: 2000)
+    monkeypatch.setattr(tool, "_handle_navigation_action", lambda *args, **kwargs: asyncio.sleep(0, result=None))
+    monkeypatch.setattr(tool, "_handle_interaction_action", _fake_interaction_handler)
+
+    result = asyncio.run(tool.execute(action="send_keys", keys="Enter"))
+
+    assert result.output == "interaction-ok"
+    assert captured["context"] is sentinel_context
+    assert captured["action"] == "send_keys"
+    assert captured["keys"] == "Enter"
+
+
+def test_execute_dispatches_extract_content_with_max_len(monkeypatch: pytest.MonkeyPatch):
+    tool = BrowserUseTool(llm=None)
+    sentinel_context = object()
+    captured = {}
+
+    async def _fake_init():
+        return sentinel_context
+
+    async def _fake_extract_handler(context, goal, max_content_length):
+        captured["context"] = context
+        captured["goal"] = goal
+        captured["max_content_length"] = max_content_length
+        return types.SimpleNamespace(output="extract-ok", error=None)
+
+    monkeypatch.setattr(tool, "_ensure_browser_initialized", _fake_init)
+    monkeypatch.setattr(tool, "_get_max_content_length", lambda: 3456)
+    monkeypatch.setattr(tool, "_handle_navigation_action", lambda *args, **kwargs: asyncio.sleep(0, result=None))
+    monkeypatch.setattr(tool, "_handle_extract_content_action", _fake_extract_handler)
+
+    result = asyncio.run(tool.execute(action="extract_content", goal="collect key points"))
+
+    assert result.output == "extract-ok"
+    assert captured["context"] is sentinel_context
+    assert captured["goal"] == "collect key points"
+    assert captured["max_content_length"] == 3456
+
+
+def test_execute_dispatches_tab_then_utility(monkeypatch: pytest.MonkeyPatch):
+    tool = BrowserUseTool(llm=None)
+    sentinel_context = object()
+    tab_called = {"count": 0}
+    utility_called = {"count": 0}
+
+    async def _fake_init():
+        return sentinel_context
+
+    async def _fake_nav(*args, **kwargs):
+        return None
+
+    async def _fake_tab(context, action, tab_id, url):
+        tab_called["count"] += 1
+        if action in {"switch_tab", "list_tabs", "open_tab", "close_tab"}:
+            return types.SimpleNamespace(output="tab-ok", error=None)
+        return None
+
+    async def _fake_utility(context, action, seconds):
+        utility_called["count"] += 1
+        if action in {"wait", "get_media_status", "close_browser"}:
+            return types.SimpleNamespace(output="utility-ok", error=None)
+        return None
+
+    monkeypatch.setattr(tool, "_ensure_browser_initialized", _fake_init)
+    monkeypatch.setattr(tool, "_get_max_content_length", lambda: 2000)
+    monkeypatch.setattr(tool, "_handle_navigation_action", _fake_nav)
+    monkeypatch.setattr(tool, "_handle_tab_action", _fake_tab)
+    monkeypatch.setattr(tool, "_handle_utility_action", _fake_utility)
+
+    tab_result = asyncio.run(tool.execute(action="list_tabs"))
+    utility_result = asyncio.run(tool.execute(action="wait", seconds=1))
+
+    assert tab_result.output == "tab-ok"
+    assert utility_result.output == "utility-ok"
+    assert tab_called["count"] == 1
+    assert utility_called["count"] == 1
+
+
+def test_execute_unknown_action_when_no_dispatcher_handles(monkeypatch: pytest.MonkeyPatch):
+    tool = BrowserUseTool(llm=None)
+
+    async def _fake_init():
+        return object()
+
+    async def _none(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tool, "_ensure_browser_initialized", _fake_init)
+    monkeypatch.setattr(tool, "_get_max_content_length", lambda: 2000)
+    monkeypatch.setattr(tool, "_handle_navigation_action", _none)
+    monkeypatch.setattr(tool, "_handle_tab_action", _none)
+    monkeypatch.setattr(tool, "_handle_utility_action", _none)
+
+    result = asyncio.run(tool.execute(action="unknown_action"))
+
+    assert result.error == "Unknown action: unknown_action"

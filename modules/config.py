@@ -24,7 +24,26 @@ import yaml
 # ---- 路径常量 ----
 PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 _ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
-_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+_DEFAULT_DEV_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+_DEFAULT_PROD_CONFIG_PATH = "/etc/local-project/config.yaml"
+
+
+class EnvironmentAwareConfig:
+    """根据运行环境解析配置文件路径。"""
+
+    def __init__(self):
+        self.environment = (os.getenv("APP_ENV") or "development").strip().lower()
+
+    def get_config_path(self) -> str:
+        explicit_path = (os.getenv("APP_CONFIG_PATH") or "").strip()
+        if explicit_path:
+            return explicit_path
+        if self.environment == "production":
+            return _DEFAULT_PROD_CONFIG_PATH
+        return _DEFAULT_DEV_CONFIG_PATH
+
+
+_CONFIG_PATH = EnvironmentAwareConfig().get_config_path()
 
 # ---- GPT-SoVITS 内嵌路径（固定相对路径）----
 GPT_SOVITS_ROOT = os.path.join(os.path.dirname(__file__), "gpt_sovits")
@@ -35,8 +54,11 @@ _env_vars = dotenv.dotenv_values(dotenv_path=_ENV_PATH)
 dotenv.load_dotenv(dotenv_path=_ENV_PATH)
 
 # ---- 加载 YAML 配置 ----
-with open(_CONFIG_PATH, encoding="utf-8") as _f:
-    config = yaml.safe_load(_f)
+if os.path.exists(_CONFIG_PATH):
+    with open(_CONFIG_PATH, encoding="utf-8") as _f:
+        config = yaml.safe_load(_f) or {}
+else:
+    config = {}
 
 
 def _clean_env_value(value):
@@ -243,7 +265,8 @@ MODEL_NAME = _clean_env_value(_env_vars.get("MODEL_NAME"))
 
 # ---- 嵌入模型名称（可选，用于 memoripy 记忆系统）----
 # 设置为 Volcengine 嵌入模型端点 ID 或模型名称（如 doubao-embedding）
-# 如果未设置，将回退到本地 sentence-transformers
+# 注意：当前默认嵌入后端由 MEMORY_EMBEDDING_BACKEND 控制（默认 rust_hash）
+# 当 MEMORY_EMBEDDING_BACKEND=ark 时，EMBEDDING_MODEL_NAME 才会生效
 EMBEDDING_MODEL_NAME = _clean_env_value(_env_vars.get("EMBEDDING_MODEL_NAME"))
 
 # ---- System Prompt（支持文件或环境变量）----

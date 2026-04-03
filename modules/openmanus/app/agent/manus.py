@@ -10,9 +10,16 @@ from app.prompt.manus import NEXT_STEP_PROMPT, SYSTEM_PROMPT
 from app.tool import Terminate, ToolCollection, WebSearch
 from app.tool.ask_human import AskHuman
 from app.tool.browser_use_tool import BrowserUseTool
+from app.tool.document_skill import DocumentSkillTool
+from app.tool.memory_md import MemoryMarkdownTool
 from app.tool.mcp import MCPClients, MCPClientTool
 from app.tool.python_execute import PythonExecute
 from app.tool.str_replace_editor import StrReplaceEditor
+
+
+def _format_allowed_directories() -> str:
+    """Format configured local workspace roots for prompt injection."""
+    return "\n".join(f"- {path.absolute()}" for path in config.workspace_roots)
 
 
 class Manus(ToolCallAgent):
@@ -22,7 +29,8 @@ class Manus(ToolCallAgent):
     description: str = "A versatile agent that can solve various tasks using multiple tools including MCP-based tools"
 
     system_prompt: str = SYSTEM_PROMPT.format(
-        directory=config.workspace_root.absolute()
+        directory=config.workspace_root.absolute(),
+        allowed_directories=_format_allowed_directories(),
     )
     next_step_prompt: str = NEXT_STEP_PROMPT
 
@@ -35,10 +43,12 @@ class Manus(ToolCallAgent):
     # Add general-purpose tools to the tool collection
     available_tools: ToolCollection = Field(
         default_factory=lambda: ToolCollection(
+            DocumentSkillTool(),
             PythonExecute(),
             WebSearch(),
             BrowserUseTool(),
             StrReplaceEditor(),
+            MemoryMarkdownTool(),
             AskHuman(),
             Terminate(),
         )

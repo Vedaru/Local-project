@@ -5,6 +5,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 # pre-create a minimal stub for the `browser_use` package which is imported by
 # app.tool.browser_use_tool. The real package isn't installed in the test
 # environment, so we provide dummy attributes to keep imports happy.
@@ -68,6 +70,7 @@ StrReplaceEditor = module.StrReplaceEditor
 
 # we still need a file operator for running commands
 from modules.openmanus.app.tool.file_operators import LocalFileOperator  # noqa: E402
+from app.exceptions import ToolError  # noqa: E402
 
 
 def test_view_directory_skips_hidden(tmp_path):
@@ -99,3 +102,38 @@ def test_view_directory_skips_hidden(tmp_path):
     assert ".hidden_dir" not in output
     assert ".hidden_file.txt" not in output
     assert result.error == ""
+
+
+def test_view_binary_office_file_is_blocked(tmp_path):
+    """Viewing binary Office files should fail fast with actionable guidance."""
+    file_path = tmp_path / "sample.docx"
+    file_path.write_bytes(b"PK\x03\x04fake-docx")
+
+    editor = StrReplaceEditor()
+
+    with pytest.raises(ToolError) as exc:
+        asyncio.run(editor.execute(command="view", path=str(file_path)))
+
+    message = str(exc.value.message)
+    assert "binary Office file" in message
+    assert "python_execute" in message
+
+
+def test_create_binary_office_file_is_blocked(tmp_path):
+    """Creating binary Office files as plain text should be rejected."""
+    file_path = tmp_path / "new_presentation.pptx"
+
+    editor = StrReplaceEditor()
+
+    with pytest.raises(ToolError) as exc:
+        asyncio.run(
+            editor.execute(
+                command="create",
+                path=str(file_path),
+                file_text="plain text content",
+            )
+        )
+
+    message = str(exc.value.message)
+    assert "binary Office file" in message
+    assert "python_execute" in message

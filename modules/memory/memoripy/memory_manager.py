@@ -6,8 +6,10 @@ Changes from upstream:
 - Messages are plain dicts with 'role' and 'content' keys.
 """
 
+import os
 import time
 import uuid
+from collections import OrderedDict
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -15,6 +17,11 @@ from pydantic import BaseModel, Field
 from .in_memory_storage import InMemoryStorage
 from .memory_store import MemoryStore
 from .model import ChatModel, EmbeddingModel
+
+
+def _debug_log(message: str) -> None:
+    if os.environ.get("MEMORY_MANAGER_DEBUG") == "1":
+        print(message)
 
 
 class ConceptExtractionResponse(BaseModel):
@@ -30,6 +37,8 @@ class MemoryManager:
     def __init__(self, chat_model: ChatModel, embedding_model: EmbeddingModel, storage=None):
         self.chat_model = chat_model
         self.embedding_model = embedding_model
+        self._embedding_cache_size = max(0, int(os.environ.get("MEMORY_EMBED_CACHE_SIZE", "256")))
+        self._embedding_cache: OrderedDict[str, np.ndarray] = OrderedDict()
 
         # Initialize memory store with the correct dimension
         self.dimension = self.embedding_model.initialize_embedding_dimension()
@@ -41,6 +50,10 @@ class MemoryManager:
             self.storage = storage
 
         self.initialize_memory()
+
+    @staticmethod
+    def _normalize_cache_key(text: str) -> str:
+        return " ".join((text or "").split())
 
     def standardize_embedding(self, embedding: np.ndarray) -> np.ndarray:
         """
@@ -77,15 +90,30 @@ class MemoryManager:
         self.save_memory_to_history()
 
     def get_embedding(self, text: str) -> np.ndarray:
-        print("Generating embedding for the provided text...")
+        _debug_log("Generating embedding for the provided text...")
+        cache_key = self._normalize_cache_key(text)
+        if cache_key and self._embedding_cache_size > 0:
+            cached = self._embedding_cache.get(cache_key)
+            if cached is not None:
+                self._embedding_cache.move_to_end(cache_key)
+                return np.array(cached, copy=True)
+
         embedding = self.embedding_model.get_embedding(text)
         if embedding is None:
             raise ValueError("Failed to generate embedding.")
         standardized_embedding = self.standardize_embedding(embedding)
-        return np.array(standardized_embedding).reshape(1, -1)
+        result = np.asarray(standardized_embedding, dtype=np.float32).reshape(1, -1)
+
+        if cache_key and self._embedding_cache_size > 0:
+            self._embedding_cache[cache_key] = result
+            self._embedding_cache.move_to_end(cache_key)
+            while len(self._embedding_cache) > self._embedding_cache_size:
+                self._embedding_cache.popitem(last=False)
+
+        return np.array(result, copy=True)
 
     def extract_concepts(self, text: str) -> list[str]:
-        print("Extracting key concepts from the provided text...")
+        _debug_log("Extracting key concepts from the provided text...")
         return self.chat_model.extract_concepts(text)
 
     def initialize_memory(self):
@@ -96,7 +124,7 @@ class MemoryManager:
         self.memory_store.long_term_memory.extend(long_term)
 
         self.memory_store.cluster_interactions()
-        print(
+        _debug_log(
             f"Memory initialized with {len(self.memory_store.short_term_memory)} interactions in short-term and {len(self.memory_store.long_term_memory)} in long-term."
         )
 
@@ -114,10 +142,10 @@ class MemoryManager:
             context += "\n".join(
                 [f"Previous prompt: {r['prompt']}\nPrevious output: {r['output']}" for r in context_interactions]
             )
-            print(f"Using the following last interactions as context for response generation:\n{context}")
+            _debug_log(f"Using the following last interactions as context for response generation:\n{context}")
         else:
             context = "No previous interactions available."
-            print(context)
+            _debug_log(context)
 
         if retrievals:
             retrieved_context_interactions = retrievals[:context_window]
@@ -127,7 +155,7 @@ class MemoryManager:
                     for r in retrieved_context_interactions
                 ]
             )
-            print(
+            _debug_log(
                 f"Using the following retrieved interactions as context for response generation:\n{retrieved_context}"
             )
             context += "\n" + retrieved_context

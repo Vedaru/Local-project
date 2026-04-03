@@ -20,15 +20,34 @@ class BrowserContextHelper:
         self.agent = agent
         self._current_base64_image: Optional[str] = None
 
+    @staticmethod
+    def _build_prompt_preview(text: str, max_chars: int = 2200) -> str:
+        if max_chars <= 0 or len(text) <= max_chars:
+            return text
+
+        head_chars = max_chars // 2
+        tail_chars = max_chars - head_chars
+        omitted = len(text) - max_chars
+        return (
+            f"{text[:head_chars]} "
+            f"...[{omitted} chars omitted]... "
+            f"{text[-tail_chars:]}"
+        )
+
     async def get_browser_state(self) -> Optional[dict]:
         browser_tool = self.agent.available_tools.get_tool(BrowserUseTool().name)
         if not browser_tool:
             try:
-                from app.tool.sandbox.sb_browser_tool import SandboxBrowserTool
-                browser_tool = self.agent.available_tools.get_tool(
-                    SandboxBrowserTool().name
+                sandbox_module = __import__(
+                    "app.tool.sandbox.sb_browser_tool",
+                    fromlist=["SandboxBrowserTool"],
                 )
-            except ImportError:
+                sandbox_tool_cls = getattr(sandbox_module, "SandboxBrowserTool", None)
+                if sandbox_tool_cls:
+                    browser_tool = self.agent.available_tools.get_tool(
+                        sandbox_tool_cls().name
+                    )
+            except Exception:
                 pass
         if not browser_tool or not hasattr(browser_tool, "get_current_state"):
             logger.warning("BrowserUseTool not found or doesn't have get_current_state")
@@ -80,20 +99,38 @@ class BrowserContextHelper:
                 content_above_info = f" ({pixels_above} pixels)"
             if pixels_below > 0:
                 content_below_info = f" ({pixels_below} pixels)"
-            # also include a small snippet of page_text in the prompt if available
+
+            viewport_text = browser_state.get("viewport_text")
+            viewport_text_length = browser_state.get("viewport_text_length", 0)
+            if viewport_text:
+                viewport_snippet = viewport_text.replace("\n", " ")
+                viewport_snippet = self._build_prompt_preview(
+                    viewport_snippet,
+                    max_chars=2200,
+                )
+                if viewport_text_length:
+                    results_info += (
+                        f"\n   Visible viewport text ({viewport_text_length} chars total): "
+                        f"{viewport_snippet}"
+                    )
+                else:
+                    results_info += (
+                        f"\n   Visible viewport text: {viewport_snippet}"
+                    )
+
+            # include full-page text summary as additional context
             page_text = browser_state.get("page_text")
             page_text_length = browser_state.get("page_text_length", 0)
             if page_text:
                 snippet = page_text.replace("\n", " ")
-                if len(snippet) > 1200:
-                    snippet = snippet[:1200] + "..."
+                snippet = self._build_prompt_preview(snippet, max_chars=2200)
                 if page_text_length:
                     results_info += (
-                        f"\n   Page text preview ({page_text_length} chars total): "
+                        f"\n   Full-page text preview ({page_text_length} chars total): "
                         f"{snippet}"
                     )
                 else:
-                    results_info += f"\n   Page text preview: {snippet}"
+                    results_info += f"\n   Full-page text preview: {snippet}"
 
             if self._current_base64_image:
                 image_message = Message.user_message(

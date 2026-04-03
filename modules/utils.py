@@ -2,6 +2,7 @@
 
 import os
 import re
+import shutil
 import subprocess
 import time
 from typing import Optional
@@ -16,10 +17,54 @@ logger = get_logger("utils")
 PUNCTUATION = ["。", "！", "？", "!", "?", "\n", "；", ";", "：", ":", "，", ","]
 
 # 预编译 Avatar 控制标签正则，避免每次调用都重新编译
-_EMOTION_TAG_RE = re.compile(r"\[(开心|生气|委屈|疑惑|嘲笑|宕机)\]")
+_EMOTION_TAG_RE = re.compile(r"(?:\[|【)\s*(开心|生气|委屈|疑惑|嘲笑|宕机)\s*(?:\]|】)")
 _MOTION_TAG_RE = re.compile(
-    r"\[(?:动作|motion)\s*[:：]\s*([^\]:：\s]+)(?:\s*[:：]\s*(-?\d+))?\s*\]",
+    r"(?:\[|【)\s*(?:动作|motion)\s*[:：]\s*([^\]】:：\s]+)(?:\s*[:：]\s*(-?\d+))?\s*(?:\]|】)",
     re.IGNORECASE,
+)
+_BRACKETED_SEGMENT_RE = re.compile(r"(\[[^\[\]]{1,24}\]|【[^【】]{1,24}】|\([^()]{1,24}\)|（[^（）]{1,24}）)")
+_EMOTION_MARKER_PREFIXES = ("表情:", "表情：", "emotion:", "emotion：")
+
+# 仅用于清理口语化情绪旁白，不影响正常括号内容
+_EMOTION_MARKER_KEYWORDS = (
+    "开心",
+    "高兴",
+    "生气",
+    "愤怒",
+    "委屈",
+    "难过",
+    "伤心",
+    "疑惑",
+    "困惑",
+    "嘲笑",
+    "宕机",
+    "微笑",
+    "笑",
+    "大笑",
+    "苦笑",
+    "尴尬",
+    "叹气",
+    "思考",
+    "沉思",
+    "害羞",
+    "惊讶",
+    "兴奋",
+    "认真",
+    "平静",
+    "smile",
+    "laugh",
+    "sigh",
+    "thinking",
+    "happy",
+    "sad",
+    "angry",
+    "surprised",
+    "confused",
+    "表情包",
+    "emoji",
+    "emote",
+    "颜文字",
+    "颜表情",
 )
 
 
@@ -67,8 +112,15 @@ def start_gpt_sovits_api(gpt_sovits_path):
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     python_exe = os.path.join(project_root, "runtime", "python.exe")
     if not os.path.exists(python_exe):
-        logger.error(f"未找到 Python 可执行文件: {python_exe}")
-        return None
+        fallback_python = shutil.which("python")
+        if not fallback_python:
+            logger.error(f"未找到 Python 可执行文件: {python_exe}，且 PATH 中没有 python")
+            return None
+        logger.warning(
+            "未找到 runtime\\python.exe，回退使用 PATH Python: %s",
+            fallback_python,
+        )
+        python_exe = fallback_python
 
     try:
         logger.info(f"正在启动 GPT-SoVITS API 服务，使用脚本: {api_script}，Python: {python_exe}")
@@ -76,20 +128,37 @@ def start_gpt_sovits_api(gpt_sovits_path):
         log_path = os.path.join(gpt_sovits_path, "gpt_sovits.log")
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
+        # 避免 pydantic 在扫描环境插件时因损坏的 dist-info 元数据导致启动失败。
+        env.setdefault("PYDANTIC_DISABLE_PLUGINS", "__all__")
         with open(log_path, "w", encoding="utf-8") as logfile:
-            process = subprocess.Popen(
-                [python_exe, api_script], cwd=gpt_sovits_path, stdout=logfile, stderr=logfile, env=env
-            )
+            popen_kwargs = {
+                "cwd": gpt_sovits_path,
+                "stdout": logfile,
+                "stderr": logfile,
+                "env": env,
+                "stdin": subprocess.DEVNULL,
+            }
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+            process = subprocess.Popen([python_exe, api_script], **popen_kwargs)
 
         # 等待服务启动
         logger.info("等待 GPT-SoVITS API 服务启动...")
         for _ in range(60):  # 增加到60秒
             time.sleep(1)
+            if process.poll() is not None:
+                logger.error(
+                    "GPT-SoVITS API 进程在启动阶段提前退出，退出码=%s。请检查日志: %s",
+                    process.returncode,
+                    log_path,
+                )
+                return None
             if check_sovits_service():
                 logger.info("GPT-SoVITS API 服务已成功启动并可用。")
                 return process
 
-        logger.warning("GPT-SoVITS API 服务启动超时，可能未成功启动。")
+        logger.warning(f"GPT-SoVITS API 服务启动超时，可能未成功启动。请检查日志: {log_path}")
         process.terminate()
         return None
     except Exception as e:
@@ -98,8 +167,8 @@ def start_gpt_sovits_api(gpt_sovits_path):
 
 
 def filter_emotion_tags(text):
-    """过滤掉 Avatar 控制标签，避免在语音中读出。"""
-    return strip_avatar_control_tags(text)
+    """过滤掉 Avatar 控制标签和情绪旁白，避免在语音中读出。"""
+    return sanitize_dialogue_text(text)
 
 
 def extract_emotion_tags(text: str) -> list[str]:
@@ -132,6 +201,56 @@ def strip_avatar_control_tags(text: str) -> str:
 
     cleaned = _EMOTION_TAG_RE.sub("", text)
     cleaned = _MOTION_TAG_RE.sub("", cleaned)
+    return cleaned.strip()
+
+
+def _looks_like_emotion_marker(segment: str) -> bool:
+    """判断括号片段是否为情绪/舞台提示。"""
+    if not segment:
+        return False
+
+    stripped = segment.strip()
+    if _EMOTION_TAG_RE.fullmatch(stripped) or _MOTION_TAG_RE.fullmatch(stripped):
+        return True
+
+    if len(stripped) < 2:
+        return False
+
+    inner = stripped[1:-1].strip().lower()
+    if not inner:
+        return False
+
+    normalized = re.sub(r"\s+", "", inner)
+    if normalized.startswith(("动作:", "动作：", "motion:", "motion：")):
+        return True
+
+    # 仅把带前缀的元信息视作情绪标记，避免误删“表情包”等普通文本。
+    if normalized.startswith(_EMOTION_MARKER_PREFIXES):
+        return True
+
+    if len(normalized) > 16:
+        return False
+
+    return any(keyword in normalized for keyword in _EMOTION_MARKER_KEYWORDS)
+
+
+def sanitize_dialogue_text(text: str) -> str:
+    """清理控制标签与情绪舞台提示，让回复更自然。"""
+    if not text:
+        return ""
+
+    cleaned = strip_avatar_control_tags(text)
+
+    def _replace(match: re.Match[str]) -> str:
+        segment = match.group(0)
+        return "" if _looks_like_emotion_marker(segment) else segment
+
+    cleaned = _BRACKETED_SEGMENT_RE.sub(_replace, cleaned)
+    cleaned = re.sub(r"(?:表情包|颜文字|颜表情|\bemoji\b|\bemote\b)", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\[\s*\]|【\s*】|\(\s*\)|（\s*）", "", cleaned)
+    cleaned = re.sub(r"[\[\]【】()（）]", "", cleaned)
+    cleaned = re.sub(r"\s+([，。！？!?；;：:,])", r"\1", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
 
 

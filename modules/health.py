@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import requests
 
@@ -278,6 +278,146 @@ def check_filesystem_health(paths: Optional[list[str]] = None) -> HealthCheckRes
         )
 
 
+def _safe_non_negative_int(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def _default_web_fetch_stats_provider() -> dict:
+    from .openmanus.app.tool.web_search import WebContentFetcher
+
+    return WebContentFetcher.get_rust_fetcher_stats()
+
+
+def check_web_fetch_runtime_stats(
+    stats_provider: Optional[Callable[[], dict]] = None,
+) -> HealthCheckResult:
+    """检查 Web 抓取链路运行态统计（收口模式）。"""
+    service_name = "web-fetch-runtime"
+    provider = stats_provider or _default_web_fetch_stats_provider
+
+    try:
+        stats = provider()
+    except Exception as e:
+        return HealthCheckResult(
+            service_name=service_name,
+            status=HealthStatus.UNKNOWN,
+            message=f"Runtime stats unavailable: {e}",
+        )
+
+    if not isinstance(stats, dict):
+        return HealthCheckResult(
+            service_name=service_name,
+            status=HealthStatus.UNKNOWN,
+            message="Runtime stats payload is invalid",
+            details={"stats": stats},
+        )
+
+    requests_count = _safe_non_negative_int(stats.get("requests"))
+    success_count = (
+        _safe_non_negative_int(stats.get("extension_success"))
+        + _safe_non_negative_int(stats.get("binary_success"))
+    )
+    error_like_count = (
+        _safe_non_negative_int(stats.get("extension_empty_or_error"))
+        + _safe_non_negative_int(stats.get("extension_unusable"))
+        + _safe_non_negative_int(stats.get("binary_empty_or_error"))
+        + _safe_non_negative_int(stats.get("binary_unavailable"))
+    )
+
+    if requests_count == 0:
+        status = HealthStatus.HEALTHY
+        message = "No runtime web fetch traffic yet"
+    elif success_count == 0:
+        status = HealthStatus.DEGRADED
+        message = f"No successful web fetch in {requests_count} requests"
+    elif error_like_count > success_count:
+        status = HealthStatus.DEGRADED
+        message = (
+            f"Partial success: {success_count}/{requests_count} succeeded, "
+            f"errors={error_like_count}"
+        )
+    else:
+        status = HealthStatus.HEALTHY
+        message = f"Successful web fetches: {success_count}/{requests_count}"
+
+    return HealthCheckResult(
+        service_name=service_name,
+        status=status,
+        message=message,
+        details={"stats": stats},
+    )
+
+
+def check_tts_runtime_stats(
+    stats_provider: Optional[Callable[[], dict]] = None,
+) -> HealthCheckResult:
+    """检查 TTS 链路运行态统计（收口模式）。"""
+    service_name = "tts-runtime"
+
+    if stats_provider is None:
+        return HealthCheckResult(
+            service_name=service_name,
+            status=HealthStatus.UNKNOWN,
+            message="TTS runtime stats provider not registered",
+        )
+
+    try:
+        stats = stats_provider()
+    except Exception as e:
+        return HealthCheckResult(
+            service_name=service_name,
+            status=HealthStatus.UNKNOWN,
+            message=f"Runtime stats unavailable: {e}",
+        )
+
+    if not isinstance(stats, dict):
+        return HealthCheckResult(
+            service_name=service_name,
+            status=HealthStatus.UNKNOWN,
+            message="Runtime stats payload is invalid",
+            details={"stats": stats},
+        )
+
+    stream_attempts = _safe_non_negative_int(stats.get("stream_attempts"))
+    sync_requests = _safe_non_negative_int(stats.get("sync_requests"))
+    activity_count = stream_attempts + sync_requests
+
+    success_count = (
+        _safe_non_negative_int(stats.get("stream_success"))
+        + _safe_non_negative_int(stats.get("buffered_fallback_success"))
+        + _safe_non_negative_int(stats.get("sync_success"))
+    )
+    error_count = (
+        _safe_non_negative_int(stats.get("stream_errors"))
+        + _safe_non_negative_int(stats.get("buffered_fallback_errors"))
+        + _safe_non_negative_int(stats.get("sync_errors"))
+    )
+
+    if activity_count == 0:
+        status = HealthStatus.HEALTHY
+        message = "No runtime TTS traffic yet"
+    elif success_count == 0:
+        status = HealthStatus.DEGRADED
+        message = f"No successful TTS in {activity_count} requests"
+    elif error_count > success_count:
+        status = HealthStatus.DEGRADED
+        message = f"Partial TTS success: success={success_count}, errors={error_count}"
+    else:
+        status = HealthStatus.HEALTHY
+        message = f"Successful TTS requests: {success_count}/{activity_count}"
+
+    return HealthCheckResult(
+        service_name=service_name,
+        status=status,
+        message=message,
+        details={"stats": stats},
+    )
+
+
 # ============================================================
 # 健康检查管理器
 # ============================================================
@@ -455,6 +595,7 @@ def setup_default_checks(
     health_checker.register("sovits", lambda: check_sovits_health(sovits_url))
     health_checker.register("llm-api", lambda: check_llm_api_health(llm_api_key))
     health_checker.register("filesystem", check_filesystem_health)
+    health_checker.register("web-fetch-runtime", check_web_fetch_runtime_stats)
 
     logger.info("Default health checks registered")
 

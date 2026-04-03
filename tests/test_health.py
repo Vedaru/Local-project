@@ -16,6 +16,8 @@ from modules.health import (
     SystemHealth,
     check_filesystem_health,
     check_sovits_health,
+    check_tts_runtime_stats,
+    check_web_fetch_runtime_stats,
 )
 
 
@@ -228,3 +230,78 @@ class TestCheckFilesystemHealth:
 
         assert result.status == HealthStatus.HEALTHY
         assert new_dir.exists()
+
+
+class TestRuntimeStatsHealthChecks:
+    """Tests for closure-mode runtime stats health checks."""
+
+    def test_web_fetch_runtime_healthy_with_success(self):
+        result = check_web_fetch_runtime_stats(
+            lambda: {
+                "requests": 5,
+                "extension_success": 4,
+                "binary_success": 0,
+                "extension_empty_or_error": 1,
+                "extension_unusable": 0,
+                "binary_empty_or_error": 0,
+                "binary_unavailable": 0,
+            }
+        )
+
+        assert result.status == HealthStatus.HEALTHY
+        assert "Successful web fetches" in result.message
+
+    def test_web_fetch_runtime_degraded_without_success(self):
+        result = check_web_fetch_runtime_stats(
+            lambda: {
+                "requests": 3,
+                "extension_success": 0,
+                "binary_success": 0,
+                "extension_empty_or_error": 2,
+                "extension_unusable": 1,
+                "binary_empty_or_error": 0,
+                "binary_unavailable": 0,
+            }
+        )
+
+        assert result.status == HealthStatus.DEGRADED
+        assert "No successful web fetch" in result.message
+
+    def test_tts_runtime_unknown_without_provider(self):
+        result = check_tts_runtime_stats()
+        assert result.status == HealthStatus.UNKNOWN
+        assert "provider not registered" in result.message
+
+    def test_tts_runtime_healthy_with_success(self):
+        result = check_tts_runtime_stats(
+            lambda: {
+                "stream_attempts": 4,
+                "sync_requests": 0,
+                "stream_success": 3,
+                "buffered_fallback_success": 0,
+                "sync_success": 0,
+                "stream_errors": 1,
+                "buffered_fallback_errors": 0,
+                "sync_errors": 0,
+            }
+        )
+
+        assert result.status == HealthStatus.HEALTHY
+        assert "Successful TTS requests" in result.message
+
+    def test_tts_runtime_degraded_when_errors_dominate(self):
+        result = check_tts_runtime_stats(
+            lambda: {
+                "stream_attempts": 6,
+                "sync_requests": 0,
+                "stream_success": 1,
+                "buffered_fallback_success": 0,
+                "sync_success": 0,
+                "stream_errors": 4,
+                "buffered_fallback_errors": 0,
+                "sync_errors": 0,
+            }
+        )
+
+        assert result.status == HealthStatus.DEGRADED
+        assert "Partial TTS success" in result.message

@@ -34,6 +34,9 @@ TRUNCATED_MESSAGE: str = (
     "in order to find the line numbers of what you are looking for.</NOTE>"
 )
 
+# Binary formats that must not be treated as plain text by this editor.
+_BINARY_DOCUMENT_EXTENSIONS = {".pptx", ".docx", ".xlsx", ".pdf"}
+
 # Tool description
 _STR_REPLACE_EDITOR_DESCRIPTION = """Custom editing tool for viewing, creating and editing files
 * State is persistent across command calls and discussions with the user
@@ -41,6 +44,7 @@ _STR_REPLACE_EDITOR_DESCRIPTION = """Custom editing tool for viewing, creating a
 * The `create` command cannot be used if the specified `path` already exists as a file
 * If a `command` generates a long output, it will be truncated and marked with `<response clipped>`
 * The `undo_edit` command will revert the last edit made to the file at `path`
+* Binary Office files (`.pptx/.docx/.xlsx/.pdf`) are not supported here; use `python_execute` to generate/edit those formats
 
 Notes for using the `str_replace` command:
 * The `old_str` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces!
@@ -168,19 +172,31 @@ class StrReplaceEditor(BaseTool):
         self, command: str, path: Path, operator: FileOperator
     ) -> None:
         """Validate path and command combination based on execution environment."""
-        workspace_root = config.workspace_root
+        workspace_roots = tuple(
+            getattr(config, "workspace_roots", (config.workspace_root,))
+        )
         
         # Check if path is absolute
         if not path.is_absolute():
             raise ToolError(f"The path {path} is not an absolute path")
         
-        # 检查路径是否在workspace内（警告但不阻止 - 为了兼容性）
-        try:
-            path.relative_to(workspace_root)
-        except ValueError:
+        # 检查路径是否在允许目录内（警告但不阻止 - 为了兼容性）
+        path_resolved = path.resolve(strict=False)
+        in_allowed_roots = False
+        for root in workspace_roots:
+            root_resolved = root.resolve(strict=False)
+            try:
+                path_resolved.relative_to(root_resolved)
+                in_allowed_roots = True
+                break
+            except ValueError:
+                continue
+
+        if not in_allowed_roots:
+            allowed_roots_text = ", ".join(str(root) for root in workspace_roots)
             logger.warning(
-                f"File path {path} is outside workspace directory {workspace_root}. "
-                f"It is recommended to use paths within the workspace."
+                f"File path {path} is outside configured local directories ({allowed_roots_text}). "
+                "It is recommended to use paths within configured local directories."
             )
 
         # Only check if path exists for non-create commands
@@ -204,6 +220,15 @@ class StrReplaceEditor(BaseTool):
                 raise ToolError(
                     f"File already exists at: {path}. Cannot overwrite files using command `create`."
                 )
+
+        if (
+            command in {"view", "create", "str_replace", "insert"}
+            and path.suffix.lower() in _BINARY_DOCUMENT_EXTENSIONS
+        ):
+            raise ToolError(
+                f"The path {path} is a binary Office file and cannot be handled by str_replace_editor. "
+                "Use python_execute with python-pptx/python-docx (or other binary-safe libraries) instead."
+            )
 
     async def view(
         self,

@@ -7,13 +7,16 @@ SYSTEM_PROMPT = (
     "For web searches, use BrowserUseTool to navigate and retrieve information. "
     "\n"
     "IMPORTANT - FILE OUTPUT RULES:\n"
-    "- ALL files generated, created, or saved MUST be placed in the workspace directory: {directory}\n"
-    "- When using Python code (python_execute): Save all outputs (markdown, code, data, images, etc.) to files within {directory}\n"
-    "- When creating files (str_replace_editor create/str_replace): Always specify absolute paths within {directory}\n"
-    "- Use relative paths in Python code that will resolve from {directory} as the working directory\n"
-    "- Do NOT create or save files outside of {directory}\n"
+   "- Primary working directory is: {directory}\n"
+   "- Allowed local directories for file operations:\n{allowed_directories}\n"
+   "- When using Python code (python_execute): Relative paths resolve from {directory}; use absolute paths for other allowed directories\n"
+   "- When creating files (str_replace_editor create/str_replace): Use absolute paths inside one of the allowed local directories\n"
+   "- Do NOT create or save files outside the allowed directories listed above\n"
+   "- Never treat binary Office files (.pptx/.docx/.xlsx/.pdf) as plain text with str_replace_editor\n"
+   "- For PPT/DOC/PDF creation or beautification, prefer `document_skill` with CSS-first flow: generate local CSS/style draft first, then render into target format\n"
     "\n"
-    "The workspace directory is: {directory}"
+   "The primary workspace directory is: {directory}\n"
+   "Allowed local directories:\n{allowed_directories}"
 )
 
 
@@ -34,7 +37,13 @@ When the task requires web information, use this sequence by default:
 
 General tool strategy:
 - Use `python_execute` for data processing, aggregation, parsing, and file generation.
+- Use `document_skill` for rich PPTX/DOCX/PDF output where font style, layout, and image placement must be controlled locally.
 - Use `str_replace_editor` for deterministic file operations only.
+- For Office/PDF generation (`.pptx` / `.docx` / `.pdf`), do not use `str_replace_editor` to read or edit those binary files.
+- Preferred document workflow:
+   1) call `document_skill` with `command=generate_css_template` (or create a local CSS style draft file manually) for typography/colors/spacing;
+   2) call `document_skill` with `command=render_document` and a JSON spec that references CSS + layout + images;
+   3) if render fails, keep CSS/spec and intermediate logs, adjust mapping rules, then retry.
 - If a tool call fails, do not repeat the exact same call more than twice. Change parameters or switch tools.
 - Always provide concrete parameters (query, url, goal, path) instead of placeholders.
 - Compose solutions from primitive tools rather than relying on task-specific shortcuts.

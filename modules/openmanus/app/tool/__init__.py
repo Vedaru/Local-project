@@ -13,6 +13,8 @@ _lazy_tools: dict[str, str] = {
     "BrowserUseTool": "app.tool.browser_use_tool",
     "Crawl4aiTool": "app.tool.crawl4ai",
     "CreateChatCompletion": "app.tool.create_chat_completion",
+    "DocumentSkillTool": "app.tool.document_skill",
+    "MemoryMarkdownTool": "app.tool.memory_md",
     "PlanningTool": "app.tool.planning",
     "WebSearch": "app.tool.web_search",
 }
