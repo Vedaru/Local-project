@@ -93,7 +93,7 @@ def _create_speaking_manus_class():
             
             async def think(self) -> bool:
                 """执行think步骤，并输出思考过程的语音描述。"""
-                result = await super().think()
+                result = bool(await super().think())
                 
                 # 在think后输出思考内容和选择的工具
                 if result and self.tool_calls and len(self.tool_calls) > 0:
@@ -119,7 +119,7 @@ def _create_speaking_manus_class():
                             speak_text = f"正在执行工具: {tool_name}"
                         _agent_speak(speak_text)
                 
-                result = await super().act()
+                result = str(await super().act())
                 
                 # 执行完成后输出完成信息
                 if self.tool_calls:
@@ -473,10 +473,10 @@ class ManusAgent:
 
         # Add general process-based completion guidance
         # This applies equally to ALL task types
-        result += TaskCompletionHelper.get_completion_guidance()
+        result += str(TaskCompletionHelper.get_completion_guidance())
 
         # Add process awareness guidance (not keyword-triggered)
-        result += TaskCompletionHelper.get_process_awareness_guidance()
+        result += str(TaskCompletionHelper.get_process_awareness_guidance())
 
         return result
 

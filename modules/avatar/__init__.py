@@ -38,12 +38,46 @@ Avatar 模块 - 基于 PyQt6 + QWebEngineView 的 Live2D 模型显示
     expr_mgr.set_expression_from_text("太开心了！")
 """
 
+from typing import TYPE_CHECKING, Any
+
 from .expression import Emotion, EmotionAnalyzer, EmotionKeywords, ExpressionConfig, ExpressionManager
 from .lip_sync import LipSyncAnalyzer, LipSyncFrame, LipSyncManager, LipSyncPlayer
 from .logger import get_logger, log_debug, log_error, log_info, log_warning
-from .manager import AvatarManager
-from .webengine import AvatarBridge, WebEnginePage
-from .widget import AvatarWidget
+
+if TYPE_CHECKING:
+    from .manager import AvatarManager
+    from .webengine import AvatarBridge, WebEnginePage
+    from .widget import AvatarWidget
+
+
+_GUI_SYMBOLS = {"AvatarWidget", "AvatarManager", "WebEnginePage", "AvatarBridge"}
+
+
+def _load_gui_symbol(name: str) -> Any:
+    try:
+        if name == "AvatarWidget":
+            from .widget import AvatarWidget as symbol
+        elif name == "AvatarManager":
+            from .manager import AvatarManager as symbol
+        elif name == "WebEnginePage":
+            from .webengine import WebEnginePage as symbol
+        elif name == "AvatarBridge":
+            from .webengine import AvatarBridge as symbol
+        else:
+            raise AttributeError(name)
+    except Exception as exc:
+        raise ImportError(
+            "Avatar GUI features require PyQt6 and PyQt6-WebEngine to be installed."
+        ) from exc
+
+    globals()[name] = symbol
+    return symbol
+
+
+def __getattr__(name: str) -> Any:
+    if name in _GUI_SYMBOLS:
+        return _load_gui_symbol(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "AvatarWidget",

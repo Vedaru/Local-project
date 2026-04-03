@@ -7,7 +7,7 @@ import threading
 import unicodedata
 import wave
 from collections import deque
-from typing import Optional
+from typing import Optional, Union
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -131,14 +131,17 @@ class VoiceManager:
     @staticmethod
     def _read_int_env(name: str, default: int, minimum: int = 0) -> int:
         raw_value = os.getenv(name)
+        if raw_value is None or raw_value == "":
+            return max(minimum, default)
+
         try:
-            value = int(raw_value) if raw_value not in [None, ""] else default
-        except (TypeError, ValueError):
+            value = int(raw_value)
+        except ValueError:
             value = default
         return max(minimum, value)
 
     @staticmethod
-    def _read_streaming_mode_env(name: str, default: int = 3) -> int | bool:
+    def _read_streaming_mode_env(name: str, default: int = 3) -> Union[int, bool]:
         raw_value = os.getenv(name)
         if raw_value is None or raw_value.strip() == "":
             return default
@@ -228,7 +231,7 @@ class VoiceManager:
 
     def _is_sovits_reachable(self) -> bool:
         docs_url = f"{self.sovits_url.rstrip('/')}/docs"
-        return check_sovits_service(docs_url)
+        return bool(check_sovits_service(docs_url))
 
     def _trigger_sovits_bootstrap_async(self) -> None:
         lock = getattr(self, "_bootstrap_lock", None)

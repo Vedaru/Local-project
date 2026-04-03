@@ -286,10 +286,13 @@ def _safe_non_negative_int(value: Any) -> int:
     return parsed if parsed > 0 else 0
 
 
-def _default_web_fetch_stats_provider() -> dict:
+def _default_web_fetch_stats_provider() -> dict[Any, Any]:
     from .openmanus.app.tool.web_search import WebContentFetcher
 
-    return WebContentFetcher.get_rust_fetcher_stats()
+    stats = WebContentFetcher.get_rust_fetcher_stats()
+    if isinstance(stats, dict):
+        return stats
+    return {}
 
 
 def check_web_fetch_runtime_stats(
