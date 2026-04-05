@@ -54,6 +54,10 @@ def test_compute_adjusted_scores_prefers_rust_backend(monkeypatch: pytest.Monkey
 
 @pytest.mark.unit
 def test_memory_store_uses_accelerated_scores(monkeypatch: pytest.MonkeyPatch):
+    # 确保 Rust 后端可用（CI 环境可能缺少原生 .so/.dll）
+    monkeypatch.setattr(rust_accel, "_RUST_BACKEND", object())
+    monkeypatch.setattr(rust_accel, "_RUST_IMPORT_ATTEMPTED", True)
+
     call_state = {"called": False}
 
     def _fake_compute_adjusted_scores(*, query_embedding_norm, normalized_embeddings, **kwargs):
@@ -147,6 +151,9 @@ def test_get_layered_cache_stats_prefers_rust_backend(monkeypatch: pytest.Monkey
 
 @pytest.mark.unit
 def test_memory_store_retrieve_layered_cache_hits(monkeypatch: pytest.MonkeyPatch):
+    # 确保 Rust 后端可用（CI 环境可能缺少原生 .so/.dll）
+    monkeypatch.setattr(rust_accel, "_RUST_BACKEND", object())
+    monkeypatch.setattr(rust_accel, "_RUST_IMPORT_ATTEMPTED", True)
     monkeypatch.setenv("MEMORY_RETRIEVE_CACHE_TTL_SEC", "60")
     monkeypatch.setenv("MEMORY_RETRIEVE_L1_SIZE", "8")
     monkeypatch.setenv("MEMORY_RETRIEVE_L2_SIZE", "8")
@@ -214,6 +221,9 @@ def test_memory_store_retrieve_layered_cache_hits(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.unit
 def test_memory_store_retrieve_cache_invalidates_after_add(monkeypatch: pytest.MonkeyPatch):
+    # 确保 Rust 后端可用（CI 环境可能缺少原生 .so/.dll）
+    monkeypatch.setattr(rust_accel, "_RUST_BACKEND", object())
+    monkeypatch.setattr(rust_accel, "_RUST_IMPORT_ATTEMPTED", True)
     monkeypatch.setenv("MEMORY_RETRIEVE_CACHE_TTL_SEC", "60")
     monkeypatch.setenv("MEMORY_RETRIEVE_L1_SIZE", "8")
     monkeypatch.setenv("MEMORY_RETRIEVE_L2_SIZE", "8")
