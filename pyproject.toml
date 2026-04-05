@@ -6,7 +6,6 @@ build-backend = "poetry.core.masonry.api"
 name = "local-project"
 version = "0.1.0"
 description = "AI Desktop Assistant with Avatar - 带虚拟形象的桌面 AI 助手"
-readme = "README.md"
 requires-python = ">=3.10,<3.12"
 license = {text = "MIT"}
 authors = [
@@ -32,7 +31,6 @@ name = "local-project"
 version = "0.1.0"
 description = "AI Desktop Assistant with Avatar"
 authors = ["Local Project Team"]
-readme = "README.md"
 packages = [{include = "modules"}]
 
 [tool.poetry.dependencies]
