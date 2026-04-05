@@ -31,6 +31,14 @@ class MicroserviceAIService:
         self._stop_event = threading.Event()
         self._worker_thread: Optional[threading.Thread] = None
 
+        # 持久化 HTTP 客户端（连接复用，消除每次请求的 TCP 握手开销）
+        import httpx as _httpx
+        self._http_session: _httpx.Client = _httpx.Client(
+            timeout=_httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=5.0),
+            trust_env=False,
+            limits=_httpx.Limits(max_connections=10, max_keepalive_connections=5, keepalive_expiry=30.0),
+        )
+
     def start_background(self) -> None:
         if self._worker_thread and self._worker_thread.is_alive():
             return
@@ -52,6 +60,11 @@ class MicroserviceAIService:
             self._input_queue.put_nowait(None)
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=2.0)
+        # 关闭持久化连接池
+        try:
+            self._http_session.close()
+        except Exception:
+            pass
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -102,6 +115,10 @@ class MicroserviceAIService:
             self._emit_response(answer)
             self._emit_expression(answer)
             self._emit_status("就绪")
+
+            tts_data = result.get("tts")
+            if tts_data and isinstance(tts_data, dict):
+                self._emit_speak_request(tts_data, answer)
         except Exception as exc:
             self._emit_response(f"微服务请求失败: {exc}")
             self._emit_status("异常")
@@ -112,13 +129,12 @@ class MicroserviceAIService:
         if self.api_key:
             headers["x-api-key"] = self.api_key
 
-        with httpx.Client(timeout=timeout, trust_env=False) as client:
-            if method == "POST":
-                response = client.post(url, json=payload or {}, headers=headers)
-            else:
-                response = client.get(url, headers=headers)
-            response.raise_for_status()
-            return response.json()
+        if method == "POST":
+            response = self._http_session.post(url, json=payload or {}, headers=headers, timeout=timeout)
+        else:
+            response = self._http_session.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        return response.json()
 
     class _suppress_queue_full:
         def __enter__(self):
@@ -138,6 +154,17 @@ class MicroserviceAIService:
     def _emit_status(self, text: str) -> None:
         if callable(self.callbacks.on_status_update):
             self.callbacks.on_status_update(text)
+
+    def _emit_speak_request(self, tts_data: dict, answer: str) -> None:
+        if callable(self.callbacks.on_speak_request):
+            speak_payload = {
+                "text": answer,
+                "status": "",
+                "mode": "",
+                "wav_path": "",
+                **tts_data,
+            }
+            self.callbacks.on_speak_request(speak_payload)
 
     def _emit_shutdown(self) -> None:
         if callable(self.callbacks.on_shutdown):

@@ -23,6 +23,7 @@ except ImportError:
 from .config import GPT_SOVITS_PATH
 from .logging_config import get_logger
 from .utils import check_sovits_service, start_gpt_sovits_api
+from .voice_cpp_accel import load_voice_cpp_backend
 
 logger = get_logger("voice")
 
@@ -73,6 +74,7 @@ class VoiceManager:
 
         self._tts_stats_lock = threading.Lock()
         self._tts_stats = self._initial_tts_stats()
+        self._voice_cpp_backend = load_voice_cpp_backend()
 
         # 验证参考音频是否存在 —— GPT-SoVITS 要求必须提供 `ref_audio_path`，若文件缺失会导致 400 错误。
         self._ref_audio_missing = False
@@ -200,6 +202,8 @@ class VoiceManager:
             "sync_success": 0,
             "sync_empty": 0,
             "sync_errors": 0,
+            "cpp_wav_accel_success": 0,
+            "cpp_wav_accel_fallback": 0,
         }
 
     def _increment_tts_stat(self, key: str) -> None:
@@ -219,6 +223,7 @@ class VoiceManager:
             stats = dict(self._tts_stats)
         stats["buffered_fallback_enabled"] = self._is_buffered_fallback_enabled()
         stats["system_tts_fallback_enabled"] = bool(getattr(self, "system_tts_enabled", False))
+        stats["voice_cpp_accel_enabled"] = bool(getattr(self, "_voice_cpp_backend", None))
         return stats
 
     def get_provider_status(self) -> dict:
@@ -227,6 +232,7 @@ class VoiceManager:
             "sovits_reachable": self._is_sovits_reachable(),
             "system_tts_fallback_enabled": bool(getattr(self, "system_tts_enabled", False)),
             "bootstrap_attempted": bool(getattr(self, "_bootstrap_attempted", False)),
+            "voice_cpp_accel_enabled": bool(getattr(self, "_voice_cpp_backend", None)),
         }
 
     def _is_sovits_reachable(self) -> bool:
@@ -378,6 +384,57 @@ class VoiceManager:
         self._raise_for_status_with_body(response, context="buffered")
         return response.content or b""
 
+    def _save_audio_to_wav(self, wav_path: str, audio_data: bytes) -> bool:
+        backend = getattr(self, "_voice_cpp_backend", None)
+        if backend is not None:
+            try:
+                if backend.save_pcm_mono16(wav_path, audio_data, int(self.sample_rate)):
+                    self._increment_tts_stat("cpp_wav_accel_success")
+                    return True
+            except Exception:
+                pass
+            self._increment_tts_stat("cpp_wav_accel_fallback")
+
+        with wave.open(wav_path, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(self.sample_rate)
+            wav_file.writeframes(audio_data)
+
+        return True
+
+    def _compute_lip_volume(self, pcm_chunk: bytes) -> float:
+        if not pcm_chunk:
+            return 0.0
+
+        backend = getattr(self, "_voice_cpp_backend", None)
+        if backend is not None:
+            try:
+                accelerated = backend.compute_volume_from_pcm16(
+                    pcm_chunk,
+                    gate=500.0,
+                    normalizer=8000.0,
+                    power=0.8,
+                )
+                if accelerated is not None:
+                    return float(accelerated)
+            except Exception:
+                pass
+
+        import numpy as np
+
+        audio_data = np.frombuffer(pcm_chunk, dtype=np.int16)
+        if audio_data.size == 0:
+            return 0.0
+
+        # Use float32 math to avoid int16 overflow during squaring.
+        samples = audio_data.astype(np.float32)
+        rms = float(np.sqrt(np.mean(samples * samples)))
+        if rms < 500.0:
+            return 0.0
+
+        return min((rms / 8000.0) ** 0.8, 1.0)
+
     def _stream_tts_to_queue(self, text: str, *, connect_timeout: int, read_timeout: int) -> tuple[str, bytes]:
         """流式拉取音频并实时推送到播放队列。"""
         with self.session.post(
@@ -441,12 +498,7 @@ class VoiceManager:
             # 确保目录存在
             os.makedirs(os.path.dirname(wav_path) if os.path.dirname(wav_path) else ".", exist_ok=True)
 
-            # 保存为 wav 文件
-            with wave.open(wav_path, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)  # 16-bit
-                wav_file.setframerate(self.sample_rate)
-                wav_file.writeframes(audio_data)
+            self._save_audio_to_wav(wav_path, audio_data)
 
             return True
 
@@ -468,8 +520,6 @@ class VoiceManager:
             lip_sync_callback: 口型同步回调函数，接收 0-1 的音量值
         """
         try:
-            import numpy as np
-
             with wave.open(wav_path, "rb") as wav_file:
                 # 读取参数
                 n_channels = wav_file.getnchannels()
@@ -509,14 +559,7 @@ class VoiceManager:
                         update_counter += 1
                         if update_counter % 2 == 0:  # 每 2 个 chunk 发送一次 (降频)
                             try:
-                                # 计算音量（RMS）
-                                audio_data = np.frombuffer(data, dtype=np.int16)
-                                rms = np.sqrt(np.mean(audio_data**2))
-
-                                # --- 优化点 3: 门限过滤 + 非线性映射 ---
-                                # 门限过滤 (Gate)：消除底噪；非线性映射：让嘴巴更容易张开
-                                volume = 0.0 if rms < 500 else min((rms / 8000) ** 0.8, 1.0)
-
+                                volume = self._compute_lip_volume(data)
                                 lip_sync_callback(volume)
                             except Exception:
                                 pass  # 忽略回调错误，继续播放

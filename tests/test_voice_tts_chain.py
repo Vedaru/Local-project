@@ -1,10 +1,31 @@
 import queue
 import threading
 from collections import deque
+from pathlib import Path
 
 import pytest
 
 from modules.voice import VoiceManager
+
+
+class _FakeVoiceCppBackend:
+    def __init__(self, *, wav_success: bool = True, volume: float | None = None) -> None:
+        self.wav_success = wav_success
+        self.volume = volume
+        self.save_calls = 0
+        self.volume_calls = 0
+
+    def save_pcm_mono16(self, wav_path: str, pcm_data: bytes, sample_rate: int) -> bool:
+        self.save_calls += 1
+        if self.wav_success:
+            with open(wav_path, "wb") as output_file:
+                output_file.write(b"FAKEWAV")
+        return self.wav_success
+
+    def compute_volume_from_pcm16(self, pcm_chunk: bytes, *, gate: float, normalizer: float, power: float) -> float | None:
+        self.volume_calls += 1
+        _ = (pcm_chunk, gate, normalizer, power)
+        return self.volume
 
 
 def _build_voice_manager_for_unit_test() -> VoiceManager:
@@ -22,9 +43,12 @@ def _build_voice_manager_for_unit_test() -> VoiceManager:
     manager._tts_stats_lock = threading.Lock()
     manager._tts_stats = manager._initial_tts_stats()
     manager._ref_audio_missing = False
+    manager._voice_cpp_backend = None
     manager.stop_current = threading.Event()
     manager.is_playing = False
     manager.sample_rate = 32000
+    manager.connect_timeout_sec = 5
+    manager.read_timeout_sec = 30
     return manager
 
 
@@ -128,3 +152,66 @@ def test_tts_stats_can_reset_and_report_switch(monkeypatch: pytest.MonkeyPatch):
     assert after["stream_attempts"] == 0
     assert after["stream_errors"] == 0
     assert after["buffered_fallback_enabled"] is True
+
+
+@pytest.mark.unit
+def test_speak_and_save_prefers_cpp_wav_acceleration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    manager = _build_voice_manager_for_unit_test()
+    backend = _FakeVoiceCppBackend(wav_success=True)
+    manager._voice_cpp_backend = backend
+
+    pcm_data = b"\x01\x00" * 1600
+    monkeypatch.setattr(
+        manager,
+        "_request_tts_audio",
+        lambda _text, *, connect_timeout, read_timeout: pcm_data,
+    )
+
+    wav_path = tmp_path / "voice_cpp_accel.wav"
+    success = manager.speak_and_save("测试C++加速", str(wav_path))
+
+    assert success is True
+    assert backend.save_calls == 1
+    assert wav_path.exists()
+
+    stats = manager.get_tts_stats()
+    assert stats["cpp_wav_accel_success"] == 1
+    assert stats["cpp_wav_accel_fallback"] == 0
+
+
+@pytest.mark.unit
+def test_speak_and_save_falls_back_when_cpp_wav_not_available(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    manager = _build_voice_manager_for_unit_test()
+    backend = _FakeVoiceCppBackend(wav_success=False)
+    manager._voice_cpp_backend = backend
+
+    pcm_data = b"\x02\x00" * 800
+    monkeypatch.setattr(
+        manager,
+        "_request_tts_audio",
+        lambda _text, *, connect_timeout, read_timeout: pcm_data,
+    )
+
+    wav_path = tmp_path / "voice_python_fallback.wav"
+    success = manager.speak_and_save("测试回退", str(wav_path))
+
+    assert success is True
+    assert backend.save_calls == 1
+    assert wav_path.exists()
+    assert wav_path.stat().st_size > len(pcm_data)
+
+    stats = manager.get_tts_stats()
+    assert stats["cpp_wav_accel_success"] == 0
+    assert stats["cpp_wav_accel_fallback"] == 1
+
+
+@pytest.mark.unit
+def test_compute_lip_volume_uses_cpp_backend():
+    manager = _build_voice_manager_for_unit_test()
+    backend = _FakeVoiceCppBackend(volume=0.42)
+    manager._voice_cpp_backend = backend
+
+    volume = manager._compute_lip_volume(b"\x03\x00" * 128)
+
+    assert volume == pytest.approx(0.42)
+    assert backend.volume_calls == 1

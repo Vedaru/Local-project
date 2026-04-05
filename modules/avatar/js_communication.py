@@ -10,7 +10,7 @@ there are no dynamic callers.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast
 
 from PyQt6.QtCore import QTimer, QUrl
 
@@ -110,11 +110,26 @@ class JSCommunicationMixin:
         script = f"setMotion('{group}', {index})" if index is not None else f"setMotion('{group}')"
         self.run_js(script)
 
-    def update_lip_sync(self, value: float):
-        """更新口型同步"""
+    def update_lip_sync(self, value: Union[float, dict[str, Any]]):
+        """更新口型同步（兼容单值开合与 open/form 双参数）。"""
         self = cast("AvatarWidget", self)
-        value = max(0.0, min(1.0, value))
-        script = f"setMouth({value})"
+
+        def _as_float(raw: Any, fallback: float) -> float:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return fallback
+
+        if isinstance(value, dict):
+            open_value = _as_float(value.get("open", value.get("value", 0.0)), 0.0)
+            form_value = _as_float(value.get("form", 0.0), 0.0)
+            open_value = max(0.0, min(1.0, open_value))
+            form_value = max(-1.0, min(1.0, form_value))
+            script = f"setMouthProfile({{open:{open_value:.4f}, form:{form_value:.4f}}})"
+        else:
+            open_value = max(0.0, min(1.0, _as_float(value, 0.0)))
+            script = f"setMouth({open_value:.4f})"
+
         self.run_js(script)
 
     def play_audio(self, audio_path: str):

@@ -55,9 +55,16 @@
         let lastPointerPosition = { x: 0, y: 0 };
         let isReady = false;
         
-        // 口型同步变量 (使用 window 全局变量确保 update 钩子可以访问)
-        window.targetMouthValue = 0;  // 目标值 (从 Web Audio API 计算)
-        window.currentMouthValue = 0; // 当前值 (经过平滑插值)
+        // 口型同步变量：开合(open) + 口型形状(form)
+        // form 取值范围 [-1, 1]，负值偏圆唇，正值偏展唇。
+        window.targetMouthOpen = 0;
+        window.currentMouthOpen = 0;
+        window.targetMouthForm = 0;
+        window.currentMouthForm = 0;
+
+        // 兼容旧字段，避免外部调用 setMouth(value) 时断裂。
+        window.targetMouthValue = 0;
+        window.currentMouthValue = 0;
         
         // 缩放相关变量
         let currentScale = 1.0;      // 当前缩放比例
@@ -506,21 +513,34 @@
                     // 先让官方逻辑跑完
                     originalInternalUpdate.call(this, dt, now);
                     
-                    // Lerp 平滑插值
-                    window.currentMouthValue += (window.targetMouthValue - window.currentMouthValue) * 0.35;
+                    // Lerp 平滑插值（open 与 form 分离）
+                    window.currentMouthOpen += (window.targetMouthOpen - window.currentMouthOpen) * 0.35;
+                    window.currentMouthForm += (window.targetMouthForm - window.currentMouthForm) * 0.3;
+                    window.currentMouthForm = Math.max(-1, Math.min(1, window.currentMouthForm));
+
+                    // 同步兼容字段，保留旧日志和旧 JS 外部调用可观察性。
+                    window.targetMouthValue = window.targetMouthOpen;
+                    window.currentMouthValue = window.currentMouthOpen;
                     
                     // ⚔️ 在 internalModel 更新后立即设置嘴巴参数到 coreModel
                     // 这样能确保在每一帧都被应用
                     const coreModel = this.coreModel;
                     if (coreModel && coreModel.setParameterValueById) {
-                        coreModel.setParameterValueById('ParamMouthOpenY', window.currentMouthValue);
+                        coreModel.setParameterValueById('ParamMouthOpenY', window.currentMouthOpen);
+                        coreModel.setParameterValueById('ParamMouthForm', window.currentMouthForm);
                     }
                     
                     // 调试日志（每 60 帧输出一次）
                     mouthDebugCounter++;
-                    if (mouthDebugCounter % 60 === 0 && window.targetMouthValue > 0) {
-                        console.log('[Mouth Debug] target:', window.targetMouthValue.toFixed(3), 
-                                    'current:', window.currentMouthValue.toFixed(3));
+                    if (mouthDebugCounter % 60 === 0 && window.targetMouthOpen > 0) {
+                        console.log(
+                            '[Mouth Debug] open target/current:',
+                            window.targetMouthOpen.toFixed(3),
+                            window.currentMouthOpen.toFixed(3),
+                            'form target/current:',
+                            window.targetMouthForm.toFixed(3),
+                            window.currentMouthForm.toFixed(3)
+                        );
                     }
                 };
                 
@@ -536,7 +556,8 @@
                     // 二次保险：在渲染前的最后时刻再覆盖一次嘴巴参数
                     // （以防万一 internalModel.update 没有被正确调用）
                     if (this.setParameterValueById) {
-                        this.setParameterValueById('ParamMouthOpenY', window.currentMouthValue);
+                        this.setParameterValueById('ParamMouthOpenY', window.currentMouthOpen);
+                        this.setParameterValueById('ParamMouthForm', window.currentMouthForm);
                     }
                 };
                 // ===========================================================
@@ -668,6 +689,33 @@
             return resolveMotionGroup('Tap') || resolveMotionGroup('Idle');
         }
 
+        function getExpressionDefinitions() {
+            if (!currentModel || !currentModel.internalModel) {
+                return [];
+            }
+
+            const internal = currentModel.internalModel;
+            const candidates = [
+                internal.motionManager && internal.motionManager.expressionManager
+                    ? internal.motionManager.expressionManager.definitions
+                    : null,
+                internal.expressionManager
+                    ? internal.expressionManager.definitions
+                    : null,
+                internal.settings && Array.isArray(internal.settings.expressions)
+                    ? internal.settings.expressions
+                    : null,
+            ];
+
+            for (const defs of candidates) {
+                if (Array.isArray(defs) && defs.length > 0) {
+                    return defs;
+                }
+            }
+
+            return [];
+        }
+
         /**
          * 设置表情
          * @param {number|string} index - 表情索引或名称
@@ -679,12 +727,8 @@
             }
             
             try {
-                const expressionManager = currentModel.internalModel && currentModel.internalModel.motionManager
-                    ? currentModel.internalModel.motionManager.expressionManager
-                    : null;
-                const hasExpressions = expressionManager
-                    && Array.isArray(expressionManager.definitions)
-                    && expressionManager.definitions.length > 0;
+                const expressionDefinitions = getExpressionDefinitions();
+                const hasExpressions = expressionDefinitions.length > 0;
 
                 if (hasExpressions) {
                     currentModel.expression(index);
@@ -700,7 +744,7 @@
                 }
 
                 console.log('[Live2D Viewer] Expression fallback to motion:', index, '->', fallbackMotion);
-                return setMotion(fallbackMotion, 0);
+                return setMotion(fallbackMotion);
             } catch (error) {
                 console.error('[Live2D Viewer] Failed to set expression:', error);
                 return false;
@@ -732,9 +776,12 @@
                     return false;
                 }
 
-                let motionIndex = (index !== undefined && index !== null) ? index : 0;
-                if (motionIndex < 0 || motionIndex >= motions.length) {
-                    motionIndex = 0;
+                let motionIndex = 0;
+                if (index !== undefined && index !== null) {
+                    motionIndex = index;
+                    if (motionIndex < 0 || motionIndex >= motions.length) {
+                        motionIndex = 0;
+                    }
                 }
 
                 currentModel.motion(resolvedGroup, motionIndex);
@@ -746,15 +793,57 @@
             }
         }
 
+        function clampNumber(value, min, max) {
+            return Math.max(min, Math.min(max, value));
+        }
+
+        function toFiniteNumber(value, fallback) {
+            const num = Number(value);
+            return Number.isFinite(num) ? num : fallback;
+        }
+
+        function estimateFormFromOpen(openValue) {
+            const open = clampNumber(openValue, 0, 1);
+            const previousOpen = toFiniteNumber(window.currentMouthOpen, 0);
+            const velocity = open - previousOpen;
+            const phase = performance.now() * 0.012 + open * 4.2;
+
+            // 低开合更偏圆唇，较大开合更偏展唇；再叠加一个轻微动态抖动避免“机械开合”。
+            const base = (open - 0.45) * 1.1;
+            const dynamic = velocity * 1.5 + Math.sin(phase) * (0.16 + open * 0.12);
+            return clampNumber(base + dynamic, -1, 1);
+        }
+
         /**
-         * 控制嘴巴开合（用于口型同步）
+         * 控制嘴型 profile（用于口型同步）
+         * @param {Object|number} profile - {open: 0-1, form: -1~1} 或单值 open
+         */
+        function setMouthProfile(profile) {
+            if (typeof profile === 'number') {
+                const open = clampNumber(toFiniteNumber(profile, 0), 0, 1);
+                window.targetMouthOpen = open;
+                window.targetMouthForm = estimateFormFromOpen(open);
+            } else {
+                const open = clampNumber(toFiniteNumber(profile?.open, profile?.value ?? 0), 0, 1);
+                const hasForm = profile && Object.prototype.hasOwnProperty.call(profile, 'form');
+                const form = hasForm
+                    ? clampNumber(toFiniteNumber(profile.form, 0), -1, 1)
+                    : estimateFormFromOpen(open);
+                window.targetMouthOpen = open;
+                window.targetMouthForm = form;
+            }
+
+            // 兼容旧字段
+            window.targetMouthValue = window.targetMouthOpen;
+            return true;
+        }
+
+        /**
+         * 控制嘴巴开合（兼容旧接口）
          * @param {number} value - 开合程度 (0.0 - 1.0)
          */
         function setMouth(value) {
-            // 只设置目标值，不直接设置模型参数
-            // 实际的平滑插值在 ticker 中进行
-            targetMouthValue = Math.max(0, Math.min(1, value));
-            return true;
+            return setMouthProfile({ open: value });
         }
         
         // ==================== Web Audio API 音频播放和口型分析 ====================
@@ -793,32 +882,30 @@
                 const arrayBuffer = await response.arrayBuffer();
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
                 
-                // 创建音频源
+                // 创建音频源（仅播放声音，口型由 Python 端驱动）
                 audioSource = audioContext.createBufferSource();
                 audioSource.buffer = audioBuffer;
-                
-                // 连接节点
-                audioSource.connect(analyser);
-                analyser.connect(audioContext.destination);
                 
                 // 播放结束回调
                 audioSource.onended = () => {
                     console.log('[Live2D Viewer] Audio playback ended');
                     isAnalyzing = false;
+                    window.targetMouthOpen = 0;
+                    window.targetMouthForm = 0;
                     window.targetMouthValue = 0;
                 };
                 
-                // 开始播放
+                // 开始播放（仅播放声音，不启动浏览器端口型分析）
+                // 口型由 Python 端 LipSyncManager 通过 setMouthProfile() 驱动
+                audioSource.connect(audioContext.destination);
                 audioSource.start(0);
-                console.log('[Live2D Viewer] Audio playback started');
-                
-                // 开始分析循环
-                isAnalyzing = true;
-                analyzeLoop();
-                
+                console.log('[Live2D Viewer] Audio playback started (no browser lip-sync)');
+
                 return true;
             } catch (error) {
                 console.error('[Live2D Viewer] Failed to play audio:', error);
+                window.targetMouthOpen = 0;
+                window.targetMouthForm = 0;
                 window.targetMouthValue = 0;
                 isAnalyzing = false;
                 return false;
@@ -844,6 +931,12 @@
             
             // 获取时域波形数据（而非频谱数据）
             analyser.getByteTimeDomainData(timeDataArray);
+
+            // 获取频域数据，用于估计口型形状（圆唇/展唇）。
+            if (!dataArray || dataArray.length !== analyser.frequencyBinCount) {
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+            }
+            analyser.getByteFrequencyData(dataArray);
             
             // 计算 RMS（均方根）- 真实反映当前音量
             let sumOfSquares = 0;
@@ -861,14 +954,44 @@
                 // 使用 pow 0.6 让小音量时嘴巴也能张开
                 volume = Math.min(Math.pow(rms * 3, 0.6), 1.0);
             }
+
+            let lowBand = 0;
+            let highBand = 0;
+            const totalBins = dataArray.length;
+            const split = Math.max(1, Math.floor(totalBins * 0.2));
+            for (let i = 0; i < totalBins; i++) {
+                const energy = dataArray[i];
+                if (i < split) {
+                    lowBand += energy;
+                } else if (i < split * 3) {
+                    highBand += energy;
+                }
+            }
+
+            // 高中频占优时展唇，低频占优时圆唇。
+            const denom = lowBand + highBand + 1e-6;
+            let form = (highBand - lowBand) / denom;
+            form = clampNumber(form * 2.1, -1, 1);
+            if (volume < 0.03) {
+                form = 0;
+            }
             
             // 赋值给全局目标变量
+            window.targetMouthOpen = volume;
+            window.targetMouthForm = form;
             window.targetMouthValue = volume;
             
             // 调试日志（每 500ms 输出一次）
             const now = Date.now();
             if (now - lastLogTime > 500) {
-                console.log('[Live2D Viewer] Audio RMS:', rms.toFixed(3), 'volume:', volume.toFixed(2));
+                console.log(
+                    '[Live2D Viewer] Audio RMS:',
+                    rms.toFixed(3),
+                    'volume:',
+                    volume.toFixed(2),
+                    'form:',
+                    form.toFixed(2)
+                );
                 lastLogTime = now;
             }
             
@@ -892,6 +1015,8 @@
                 }
                 audioSource = null;
             }
+            window.targetMouthOpen = 0;
+            window.targetMouthForm = 0;
             window.targetMouthValue = 0;
         }
 
@@ -905,12 +1030,12 @@
             
             try {
                 const motionManager = currentModel.internalModel.motionManager;
-                const expressionManager = currentModel.internalModel.expressionManager;
+                const expressionDefinitions = getExpressionDefinitions();
                 
                 return {
                     motionGroups: Object.keys(motionManager.definitions || {}),
-                    expressionCount: expressionManager ? expressionManager.definitions.length : 0,
-                    expressions: expressionManager ? expressionManager.definitions.map(e => e.Name || e.name || 'unknown') : [],
+                    expressionCount: expressionDefinitions.length,
+                    expressions: expressionDefinitions.map(e => e.Name || e.name || e.File || e.file || 'unknown'),
                 };
             } catch (error) {
                 console.error('[Live2D Viewer] Failed to get model info:', error);
@@ -1003,6 +1128,7 @@
         window.setExpression = setExpression;
         window.setMotion = setMotion;
         window.setMouth = setMouth;
+        window.setMouthProfile = setMouthProfile;
         window.getModelInfo = getModelInfo;
         window.setModelPosition = setModelPosition;
         window.setModelScale = setModelScale;

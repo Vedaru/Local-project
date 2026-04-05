@@ -297,6 +297,10 @@ class LipSyncManager:
         frames = self._analyzer.analyze_audio(audio_path)
         self._player.play(frames, blocking=blocking)
 
+    def play_wav_with_lipsync(self, wav_path: str, blocking: bool = False):
+        """基于 wav 文件的口型同步（application 层调用的统一入口）。"""
+        self.sync_with_audio(wav_path, blocking=blocking)
+
     def stop(self):
         """停止口型同步"""
         self._player.stop()

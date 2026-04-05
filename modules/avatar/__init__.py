@@ -40,7 +40,7 @@ Avatar 模块 - 基于 PyQt6 + QWebEngineView 的 Live2D 模型显示
 
 from typing import TYPE_CHECKING, Any
 
-from .expression import Emotion, EmotionAnalyzer, EmotionKeywords, ExpressionConfig, ExpressionManager
+from .expression import Emotion, EmotionAnalyzer, ExpressionConfig, ExpressionManager
 from .lip_sync import LipSyncAnalyzer, LipSyncFrame, LipSyncManager, LipSyncPlayer
 from .logger import get_logger, log_debug, log_error, log_info, log_warning
 
@@ -99,7 +99,6 @@ __all__ = [
     "EmotionAnalyzer",
     "Emotion",
     "ExpressionConfig",
-    "EmotionKeywords",
 ]
 
 __version__ = "1.1.0"

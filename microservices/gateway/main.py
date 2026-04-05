@@ -17,6 +17,17 @@ AGENT_SERVICE_URL = os.getenv("AGENT_SERVICE_URL", "http://localhost:8083")
 VOICE_SERVICE_URL = os.getenv("VOICE_SERVICE_URL", "http://localhost:8084")
 GATEWAY_API_KEY = (os.getenv("GATEWAY_API_KEY", "") or "").strip()
 
+# Gateway 超时配置：支持显式设置，或从 orchestrator 子超时推导
+_GATEWAY_CHAT_TIMEOUT_ENV = os.getenv("GATEWAY_CHAT_TIMEOUT_SEC", "")
+if _GATEWAY_CHAT_TIMEOUT_ENV.strip():
+    GATEWAY_CHAT_TIMEOUT_SEC = float(_GATEWAY_CHAT_TIMEOUT_ENV.strip())
+else:
+    _mem = float(os.getenv("ORCH_MEMORY_TIMEOUT_SEC", "8") or "8")
+    _agent = float(os.getenv("ORCH_AGENT_TIMEOUT_SEC", "180") or "180")
+    _voice = float(os.getenv("ORCH_VOICE_TIMEOUT_SEC", "60") or "60")
+    # 默认 = memory + max(agent, voice)，留余量
+    GATEWAY_CHAT_TIMEOUT_SEC = round(_mem + max(_agent, _voice), 1)
+
 
 @app.middleware("http")
 async def tracing_and_auth_middleware(request: Request, call_next):
@@ -83,19 +94,35 @@ async def health(request: Request) -> dict:
 
 @app.get("/v1/status/services")
 async def service_status(request: Request) -> dict:
-    checks = [
-        await _probe_service("gateway", "http://localhost:" + os.getenv("GATEWAY_PORT", "8080")),
-        await _probe_service("orchestrator", ORCHESTRATOR_URL),
-        await _probe_service("memory-service", MEMORY_SERVICE_URL),
-        await _probe_service("agent-service", AGENT_SERVICE_URL),
-        await _probe_service("voice-service", VOICE_SERVICE_URL),
-    ]
-    healthy_count = sum(1 for item in checks if item["ok"])
+    # 5 个健康检查全部并行执行（15s → ~3s）
+    checks = await asyncio.gather(
+        _probe_service("gateway", "http://localhost:" + os.getenv("GATEWAY_PORT", "8080")),
+        _probe_service("orchestrator", ORCHESTRATOR_URL),
+        _probe_service("memory-service", MEMORY_SERVICE_URL),
+        _probe_service("agent-service", AGENT_SERVICE_URL),
+        _probe_service("voice-service", VOICE_SERVICE_URL),
+        return_exceptions=True,
+    )
+    # 将异常转换为失败结果
+    normalized = []
+    for c in checks:
+        if isinstance(c, Exception):
+            normalized.append({
+                "service": "unknown",
+                "url": "",
+                "ok": False,
+                "latency_ms": 0,
+                "payload": {},
+                "error": str(c),
+            })
+        else:
+            normalized.append(c)
+    healthy_count = sum(1 for item in normalized if item["ok"])
     return {
-        "overall_ok": healthy_count == len(checks),
+        "overall_ok": healthy_count == len(normalized),
         "healthy": healthy_count,
-        "total": len(checks),
-        "services": checks,
+        "total": len(normalized),
+        "services": normalized,
         "request_id": getattr(request.state, "request_id", ""),
     }
 
@@ -107,7 +134,7 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
         result = await post_json(
             f"{ORCHESTRATOR_URL}/chat",
             payload=request.model_dump(),
-            timeout=30.0,
+            timeout=GATEWAY_CHAT_TIMEOUT_SEC,
             headers={"x-request-id": request_id},
         )
         result["request_id"] = request_id

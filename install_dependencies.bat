@@ -106,6 +106,34 @@ if "%INSTALL_DEV%"=="1" (
 )
 
 echo.
+echo [5/5] 检查并构建 C++ 加速引擎...
+set "VOICE_CPP_SOURCE=%PROJECT_DIR%cpp_modules\voice_cpp_engine"
+if exist "%VOICE_CPP_SOURCE%\CMakeLists.txt" (
+    echo [INFO] 发现 voice_cpp_engine，开始 CMake 构建...
+    set "VOICE_CPP_BUILD=%PROJECT_DIR%build\voice_cpp_engine"
+    cmake -S "%VOICE_CPP_SOURCE%" -B "%VOICE_CPP_BUILD%" -DCMAKE_BUILD_TYPE=Release
+    if errorlevel 1 (
+        echo [WARN] voice_cpp_engine CMake 配置失败，跳过构建（非致命错误）
+        goto :skip_voice_cpp
+    )
+    cmake --build "%VOICE_CPP_BUILD%" --config Release
+    if errorlevel 1 (
+        echo [WARN] voice_cpp_engine 构建失败（非致命错误）
+        goto :skip_voice_cpp
+    )
+    if exist "%VOICE_CPP_BUILD%\Release\voice_cpp_engine.dll" (
+        echo [OK] voice_cpp_engine.dll 构建成功
+    ) else if exist "%VOICE_CPP_BUILD%\voice_cpp_engine.dll" (
+        echo [OK] voice_cpp_engine.dll 构建成功
+    ) else (
+        echo [WARN] voice_cpp_engine 构建完成但未找到输出 DLL
+    )
+) else (
+    echo [INFO] 未找到 voice_cpp_engine 源码，跳过 C++ 引擎构建
+)
+:skip_voice_cpp
+
+echo.
 echo ============================================
 echo 依赖安装完成！
 echo ============================================

@@ -6,7 +6,9 @@ Avatar expression API and may be called dynamically by the Avatar manager or
 external code. Keep public method signatures stable to preserve compatibility.
 """
 
-from dataclasses import dataclass, field
+import re
+import os
+from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional
 
@@ -38,246 +40,173 @@ class ExpressionConfig:
 
 
 @dataclass
-class EmotionKeywords:
-    """情感关键词配置"""
+class ExpressionTimelinePoint:
+    """分段表情时间线节点。"""
 
-    positive: list[str] = field(
-        default_factory=lambda: [
-            "开心",
-            "高兴",
-            "快乐",
-            "好",
-            "棒",
-            "喜欢",
-            "爱",
-            "哈哈",
-            "嘻嘻",
-            "嘿嘿",
-            "太好了",
-            "真棒",
-            "厉害",
-            "赞",
-            "不错",
-            "可以",
-            "行",
-            "好的",
-            "好呀",
-            "哇",
-            "耶",
-            "欢迎",
-            "谢谢",
-            "感谢",
-            "开玩笑",
-            "有趣",
-            "好玩",
-            "笑",
-            "😊",
-            "😄",
-            "😃",
-            "🎉",
-            "👍",
-            "❤️",
-            "💕",
-            "🥰",
-            "😘",
-        ]
-    )
-    negative: list[str] = field(
-        default_factory=lambda: [
-            "难过",
-            "伤心",
-            "悲伤",
-            "哭",
-            "痛",
-            "累",
-            "烦",
-            "郁闷",
-            "无聊",
-            "讨厌",
-            "不喜欢",
-            "不想",
-            "不要",
-            "算了",
-            "唉",
-            "呜呜",
-            "呜",
-            "对不起",
-            "抱歉",
-            "遗憾",
-            "可惜",
-            "失望",
-            "沮丧",
-            "😢",
-            "😭",
-            "😔",
-            "😞",
-            "💔",
-        ]
-    )
-    angry: list[str] = field(
-        default_factory=lambda: [
-            "生气",
-            "愤怒",
-            "烦死",
-            "讨厌",
-            "滚",
-            "闭嘴",
-            "可恶",
-            "混蛋",
-            "什么鬼",
-            "搞什么",
-            "气死",
-            "受不了",
-            "不爽",
-            "😠",
-            "😡",
-            "🤬",
-            "💢",
-        ]
-    )
-    surprised: list[str] = field(
-        default_factory=lambda: [
-            "惊讶",
-            "震惊",
-            "天哪",
-            "我的天",
-            "什么",
-            "真的吗",
-            "不会吧",
-            "居然",
-            "竟然",
-            "没想到",
-            "想不到",
-            "意外",
-            "突然",
-            "😮",
-            "😲",
-            "😱",
-            "🤯",
-            "❗",
-            "❓",
-        ]
-    )
-    shy: list[str] = field(
-        default_factory=lambda: [
-            "害羞",
-            "不好意思",
-            "羞",
-            "脸红",
-            "尴尬",
-            "那个",
-            "嗯...",
-            "人家",
-            "讨厌啦",
-            "别这样",
-            "哎呀",
-            "😳",
-            "🙈",
-            "😅",
-        ]
-    )
-    confused: list[str] = field(
-        default_factory=lambda: [
-            "困惑",
-            "不懂",
-            "不明白",
-            "什么意思",
-            "为什么",
-            "怎么",
-            "奇怪",
-            "疑惑",
-            "迷茫",
-            "不知道",
-            "不确定",
-            "🤔",
-            "❓",
-            "😕",
-        ]
-    )
+    offset_sec: float
+    emotion: Emotion
+    confidence: float
+    segment: str
 
 
 class EmotionAnalyzer:
-    """情感分析器 - 分析文本中的情感"""
+    """情感分析器 - 基于结构信号与权重融合分析情感。"""
 
-    def __init__(self, keywords: Optional[EmotionKeywords] = None):
-        self.keywords = keywords or EmotionKeywords()
+    def __init__(self, keywords: Optional[object] = None):
+        _ = keywords  # 保留参数兼容性
 
-        # 构建情感-关键词映射
-        self._emotion_keywords: dict[Emotion, list[str]] = {
-            Emotion.HAPPY: self.keywords.positive,
-            Emotion.SAD: self.keywords.negative,
-            Emotion.ANGRY: self.keywords.angry,
-            Emotion.SURPRISED: self.keywords.surprised,
-            Emotion.SHY: self.keywords.shy,
-            Emotion.CONFUSED: self.keywords.confused,
+        # 标点符号的情感倾向权重
+        self._punctuation_weights = {
+            "！": 0.3, "!": 0.3,
+            "？": -0.15, "?": -0.15,
+            "...": -0.15, "……": -0.15,
+            "~": 0.15, "～": 0.15,
         }
 
-        # 标点符号情感映射
-        self._punctuation_emotions = {
-            "！": (Emotion.HAPPY, 0.3),
-            "!": (Emotion.HAPPY, 0.3),
-            "？": (Emotion.CONFUSED, 0.2),
-            "?": (Emotion.CONFUSED, 0.2),
-            "...": (Emotion.THINKING, 0.2),
-            "……": (Emotion.THINKING, 0.2),
-            "~": (Emotion.HAPPY, 0.2),
-            "～": (Emotion.HAPPY, 0.2),
+    def split_segments(self, text: str) -> list[str]:
+        """按语义停顿切分句段，用于动态表情时间线。"""
+        normalized = (text or "").strip()
+        if not normalized:
+            return []
+
+        major_segments = [
+            segment.strip()
+            for segment in re.split(r"(?<=[。！？!?；;…])|[\r\n]+", normalized)
+            if segment and segment.strip()
+        ]
+
+        # Expand long clauses by minor pauses so each spoken phrase can get its own expression point.
+        expanded_segments: list[str] = []
+        for segment in major_segments:
+            if len(segment) >= 16 and re.search(r"[，,、：:]", segment):
+                expanded_segments.extend(
+                    piece.strip()
+                    for piece in re.split(r"(?<=[，,、：:])", segment)
+                    if piece and piece.strip()
+                )
+            else:
+                expanded_segments.append(segment)
+
+        # Merge tiny fragments to avoid over-fragmenting into jittery micro-segments.
+        segments: list[str] = []
+        for piece in expanded_segments:
+            if segments and len(piece) <= 4:
+                segments[-1] = f"{segments[-1]}{piece}"
+            else:
+                segments.append(piece)
+
+        return segments or [normalized]
+
+    def score_weights(self, text: str) -> dict[Emotion, float]:
+        """输出每个情感的归一化权重（总和为 1）。"""
+        if not text:
+            return {emotion: (1.0 if emotion == Emotion.NEUTRAL else 0.0) for emotion in Emotion}
+
+        text_len = len(text)
+        punctuation_question = text.count("？") + text.count("?")
+        punctuation_exclaim = text.count("！") + text.count("!")
+        punctuation_ellipsis = text.count("...") + text.count("……")
+        punctuation_tilde = text.count("~") + text.count("～")
+        punctuation_minor_pause = sum(text.count(token) for token in ("，", ",", "、", "：", ":", "；", ";"))
+
+        segments = self.split_segments(text)
+        segment_count = max(1, len(segments))
+        average_segment_len = text_len / segment_count
+
+        short_segments = sum(1 for segment in segments if len(segment.strip()) <= 8)
+        cadence_density = segment_count / max(1.0, text_len / 8.0)
+
+        energy_signal = min(
+            1.8,
+            punctuation_exclaim * 0.34
+            + punctuation_tilde * 0.26
+            + punctuation_minor_pause * 0.04
+            + max(0, segment_count - 1) * 0.05,
+        )
+        uncertainty_signal = min(
+            1.8,
+            punctuation_question * 0.30
+            + punctuation_ellipsis * 0.26
+            + max(0.0, (average_segment_len - 16.0) * 0.012),
+        )
+        staccato_signal = min(
+            1.5,
+            short_segments * 0.16
+            + max(0, segment_count - 2) * 0.08
+            + cadence_density * 0.18,
+        )
+        playful_signal = min(1.7, punctuation_tilde * 0.48 + punctuation_exclaim * 0.16 + max(0.0, 0.16 - punctuation_ellipsis * 0.05))
+        aggression_signal = max(
+            0.0,
+            punctuation_exclaim * 0.24
+            + staccato_signal * 0.28
+            + max(0, punctuation_exclaim - punctuation_question) * 0.12
+            - punctuation_tilde * 0.26
+            - punctuation_ellipsis * 0.08,
+        )
+
+        final_happy = max(0.0, playful_signal + energy_signal * 0.30 - uncertainty_signal * 0.22 - aggression_signal * 0.35)
+        final_sad = max(0.0, punctuation_ellipsis * 0.34 + max(0.0, 0.20 - energy_signal * 0.10) + max(0.0, uncertainty_signal - playful_signal) * 0.08)
+        final_angry = max(0.0, aggression_signal + punctuation_exclaim * 0.10 + max(0.0, staccato_signal - 0.3) * 0.15)
+        final_surprised = max(0.0, min(punctuation_exclaim, punctuation_question) * 0.42 + punctuation_exclaim * 0.08 + punctuation_question * 0.08)
+
+        # 问句默认偏思考，只有在高不确定+低愉悦时才提升困惑。
+        final_thinking = max(
+            0.0,
+            uncertainty_signal * 0.48
+            + (0.22 if punctuation_question > 0 else 0.0)
+            + (0.12 if punctuation_ellipsis > 0 else 0.0)
+            - energy_signal * 0.10,
+        )
+        final_confused = max(
+            0.0,
+            punctuation_question * 0.10
+            + punctuation_ellipsis * 0.12
+            + max(0.0, uncertainty_signal - playful_signal - 0.35) * 0.22
+            - playful_signal * 0.14,
+        )
+        final_shy = max(0.0, 0.04 + (0.10 if text_len <= 12 else 0.0) + (0.06 if punctuation_tilde > 0 and punctuation_exclaim == 0 else 0.0) - punctuation_exclaim * 0.05)
+        final_neutral = max(
+            0.10,
+            0.24 + max(0.0, 0.10 - (final_happy + final_sad + final_angry + final_surprised + final_confused + final_thinking) * 0.03),
+        )
+
+        raw_scores = {
+            Emotion.HAPPY: final_happy,
+            Emotion.SAD: final_sad,
+            Emotion.ANGRY: final_angry,
+            Emotion.SURPRISED: final_surprised,
+            Emotion.SHY: final_shy,
+            Emotion.CONFUSED: final_confused,
+            Emotion.THINKING: final_thinking,
+            Emotion.NEUTRAL: final_neutral,
         }
+
+        clipped_scores: dict[Emotion, float] = {}
+        for emotion, value in raw_scores.items():
+            if emotion == Emotion.NEUTRAL:
+                clipped_scores[emotion] = max(0.05, value)
+            else:
+                clipped_scores[emotion] = max(0.0, value)
+
+        total = sum(clipped_scores.values())
+        if total <= 1e-6:
+            return {emotion: (1.0 if emotion == Emotion.NEUTRAL else 0.0) for emotion in Emotion}
+
+        return {emotion: clipped_scores[emotion] / total for emotion in Emotion}
 
     def analyze(self, text: str) -> tuple[Emotion, float]:
-        """
-        分析文本的情感
+        """返回主情感与置信度。"""
+        weights = self.score_weights(text)
+        max_emotion = max(weights, key=weights.get)
+        max_weight = weights[max_emotion]
 
-        Args:
-            text: 要分析的文本
-
-        Returns:
-            (情感类型, 置信度) 的元组
-        """
-        if not text:
+        if max_emotion == Emotion.NEUTRAL or max_weight < 0.24:
             return Emotion.NEUTRAL, 0.0
 
-        text_lower = text.lower()
-        scores: dict[Emotion, float] = dict.fromkeys(Emotion, 0.0)
-
-        # 关键词匹配
-        for emotion, keywords in self._emotion_keywords.items():
-            for keyword in keywords:
-                if keyword in text_lower:
-                    # 根据关键词长度给予不同权重
-                    weight = 0.5 + len(keyword) * 0.1
-                    scores[emotion] += weight
-
-        # 标点符号分析
-        for punct, (emotion, weight) in self._punctuation_emotions.items():
-            count = text.count(punct)
-            scores[emotion] += count * weight
-
-        # 感叹号多表示强烈情感
-        exclaim_count = text.count("！") + text.count("!")
-        if exclaim_count >= 2:
-            # 增强当前最高情感
-            max_emotion = max(scores, key=lambda emotion: scores[emotion])
-            scores[max_emotion] += exclaim_count * 0.2
-
-        # 找出最高分的情感
-        max_emotion = max(scores, key=lambda emotion: scores[emotion])
-        max_score = scores[max_emotion]
-
-        # 如果分数太低，返回中性
-        if max_score < 0.3:
-            return Emotion.NEUTRAL, 0.0
-
-        # 计算置信度（归一化）
-        confidence = min(1.0, max_score / 3.0)
-
-        log_debug(f"Emotion analysis: {max_emotion.value} (confidence: {confidence:.2f})")
+        confidence = min(1.0, max_weight * 1.6)
+        log_debug(f"Semantic emotion: {max_emotion.value} ({confidence:.2f}, weight={max_weight:.2f})")
         return max_emotion, confidence
-
-    def add_keywords(self, emotion: Emotion, keywords: list[str]):
-        """添加自定义关键词"""
-        if emotion in self._emotion_keywords:
-            self._emotion_keywords[emotion].extend(keywords)
 
 
 class ExpressionManager:
@@ -323,6 +252,188 @@ class ExpressionManager:
         """获取表情配置"""
         return self._expressions.get(emotion)
 
+    def build_weighted_timeline(
+        self,
+        text: str,
+        duration_sec: Optional[float] = None,
+        max_segments: int = 8,
+    ) -> list[ExpressionTimelinePoint]:
+        """基于分段文本权重生成动态表情时间线。"""
+        normalized_text = (text or "").strip()
+        if not normalized_text:
+            return [ExpressionTimelinePoint(offset_sec=0.0, emotion=Emotion.NEUTRAL, confidence=1.0, segment="")]
+
+        segments = self._analyzer.split_segments(normalized_text)
+        max_segments = max(1, int(max_segments))
+        if len(segments) > max_segments:
+            kept = segments[: max_segments - 1]
+            kept.append(" ".join(segments[max_segments - 1 :]))
+            segments = kept
+
+        raw_min_segment = (os.getenv("LOCAL_EXPRESSION_MIN_SEGMENT_SEC", "0.30") or "0.30").strip()
+        try:
+            min_segment_sec = float(raw_min_segment)
+        except ValueError:
+            min_segment_sec = 0.30
+        min_segment_sec = max(0.12, min(0.8, min_segment_sec))
+
+        total_chars = max(1, sum(len(segment) for segment in segments))
+        min_total_duration = max(1.2, len(segments) * min_segment_sec)
+        if duration_sec is None or duration_sec <= 0:
+            duration_sec = max(min_total_duration, min(10.0, total_chars * 0.12))
+        else:
+            duration_sec = max(duration_sec, min_total_duration)
+
+        raw_durations = [max(min_segment_sec, duration_sec * (len(segment) / total_chars)) for segment in segments]
+        raw_total = sum(raw_durations) or 1.0
+        scale = duration_sec / raw_total
+        durations = [segment_duration * scale for segment_duration in raw_durations]
+
+        timeline: list[ExpressionTimelinePoint] = []
+        carry = {emotion: 0.0 for emotion in Emotion}
+        carry[Emotion.NEUTRAL] = 1.0
+        offset = 0.0
+
+        raw_hold = (os.getenv("LOCAL_EXPRESSION_MIN_HOLD_SEC", "0.55") or "0.55").strip()
+        try:
+            min_hold_sec = float(raw_hold)
+        except ValueError:
+            min_hold_sec = 0.55
+        min_hold_sec = max(0.2, min(1.5, min_hold_sec))
+
+        raw_margin = (os.getenv("LOCAL_EXPRESSION_SWITCH_MARGIN", "0.10") or "0.10").strip()
+        try:
+            switch_margin = float(raw_margin)
+        except ValueError:
+            switch_margin = 0.10
+        switch_margin = max(0.02, min(0.35, switch_margin))
+
+        raw_continuity = (os.getenv("LOCAL_EXPRESSION_CONTINUITY_BIAS", "0.12") or "0.12").strip()
+        try:
+            continuity_bias = float(raw_continuity)
+        except ValueError:
+            continuity_bias = 0.12
+        continuity_bias = max(0.0, min(0.30, continuity_bias))
+
+        previous_selected: Optional[Emotion] = None
+        previous_selected_offset = 0.0
+
+        for segment, segment_duration in zip(segments, durations):
+            weights = self._analyzer.score_weights(segment)
+            blended = {
+                emotion: weights.get(emotion, 0.0) * 0.72 + carry.get(emotion, 0.0) * 0.28
+                for emotion in Emotion
+            }
+
+            if previous_selected is not None:
+                blended[previous_selected] = blended.get(previous_selected, 0.0) + continuity_bias
+                if previous_selected != Emotion.NEUTRAL:
+                    blended[Emotion.NEUTRAL] = blended.get(Emotion.NEUTRAL, 0.0) * 0.92
+
+            selected = max(blended, key=blended.get)
+            confidence = blended[selected]
+            if confidence < 0.22:
+                selected = Emotion.NEUTRAL
+                confidence = blended.get(Emotion.NEUTRAL, 0.0)
+
+            if previous_selected is not None and selected != previous_selected:
+                previous_score = blended.get(previous_selected, 0.0)
+                score_gap = confidence - previous_score
+                elapsed_sec = max(0.0, offset - previous_selected_offset)
+
+                if elapsed_sec < min_hold_sec and score_gap < switch_margin:
+                    selected = previous_selected
+                    confidence = previous_score
+                elif previous_selected != Emotion.NEUTRAL and score_gap < (switch_margin * 0.55):
+                    selected = previous_selected
+                    confidence = previous_score
+
+            # Preserve every segment point so each segment can trigger a visible expression update.
+            timeline.append(
+                ExpressionTimelinePoint(
+                    offset_sec=offset,
+                    emotion=selected,
+                    confidence=confidence,
+                    segment=segment,
+                )
+            )
+
+            carry = blended
+            if selected != previous_selected:
+                previous_selected = selected
+                previous_selected_offset = offset
+            offset += segment_duration
+
+        if not timeline:
+            timeline.append(ExpressionTimelinePoint(offset_sec=0.0, emotion=Emotion.NEUTRAL, confidence=1.0, segment=""))
+
+        raw_smooth = (os.getenv("LOCAL_EXPRESSION_SMOOTH_WINDOW_SEC", "0.55") or "0.55").strip()
+        try:
+            smooth_window_sec = float(raw_smooth)
+        except ValueError:
+            smooth_window_sec = 0.55
+        smooth_window_sec = max(0.15, min(1.2, smooth_window_sec))
+
+        # Smooth out short neutral flashes or low-confidence spikes between same neighboring emotions.
+        if len(timeline) >= 3:
+            for idx in range(1, len(timeline) - 1):
+                prev_point = timeline[idx - 1]
+                curr_point = timeline[idx]
+                next_point = timeline[idx + 1]
+
+                left_gap = max(0.0, curr_point.offset_sec - prev_point.offset_sec)
+                right_gap = max(0.0, next_point.offset_sec - curr_point.offset_sec)
+                if left_gap > smooth_window_sec or right_gap > smooth_window_sec:
+                    continue
+
+                if (
+                    curr_point.emotion == Emotion.NEUTRAL
+                    and prev_point.emotion == next_point.emotion
+                    and prev_point.emotion != Emotion.NEUTRAL
+                ):
+                    curr_point.emotion = prev_point.emotion
+                    curr_point.confidence = max(
+                        curr_point.confidence,
+                        min(prev_point.confidence, next_point.confidence) * 0.9,
+                    )
+                    continue
+
+                if prev_point.emotion == next_point.emotion and curr_point.emotion != prev_point.emotion:
+                    neighbor_conf = max(prev_point.confidence, next_point.confidence)
+                    if curr_point.confidence + 0.10 < neighbor_conf:
+                        curr_point.emotion = prev_point.emotion
+                        curr_point.confidence = max(curr_point.confidence, neighbor_conf * 0.85)
+
+        min_gap_sec = max(0.08, min_segment_sec * 0.72)
+        for idx in range(1, len(timeline)):
+            required_offset = timeline[idx - 1].offset_sec + min_gap_sec
+            if timeline[idx].offset_sec < required_offset:
+                timeline[idx].offset_sec = required_offset
+
+        raw_tail = (os.getenv("LOCAL_EXPRESSION_NEUTRAL_TAIL_SEC", "0.26") or "0.26").strip()
+        try:
+            tail_neutral_sec = float(raw_tail)
+        except ValueError:
+            tail_neutral_sec = 0.26
+        tail_neutral_sec = max(0.12, min(1.0, tail_neutral_sec))
+
+        if timeline[-1].emotion != Emotion.NEUTRAL:
+            timeline.append(
+                ExpressionTimelinePoint(
+                    offset_sec=max(duration_sec + tail_neutral_sec, timeline[-1].offset_sec + tail_neutral_sec),
+                    emotion=Emotion.NEUTRAL,
+                    confidence=1.0,
+                    segment="",
+                )
+            )
+
+        log_debug(
+            f"Weighted timeline built: segments={len(segments)} points={len(timeline)} "
+            f"duration={duration_sec:.2f}s min_gap={min_gap_sec:.2f}s"
+        )
+
+        return timeline
+
     def set_emotion(self, emotion: Emotion, play_motion: bool = True):
         """
         设置表情
@@ -360,17 +471,17 @@ class ExpressionManager:
         Returns:
             检测到的情感
         """
-        emotion, confidence = self._analyzer.analyze(text)
+        weights = self._analyzer.score_weights(text)
+        emotion = max(weights, key=weights.get)
+        confidence = weights[emotion]
 
-        # 只有置信度足够高才切换表情
-        if confidence >= 0.3:
+        if emotion != Emotion.NEUTRAL and confidence >= 0.24:
             self.set_emotion(emotion, play_motion=play_motion)
-        else:
-            # 保持当前表情或切换到中性
-            if self._current_emotion == Emotion.THINKING:
-                self.set_emotion(Emotion.NEUTRAL, play_motion=False)
+            return emotion
 
-        return emotion
+        if self._current_emotion != Emotion.NEUTRAL:
+            self.set_emotion(Emotion.NEUTRAL, play_motion=False)
+        return Emotion.NEUTRAL
 
     def set_thinking(self):
         """设置思考表情"""
@@ -384,7 +495,3 @@ class ExpressionManager:
     def current_emotion(self) -> Emotion:
         """当前情感"""
         return self._current_emotion
-
-    def add_keywords(self, emotion: Emotion, keywords: list[str]):
-        """添加情感关键词"""
-        self._analyzer.add_keywords(emotion, keywords)
