@@ -17,7 +17,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
 ]
@@ -56,6 +55,7 @@ pydantic = ">=2.0.0"
 # Avatar module (PyQt6)
 PyQt6 = ">=6.4.0"
 PyQt6-WebEngine = ">=6.4.0"
+qasync = ">=0.27.1"
 
 # Voice recognition & audio
 openai-whisper = ">=20250101"
@@ -83,6 +83,8 @@ duckduckgo_search = ">=7.5.3"
 tomli = ">=2.0.0"
 httpx = ">=0.27.0"
 beautifulsoup4 = ">=4.12.0"
+fastapi = ">=0.115.0"
+uvicorn = ">=0.30.6"
 
 # OCR
 pytesseract = ">=0.3.10"
@@ -117,7 +119,7 @@ local-project = "main:main"
 
 [tool.black]
 line-length = 120
-target-version = ['py39', 'py310', 'py311']
+target-version = ['py310', 'py311']
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -154,7 +156,7 @@ skip_glob = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 exclude = [
     ".bzr",
     ".direnv",
@@ -197,11 +199,11 @@ ignore = [
 "__init__.py" = ["F401"]
 
 [tool.mypy]
-python_version = "3.9"
-warn_return_any = false
-warn_unused_configs = false
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
 disallow_untyped_defs = false
-check_untyped_defs = false
+check_untyped_defs = true
 ignore_missing_imports = true
 follow_imports = "skip"
 no_implicit_optional = false
@@ -262,7 +264,7 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "if typing.TYPE_CHECKING:",
 ]
-fail_under = 20
+fail_under = 30
 show_missing = true
 
 [tool.coverage.html]

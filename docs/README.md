@@ -10,701 +10,143 @@
 
 # 🤖 Project Local
 
-[![Python](https://img.shields.io/badge/Python-3.10--3.11-blue?logo=python&logoColor=white)](https://python.org)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![CI](https://img.shields.io/badge/CI-GitHub_Actions-orange?logo=github-actions&logoColor=white)](.github/workflows/ci.yml)
-[![Code Style](https://img.shields.io/badge/Code%20Style-Black-black)](https://github.com/psf/black)
+**一个支持虚拟形象的本地 AI 桌面助手**
 
-**一个带有虚拟形象的本地 AI 桌面助手**
-
-语音对话 · 智能记忆 · 电脑控制 · 3D Avatar
-
-[功能特性](#-功能特性) •
-[快速开始](#-快速开始) •
-[Runtime 配置](#-runtime-配置) •
-[项目配置](#️-项目配置) •
-[项目结构](#-项目结构) •
-[开发指南](#-开发指南)
+语音对话 · 智能记忆 · 工具调用 · 3D Avatar · 微服务编排
 
 </div>
 
 ---
 
-## ✨ 功能特性
+## 项目简介
 
-<table>
-<tr>
-<td width="50%">
+Project Local 以本地优先为原则，整合 LLM 对话、语音链路、记忆系统、电脑控制与 Avatar 展示能力。
+当前默认运行模式为 microservices-only：GUI 通过 gateway 调用 orchestrator 与后端服务。
 
-### 🎯 核心功能
+## 核心能力
 
-- **💬 智能对话** - 基于大语言模型的自然对话
-- **🎙️ 语音交互** - 实时语音识别 + 高质量语音合成
-- **🧠 人类化记忆** - 多层次记忆系统，支持偏好更新
-- **🖥️ 电脑控制** - 自动化操作，打开应用、网页浏览等
-- **👤 3D Avatar** - WebGL 虚拟形象，表情口型同步
+- 智能对话：支持多轮上下文与工具调用。
+- 语音交互：ASR + TTS 串联，支持本地化运行。
+- 记忆系统：短期/长期记忆与偏好更新。
+- 虚拟形象：表情与口型联动。
+- 工具生态：文件操作、网页检索、Python 执行等。
 
-</td>
-<td width="50%">
+## 性能加速（本次更新）
 
-### 🧠 记忆系统亮点
+### 1) Rust 网页抓取加速
 
-- 📊 **多层次记忆** - 短期/工作/长期/情感记忆
-- 🔄 **智能冲突检测** - 四步流程自动处理
-- 🎯 **偏好自动更新** - "喜欢苹果" → "喜欢香蕉"
-- ⚡ **并行检索** - 低延迟响应
-- 🔒 **完全本地化** - 无需云服务
+- 路径：`rust_modules/web_fetcher_rs`
+- 新增能力：Rust 扩展提供批量抓取接口 `fetch_content_batch(urls, timeout, max_chars)`。
+- Python 集成：`WebContentFetcher` 优先走 Rust 批量路径，并保持降级逻辑。
+- 优化点：复用共享 HTTP Client，减少重复构建开销。
 
-</td>
-</tr>
-</table>
+### 2) Agent Tool 全局调度加速
 
----
+- 路径：`modules/openmanus/app/tool/tool_collection.py`
+- 新增能力：
+  - `to_params()` 结果缓存
+  - `execute_many()` 批量执行
+  - 有界并发执行（可配置）
+  - 执行统计 `get_stats()`
+- Agent 集成：`modules/openmanus/app/agent/toolcall.py` 使用批量执行路径。
 
-## 🚀 快速开始
+### 3) C++ 语音生成链路加速
 
-### 环境要求
+- 路径：`cpp_modules/voice_cpp_engine`、`modules/voice.py`、`modules/voice_cpp_accel.py`
+- 新增能力：
+  - C++ 音频分块索引接口 `build_chunk_index_cpp(total_size, chunk_size, ...)`
+  - Python `tts_worker` 在缓存命中与缓冲回退路径下优先使用 C++ 分块
+  - 保留 Python 分块回退，确保旧版库/异常场景不影响可用性
+- 统计指标：新增 `cpp_chunk_accel_success`、`cpp_chunk_accel_errors`，用于观测分块加速命中率。
 
-| 要求 | 版本 |
-|------|------|
-| Python | 3.10 - 3.11 |
-| 操作系统 | Windows / Linux / macOS |
-| GPU | 推荐（用于语音合成加速） |
+### 并发开关
 
-### 方式一：使用独立 Runtime（推荐，Windows）
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `OPENMANUS_TOOL_PARALLEL_ENABLED` | `1` | 是否启用并行 tool 调度 |
+| `OPENMANUS_TOOL_PARALLEL_MAX` | `4` | 最大并发度 |
+| `WEB_FETCHER_RS_PY_EXT` | 空 | 可选，指定 Rust 扩展 `.pyd/.so` 路径 |
 
-项目自带独立的 Python 3.9 运行时，无需安装系统 Python，开箱即用：
+说明：以下工具默认串行执行以保证安全性：
+`python_execute`、`str_replace_editor`、`file_operator`、`terminate`、`browser_use`、`tool_selector`。
+
+## 快速开始
+
+### 方式一：Windows 独立 Runtime（推荐）
 
 ```batch
-# 1. 克隆项目
 git clone https://github.com/your-org/local-project.git
 cd local-project
 
-# 2. 安装依赖（使用独立 runtime）
-.\install_dependencies.ps1
-
-# 3. 配置环境变量（创建 .env 文件）
-copy .env.example .env
-# 编辑 .env 填写 API 密钥
-
-# 4. 运行项目
-.\run_with_runtime.ps1
-# 或使用唯一一键批处理：.\run_with_runtime.bat
-```
-详见下方 [Runtime 配置](#-runtime-配置) 部分
-📖 **详细说明**: 参见 [RUNTIME.md](RUNTIME.md)
-
-### 微服务运行说明（默认）
-
-当前默认运行路径为 **microservices-only**：GUI 通过网关调用编排器与各后端服务，不再在 GUI 进程内初始化单体核心服务。
-
-启动建议：
-
-```batch
-# 一键启动（自动拉起微服务栈 + GUI）
+install_dependencies.bat
 run_with_runtime.bat
 ```
 
-微服务配置与端口说明见 [microservices/README.md](microservices/README.md)。
+可先执行：
 
-### 方式二：使用系统 Python 或虚拟环境
+```batch
+check_runtime.bat
+```
 
-如果你已有 Python 3.10-3.11 环境：
+### 方式二：系统 Python / 虚拟环境
 
-```bash
-# 1. 克隆项目
+```powershell
 git clone https://github.com/your-org/local-project.git
 cd local-project
 
-# 2. 创建虚拟环境（推荐）
-python -m venv venv
-# Windows:
-.\venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
-
-# 3. 安装依赖
-pip install -r requirements.txt
-
-# 4. 配置环境变量（创建 .env 文件）
-cp .env.example .env
-# 编辑 .env 填写 API 密钥
-
-# 5. 运行
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 python main.py
 ```
 
-### 环境变量配置
-
-创建 `.env` 文件：
-
-```ini
-# LLM API 配置
-ARK_API_KEY=your_api_key_here
-MODEL_NAME=your_model_name
-
-# 系统提示词（可选，支持文件路径）
-SYSTEM_PROMPT_FILE=SYSTEM_PROMPT.txt
-
-# 浏览器 Agent（可选）
-OPENAI_API_KEY=sk-xxxxxx
-```
-
-### 🎯 功能配置
-
-编辑 `config.yaml` 来启用/禁用功能模块：
-
-```yaml
-# 电脑控制功能
-controller:
-  enabled: true          # 改为 false 禁用
-
-# 语音识别功能
-ear:
-  enabled: false         # 改为 true 启用
-  model_size: "base"     # 模型大小: tiny, base, small, medium
-```
-
----
-
-## 🐛 常见问题
-
-### ❌ 找不到 python.exe
-
-**症状**: `找不到 Python Runtime: runtime\python.exe`
-
-**解决**:
-1. 确认 `runtime` 目录下有完整的 Python 3.9 运行时
-2. 运行健康检查: `.\check_runtime.ps1`
-3. 参考 [RUNTIME.md](RUNTIME.md) 重新配置
-
-### ❌ 模块导入失败
-
-**症状**: `ModuleNotFoundError: No module named 'xxx'`
-
-**解决**:
-```powershell
-# 使用 Runtime:
-.\install_dependencies.ps1
-
-# 使用系统 Python:
-pip install -r requirements.txt
-```
-
-### ❌ 启动后立即退出
-
-**检查步骤**:
-1. 查看日志文件: `data/logs/project_local.log`
-2. 确认 `.env` 配置正确（API 密钥等）
-3. 运行健康检查: `.\check_runtime.ps1`
-
-### ❌ ctranslate2 错误
-
-**症状**: 与 `ctranslate2` 相关的 DLL 加载错误
-
-**解决**:
-- 已在启动脚本中自动设置 `CT2_USE_CUDA=0`
-- 如果仍有问题，检查环境变量是否正确
-
-### ❌ 语音功能无法使用
-
-**症状**: `找不到 GPT-SoVITS 服务`
-
-**解决**:
-- 检查 GPT-SoVITS 服务是否正常启动
-- 确认模型文件是否正确放置
-- 查看日志：`modules/gpt_sovits/gpt_sovits.log`
-
-### ❌ 电脑控制无法启动应用
-
-**症状**: 应用无法打开或权限不足
-
-**解决**:
-- 检查应用路径是否在 `config.yaml` 白名单中
-- 确认路径正确（使用 `\\` 或原始字符串）
-- 查看日志确认安全检查是否通过
-
----
-
-## 📚 延伸阅读
-
-- **完整文档**: [README.md](README.md)
-- **Runtime 详细说明**: [RUNTIME.md](RUNTIME.md)
-- **贡献指南**: [CONTRIBUTING.md](CONTRIBUTING.md)
-- **开发脚本**: [dev.ps1](dev.ps1)
-
----
-
-## 🆘 获取帮助
-
-1. **查看日志**: `data/logs/project_local.log`
-2. **运行诊断**: `.\check_runtime.ps1`
-3. **查阅文档**: 参见上方延伸阅读
-4. **提交 Issue**: [GitHub Issues](https://github.com/your-org/local-project/issues)
-
----
-
-## ✅ 验证安装
-
-启动成功后，你应该看到：
-
-```
-============================================
-Project Local - 使用独立 Runtime 启动
-============================================
-Python: d:\...\Local-project\runtime\python.exe
-项目目录: d:\...\Local-project
-============================================
-
-启动 Project Local...
-[INFO] 加载配置文件...
-[INFO] 初始化模块...
-[INFO] Avatar 窗口已启动
-```
-
-如果看到 Avatar 窗口并且没有错误，恭喜你成功启动了 Project Local！🎉
-
----
-Runtime 配置
-
-### 📦 概述
-
-本项目提供独立的 Python 3.9 运行时环境（位于 `runtime`），与系统 Python 环境隔离，确保依赖版本的一致性和项目的可移植性。
-
-### 📁 Runtime 结构
-
-```
-runtime/
-├── python.exe              # Python 3.9 解释器
-├── python39.dll            # Python 核心库
-├── python39._pth           # Python 路径配置文件
-├── python39.zip            # 标准库（压缩包）
-├── Lib/                    # Python 标准库
-│   └── site-packages/      # 第三方依赖包目录
-├── Scripts/                # 可执行脚本目录
-│   ├── pip.exe             # pip 包管理器
-│   └── ...
-├── include/                # C/C++ 头文件
-└── libs/                   # 链接库
-```
-
-### ⚙️ python39._pth 模块搜索路径
-
-`python39._pth` 文件定义了 Python 解释器的搜索路径：
-
-```
-python39.zip                # 标准库压缩包
-.                           # runtime 目录本身
-Lib                         # 标准库目录
-Lib\site-packages           # 第三方包目录
-..                          # 项目根目录
-..\..\modules               # modules 模块
-
-import site                 # 启用 site-packages
-```
-
-### 🚀 使用 Runtime 脚本
-
-#### 安装依赖
+## 可选：构建 Rust 抓取扩展
 
 ```powershell
-# 仅安装生产依赖
-.\install_dependencies.ps1
-
-# 安装生产 + 开发依赖
-.\install_dependencies.ps1 -Dev
-
-# 使用国内镜像加速
-.\install_dependencies.ps1 -Mirror
+python -m pip install maturin
+python -m maturin develop --manifest-path rust_modules/web_fetcher_rs/Cargo.toml
 ```
 
-#### 启动项目
+如果你使用非默认工具链，请确保 Rust/Cargo 可用并与本地 Python ABI 匹配。
+
+## 可选：构建 C++ 语音加速库
 
 ```powershell
-# PowerShell（推荐）
-.\run_with_runtime.ps1
-
-# 或使用批处理脚本
-.\run_with_runtime.bat
+cmake -S cpp_modules/voice_cpp_engine -B build/voice_cpp_engine -DCMAKE_BUILD_TYPE=Release
+cmake --build build/voice_cpp_engine --config Release
 ```
 
-#### 健康检查
+## 测试
 
 ```powershell
-# 诊断 Runtime 配置
-.\check_runtime.ps1
+python -m pytest -q
 ```
 
-#### 手动使用
+关键回归用例：
 
-```batch
-# 直接调用 Python
-runtime\python.exe script.py
-
-# 使用 pip
-runtime\Scripts\pip.exe install package-name
+```powershell
+python -m pytest tests/test_openmanus_web_search_fetcher.py -q
+python -m pytest tests/test_openmanus_browser_enhancements.py -q
+python -m pytest tests/test_voice_tts_chain.py -q
 ```
 
-### 🔧 自动设置的环境变量
+## 项目结构（节选）
 
-| 变量 | 值 | 说明 |
-|------|-----|------|
-| `CT2_USE_CUDA` | `0` | 禁用 ctranslate2 的 CUDA 以避免路径问题 |
-| `LOKY_MAX_CPU_COUNT` | 自动 | 修复中文 Windows 上的编码问题 |
-
-### 🐛 Runtime 故障排查
-
-<details>
-<summary><b>找不到 python.exe</b></summary>
-
-- 确认 `runtime/python.exe` 存在
-- 检查 runtime 目录完整性
-- 运行 `.\check_runtime.ps1` 诊断
-
-</details>
-
-<details>
-<summary><b>模块导入失败 (ModuleNotFoundError)</b></summary>
-
-- 检查 `python39._pth` 中的相对路径
-- 验证依赖已安装：`runtime\Scripts\pip.exe list`
-- 重新运行 `.\install_dependencies.ps1`
-
-</details>
-
-<details>
-<summary><b>DLL 加载失败</b></summary>
-
-- 安装 Visual C++ Redistributable 2015-2022
-- 尝试重新安装依赖包
-- 检查是否缺少系统库
-
-</details>
-
-### 📚 进阶配置
-
-**更新 Runtime**:
-```batch
-# 备份当前版本
-xcopy runtime runtime_backup /E /I /H
-
-# 替换为新的 Python 3.9 嵌入式版本后运行
-.\install_dependencies.ps1
-```
-
-**依赖管理**:
-```batch
-# 查看已安装的包
-runtime\Scripts\pip.exe list
-
-# 导出依赖
-runtime\Scripts\pip.exe freeze > requirements.txt
-```
-
----
-
-## ⚙️ 项目配置
-## ⚙️ 配置说明
-
-配置文件：`config.yaml`
-
-```yaml
-# API 配置
-api:
-  sovits_url: "http://127.0.0.1:9880"
-
-# 音频配置
-audio:
-  ref_audio_path: "assets/audio_ref/ref_audio.wav"
-  sample_rate: 32000
-
-# 电脑控制配置
-controller:
-  enabled: true
-  failsafe: true
-  app_whitelist:
-    notepad: "C:\\Windows\\System32\\notepad.exe"
-    edge: "C:\\Program Files\\Microsoft\\Edge\\msedge.exe"
-```
-
-<details>
-<summary>📋 <b>日志系统说明</b>（点击展开）</summary>
-
-日志系统采用统一、模块化、结构化设计：
-
-- **存放位置**：`data/logs/project_local.log`（每日轮转）
-- **文件格式**：JSON（便于搜索/告警）
-- **控制台**：彩色输出（INFO 及以上）
-
-```python
-from modules.logging_config import get_logger
-logger = get_logger('MyModule')
-logger.info('Hello!')
-```
-
-</details>
-
----
-
-## 📖 使用方法
-
-### 基本命令
-
-| 命令 | 说明 |
-|------|------|
-| `exit` / `quit` | 退出程序 |
-| `status` | 查看记忆系统状态 |
-
-### 🖥️ 电脑控制
-
-AI 可以执行以下操作：
-
-- 📂 **打开应用** - "打开 QQ"、"打开记事本"
-- 🌐 **访问网页** - "打开百度"、"搜索 Python 教程"
-- 📝 **保存笔记** - "保存笔记：今天的学习内容"
-- ⌨️ **输入文本** - 模拟键盘输入中英文
-
-### 🎙️ 语音交互
-
-- ✅ 实时语音输入（需麦克风权限）
-- ✅ 高质量语音合成输出
-- ✅ 自动过滤情感标签（如 `[开心]`、`[生气]`）
-
-### 👤 Avatar 显示
-
-- 🎨 3D 虚拟形象（WebGL）
-- 😊 表情同步
-- 👄 口型动画
-- 🔧 可调整窗口大小和透明度
-
----
-
-## 📁 项目结构
-
-```
+```text
 Local-project/
-├── 📄 main.py                 # 主入口
-├── 📄 config.yaml             # 配置文件
-├── 📄 pyproject.toml          # 项目配置 (Poetry)
-├── 📄 requirements.txt        # 依赖列表
-│
-├── 📂 modules/                # 核心模块
-│   ├── 📂 agent/              # AI Agent（ReAct + 工具）
-│   ├── 📂 avatar/             # 虚拟形象模块
-│   ├── 📂 memory/             # 记忆系统
-│   ├── 📄 config.py           # 配置管理
-│   ├── 📄 ear.py              # 语音识别
-│   ├── 📄 health.py           # 健康检查
-│   ├── 📄 launcher.py         # 应用启动器
-│   ├── 📄 llm.py              # LLM 接口
-│   ├── 📄 resilience.py       # 错误处理与重试
-│   ├── 📄 utils.py            # 工具函数
-│   └── 📄 voice.py            # 语音合成
-│
-├── 📂 tests/                  # 测试文件
-├── 📂 assets/                 # 静态资源
-│   ├── 📂 audio_ref/          # 参考音频
-│   └── 📂 web/                # 前端资源
-├── 📂 data/                   # 数据存储
-│   ├── 📂 memoripy/           # 记忆系统数据
-│   ├── 📂 logs/               # 日志文件
-│   └── 📂 temp/               # 临时文件
-│
-├── 📂 .github/workflows/      # CI/CD 配置
-├── 📄 dev.ps1                 # 开发脚本入口
-└── 📄 start_microservices_with_monitor.ps1  # 微服务启动脚本
+├── modules/                     # 主功能模块
+├── microservices/               # 网关、编排器、服务
+├── rust_modules/web_fetcher_rs/ # Rust 网页抓取扩展
+├── tests/                       # 测试
+└── docs/                        # 多语言文档
 ```
 
-<details>
-<summary>📋 <b>详细模块说明</b>（点击展开）</summary>
+## 相关文档
 
-### Agent 子模块 (`modules/agent/`)
-| 文件 | 说明 |
-|------|------|
-| `core.py` | Agent 核心逻辑（ReAct loop） |
-| `tools.py` | 工具封装（含原 ActionExecutor） |
-| `browser.py` | 浏览器 / 网页检索工具 |
-| `safety.py` | SafetyGuard 安全白名单校验 |
-| `window.py` | 窗口管理辅助 |
-| `file_tools.py` | 文件/笔记助手 |
+- 中文开发指南：`CONTRIBUTING.md`
+- English Developer Guide: `CONTRIBUTING_EN.md`
+- 日本語開発ガイド：`CONTRIBUTING_JA.md`
 
-### Avatar 子模块 (`modules/avatar/`)
-| 文件 | 说明 |
-|------|------|
-| `widget.py` | 主窗口组件 |
-| `expression.py` | 表情管理 |
-| `lip_sync.py` | 口型同步 |
-| `click_through.py` | 点击穿透 |
-| `webengine.py` | WebEngine 集成 |
+## 许可证
 
-### Memory 子模块 (`modules/memory/`)
-| 文件 | 说明 |
-|------|------|
-| `core.py` | 核心记忆管理类 |
-| `storage.py` | 存储层 |
-| `retrieval.py` | 记忆检索与去重 |
-| `conflict/` | 冲突检测与覆盖模块 |
-
-</details>
-
----
-
-## 💻 开发指南
-
-### 开发环境设置
-
-```powershell
-# 安装开发依赖
-.\dev.ps1 setup
-
-# 设置 pre-commit hooks
-.\dev.ps1 pre-commit
-```
-
-### 常用命令
-
-| 命令 | 说明 |
-|------|------|
-| `.\dev.ps1 test` | 运行测试 |
-| `.\dev.ps1 test-cov` | 运行测试 + 覆盖率 |
-| `.\dev.ps1 lint` | 代码检查 |
-| `.\dev.ps1 format` | 代码格式化 |
-| `.\dev.ps1 check` | 运行所有检查 |
-
-### 代码规范
-
-- 🎨 **Black** - 代码格式化（行宽 120）
-- 📦 **isort** - 导入排序
-- 🔍 **Ruff** - 快速 linting
-- 📝 **mypy** - 类型检查
-
-详见 [CONTRIBUTING.md](CONTRIBUTING.md)
-
-### 测试与 CI
-
-#### 本地测试
-
-```powershell
-# 运行所有测试
-python -m pytest tests/ -v
-
-# 运行快速失败模式（首个失败即停止）
-python -m pytest tests/ -x
-
-# 运行覆盖率检查
-python -m pytest tests/ --cov=modules --cov-report=html
-```
-
-#### CI/CD 管道
-
-项目使用 **GitHub Actions** 进行持续集成：
-
-| 检查 | 说明 | 状态 |
-|------|------|------|
-| 🧪 **测试** | 91 项单元测试（Python 3.10, 3.11 矩阵） | ✅ 严格 |
-| 🎨 **格式** | Black, isort, Ruff 检查 | ⚠️ 可选 |
-| 📝 **类型** | mypy 类型检查 | ⚠️ 可选 |
-| 📊 **覆盖率** | 20% 最低覆盖率 | ⚠️ 可选 |
-| 🔒 **安全** | Bandit, pip-audit 扫描 | ⚠️ 信息性 |
-
-**注意**：代码质量检查仅为警告，不会导致 CI 失败。测试失败才会阻断合并。
-
----
-
-## ❓ 故障排除
-
-<details>
-<summary><b>🔊 语音功能无法使用</b></summary>
-
-- 检查 GPT-SoVITS 服务是否正常启动
-- 确认模型文件是否正确放置
-- 查看日志：`GPT-SoVITS-v2pro-20250604-nvidia50/gpt_sovits.log`
-
-</details>
-
-<details>
-<summary><b>🖥️ 电脑控制无法启动应用</b></summary>
-
-- 检查应用路径是否在 `config.yaml` 白名单中
-- 确认路径正确（使用 `\\` 或原始字符串）
-- 查看日志确认安全检查是否通过
-
-</details>
-
-<details>
-<summary><b>👤 Avatar 窗口无法显示</b></summary>
-
-- 检查 WebGL 支持和显卡驱动
-- 确认前端资源文件完整
-- 查看浏览器控制台错误
-
-</details>
-
-<details>
-<summary><b>🐢 记忆系统响应慢</b></summary>
-
-- 检查记忆数据库文件大小
-- 考虑清理过期记忆数据
-- 调整相似度阈值参数
-
-</details>
-
-<details>
-<summary><b>📷 OCR / Tesseract 报错</b></summary>
-
-1. 安装 Tesseract 并下载语言包
-2. 设置环境变量 `TESSDATA_PREFIX`
-3. 程序会尝试自动下载 `eng.traineddata`
-
-</details>
-
-<details>
-<summary><b>⌨️ 中文输入显示为乱码</b></summary>
-
-- 程序使用剪贴板方式输入中文文本
-- 确保目标应用程序支持剪贴板粘贴操作
-
-</details>
-
----
-
-## ⚠️ 注意事项
-
-> - 首次运行需要下载模型文件，可能需要较长时间
-> - 确保 GPT-SoVITS 服务正常启动，否则语音功能不可用
-> - 建议使用 GPU 加速以获得更好的性能
-> - 记忆系统会在 `data/memoripy/` 目录存储交互历史数据
-
-### 冲突检测系统
-
-支持四种冲突类型：
-
-| 类型 | 说明 |
-|------|------|
-| 🔄 重复记忆 | 极高相似度（<0.15）的完全重复内容 |
-| 📝 信息更新 | 包含更新意图 + 共同实体的更正信息 |
-| ❤️ 偏好矛盾 | 同一对象的正反偏好冲突 |
-| 🍎 同类偏好更新 | 同一类别偏好的更新（如食物偏好） |
-
----
-
-## 📜 许可证
-
-本项目采用 [MIT 许可证](LICENSE)。
-
----
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-详见 [贡献指南](CONTRIBUTING.md)
-
----
-
-<div align="center">
-
-**Made with ❤️ by Local Project Team**
-
-</div>
-
+MIT，详见 `../LICENSE`。

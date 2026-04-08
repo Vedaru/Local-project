@@ -1,8 +1,12 @@
 import asyncio
 import importlib.machinery
 import sys
+import threading
 import types
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import pytest
 
 
 if "loguru" not in sys.modules:
@@ -249,6 +253,157 @@ def test_fetch_with_rust_stats_record_extension_success(monkeypatch):
     assert stats["requests"] == 1
     assert stats["extension_attempts"] == 1
     assert stats["extension_success"] == 1
+
+
+def test_fetch_content_batch_uses_rust_batch_extension(monkeypatch):
+    _reset_fetcher_runtime_state(monkeypatch)
+
+    class _BatchExtensionModule:
+        @staticmethod
+        def fetch_content_batch(urls, _timeout, _max_chars):
+            return [
+                (True, f"Rust extension article body {index} " * 30, None)
+                for index, _ in enumerate(urls)
+            ]
+
+    monkeypatch.setattr(
+        WebContentFetcher,
+        "_load_rust_fetcher_module",
+        classmethod(lambda cls: _BatchExtensionModule()),
+    )
+
+    url_list = ["https://example.com/a", "https://example.com/b"]
+    payload = asyncio.run(WebContentFetcher.fetch_content_batch(url_list, timeout=10))
+
+    assert set(payload.keys()) == set(url_list)
+    assert "Rust extension article body" in payload["https://example.com/a"]
+
+    stats = WebContentFetcher.get_rust_fetcher_stats()
+    assert stats["requests"] == 2
+    assert stats["extension_attempts"] == 2
+    assert stats["extension_success"] == 2
+
+
+def test_fetch_content_for_results_uses_batch_then_fallback(monkeypatch):
+    web_search = WebSearch()
+    batch_content = "batch rust content " * 30
+    fallback_content = "fallback single content " * 30
+    fallback_calls = {"count": 0}
+
+    async def fake_batch(cls, urls, timeout=10):
+        assert timeout >= 5
+        return {urls[0]: batch_content}
+
+    async def fake_single(result):
+        fallback_calls["count"] += 1
+        result.raw_content = fallback_content
+        return result
+
+    monkeypatch.setattr(WebContentFetcher, "fetch_content_batch", classmethod(fake_batch))
+    monkeypatch.setattr(web_search, "_fetch_single_result_content", fake_single)
+
+    results = [
+        web_search_module.SearchResult(
+            position=1,
+            url="https://example.com/1",
+            title="Result 1",
+            description="",
+            source="test",
+        ),
+        web_search_module.SearchResult(
+            position=2,
+            url="https://example.com/2",
+            title="Result 2",
+            description="",
+            source="test",
+        ),
+    ]
+
+    enriched = asyncio.run(web_search._fetch_content_for_results(results))
+
+    assert enriched[0].raw_content == batch_content
+    assert enriched[1].raw_content == fallback_content
+    assert fallback_calls["count"] == 1
+
+
+def test_fetch_content_batch_local_http_e2e(monkeypatch):
+    _reset_fetcher_runtime_state(monkeypatch)
+
+    # Avoid localhost traffic being routed through system proxy in this environment.
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+
+    rust_module = WebContentFetcher._load_rust_fetcher_module()
+    if rust_module is None or not hasattr(rust_module, "fetch_content_batch"):
+        pytest.skip("Rust web fetcher extension is unavailable")
+
+    article_a = "Rust local e2e article A. " * 20
+    article_b = "Rust local e2e article B. " * 20
+    pages = {
+        "/a": f"<html><body><main><article>{article_a}</article></main></body></html>",
+        "/b": f"<html><body><main><article>{article_b}</article></main></body></html>",
+    }
+
+    class _LocalHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):
+            body = pages.get(self.path)
+            if body is None:
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(b"not found")
+                return
+
+            payload = body.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(payload)
+            self.wfile.flush()
+
+        def log_message(self, _format, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _LocalHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        urls = [f"{base}/a", f"{base}/b"]
+
+        payload = asyncio.run(WebContentFetcher.fetch_content_batch(urls, timeout=10))
+        assert set(payload.keys()) == set(urls)
+        assert len(payload[urls[0]]) > 220
+        assert len(payload[urls[1]]) > 220
+
+        web_search = WebSearch()
+        seeded_results = [
+            web_search_module.SearchResult(
+                position=1,
+                url=urls[0],
+                title="Result A",
+                description="",
+                source="test",
+            ),
+            web_search_module.SearchResult(
+                position=2,
+                url=urls[1],
+                title="Result B",
+                description="",
+                source="test",
+            ),
+        ]
+        enriched = asyncio.run(web_search._fetch_content_for_results(seeded_results))
+        assert all(result.raw_content and len(result.raw_content) > 220 for result in enriched)
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_get_engine_order_uses_configured_engines_only(monkeypatch):

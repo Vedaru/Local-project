@@ -43,8 +43,9 @@ def test_agent_speak_callback():
     # 清理
     agent.cleanup()
     print("✅ Agent 已清理")
-    
-    return len(speak_outputs)
+
+    # 测试函数不应返回非 None，改为断言基本执行路径正常。
+    assert isinstance(speak_outputs, list)
 
 
 if __name__ == "__main__":
@@ -53,8 +54,8 @@ if __name__ == "__main__":
     print("=" * 60)
     
     try:
-        result = test_agent_speak_callback()
-        print(f"\n✅ 测试完成，共收集到 {result} 条 speak 输出")
+        test_agent_speak_callback()
+        print("\n✅ 测试完成")
     except Exception as e:
         print(f"\n❌ 测试失败: {e}")
         import traceback

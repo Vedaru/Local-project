@@ -4,7 +4,7 @@ import os
 import queue
 import threading
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -14,14 +14,24 @@ class ServiceCallbacks:
     on_response_ready: Optional[Callable[[str], None]] = None
     on_expression_change: Optional[Callable[[object], None]] = None
     on_status_update: Optional[Callable[[str], None]] = None
-    on_speak_request: Optional[Callable[[str], None]] = None
+    on_speak_request: Optional[Callable[[dict[str, Any]], None]] = None
     on_shutdown: Optional[Callable[[], None]] = None
+
+
+def _resolve_default_gateway_port() -> str:
+    """Resolve a single source of truth for gateway default port."""
+    try:
+        from modules.config_tuning import load_tuning
+
+        return str(load_tuning().services.gateway_port)
+    except Exception:
+        return "18080"
 
 
 class MicroserviceAIService:
     def __init__(self, callbacks: ServiceCallbacks):
         self.callbacks = callbacks
-        gateway_port = (os.getenv("GATEWAY_PORT", "8080") or "8080").strip()
+        gateway_port = (os.getenv("GATEWAY_PORT", "") or "").strip() or _resolve_default_gateway_port()
         default_gateway = f"http://127.0.0.1:{gateway_port}"
         self.gateway_url = (os.getenv("MICROSERVICES_GATEWAY_URL", default_gateway) or default_gateway).rstrip("/")
         self.user_id = (os.getenv("LOCAL_GUI_USER_ID", "local-gui") or "local-gui").strip()

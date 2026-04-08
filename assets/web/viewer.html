@@ -54,6 +54,7 @@
         let isDragging = false;
         let lastPointerPosition = { x: 0, y: 0 };
         let isReady = false;
+        let expressionFallbackWarningShown = false;
         
         // 口型同步变量：开合(open) + 口型形状(form)
         // form 取值范围 [-1, 1]，负值偏圆唇，正值偏展唇。
@@ -464,6 +465,7 @@
                     currentModel.destroy();
                     currentModel = null;
                 }
+                expressionFallbackWarningShown = false;
                 
                 // 加载新模型（禁用库内置的 idle/auto 交互，改为由本地逻辑控制）
                 const model = await PIXI.live2d.Live2DModel.from(url, {
@@ -621,10 +623,10 @@
                 tapbody: 'Tap@Body',
                 flickbody: 'Flick@Body',
                 happy: 'Tap@Body',
-                sad: 'FlickDown',
+                sad: 'Idle',
                 angry: 'Flick@Body',
-                surprised: 'Flick',
-                confused: 'Flick',
+                surprised: 'Tap',
+                confused: 'Tap',
                 thinking: 'Tap',
                 neutral: 'Idle'
             };
@@ -659,22 +661,22 @@
                 0: 'Idle',
                 1: 'Tap',
                 2: 'Tap@Body',
-                3: 'FlickDown',
+                3: 'Idle',
                 4: 'Flick@Body',
-                5: 'Flick',
+                5: 'Tap',
                 6: 'Tap',
-                7: 'Flick'
+                7: 'Tap'
             };
 
             const mapByName = {
                 neutral: 'Idle',
                 thinking: 'Tap',
                 happy: 'Tap@Body',
-                sad: 'FlickDown',
+                sad: 'Idle',
                 angry: 'Flick@Body',
-                surprised: 'Flick',
+                surprised: 'Tap',
                 shy: 'Tap',
-                confused: 'Flick'
+                confused: 'Tap'
             };
 
             if (typeof expressionKey === 'number' && mapByIndex.hasOwnProperty(expressionKey)) {
@@ -737,6 +739,14 @@
                 }
 
                 // 当前模型没有 expression 定义时，回退为可见动作控制
+                if (!expressionFallbackWarningShown) {
+                    expressionFallbackWarningShown = true;
+                    console.warn(
+                        '[Live2D Viewer] No expression definitions detected; using safe motion fallback only. Visual emotion may be approximate.',
+                        { requested: index, availableMotions: getMotionGroups() }
+                    );
+                }
+
                 const fallbackMotion = resolveExpressionFallbackMotion(index);
                 if (!fallbackMotion) {
                     console.warn('[Live2D Viewer] No expression definitions and no fallback motion available');

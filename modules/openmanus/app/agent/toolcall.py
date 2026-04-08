@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Tuple, Union
 
 from pydantic import Field
 
@@ -138,30 +138,117 @@ class ToolCallAgent(ReActAgent):
             return self.messages[-1].content or "No content or commands to execute"
 
         results = []
-        for command in self.tool_calls:
-            # Reset base64_image for each tool call
-            self._current_base64_image = None
+        batch_outputs = await self._execute_tool_batch(self.tool_calls)
 
-            result = await self.execute_tool(command)
-
+        for command, result_text, base64_image in batch_outputs:
             if self.max_observe:
-                result = result[: self.max_observe]
+                result_text = result_text[: self.max_observe]
 
             logger.info(
-                f"🎯 Tool '{command.function.name}' completed its mission! Result: {result}"
+                f"🎯 Tool '{command.function.name}' completed its mission! Result: {result_text}"
             )
 
-            # Add tool response to memory
             tool_msg = Message.tool_message(
-                content=result,
+                content=result_text,
                 tool_call_id=command.id,
                 name=command.function.name,
-                base64_image=self._current_base64_image,
+                base64_image=base64_image,
             )
             self.memory.add_message(tool_msg)
-            results.append(result)
+            results.append(result_text)
 
         return "\n\n".join(results)
+
+    async def _execute_tool_batch(
+        self,
+        commands: List[ToolCall],
+    ) -> List[Tuple[ToolCall, str, Optional[str]]]:
+        """Execute multiple tool calls with batch acceleration when available.
+
+        Returns:
+            A list of (command, observation_text, base64_image) preserving input order.
+        """
+        indexed_outputs: List[Tuple[int, ToolCall, str, Optional[str]]] = []
+        prepared_calls: List[Tuple[int, ToolCall, str, dict[str, Any]]] = []
+
+        for index, command in enumerate(commands):
+            if not command or not command.function or not command.function.name:
+                indexed_outputs.append(
+                    (index, command, "Error: Invalid command format", None)
+                )
+                continue
+
+            name = command.function.name
+            if name not in self.available_tools.tool_map:
+                indexed_outputs.append(
+                    (index, command, f"Error: Unknown tool '{name}'", None)
+                )
+                continue
+
+            try:
+                args = json.loads(command.function.arguments or "{}")
+            except json.JSONDecodeError:
+                logger.error(
+                    f"📝 Oops! The arguments for '{name}' don't make sense - invalid JSON, arguments:{command.function.arguments}"
+                )
+                indexed_outputs.append(
+                    (
+                        index,
+                        command,
+                        f"Error: Error parsing arguments for {name}: Invalid JSON format",
+                        None,
+                    )
+                )
+                continue
+
+            prepared_calls.append((index, command, name, args))
+
+        if prepared_calls:
+            payloads = [
+                {"name": name, "tool_input": args}
+                for _, _, name, args in prepared_calls
+            ]
+
+            if len(payloads) > 1 and hasattr(self.available_tools, "execute_many"):
+                tool_results = await self.available_tools.execute_many(payloads)
+            else:
+                tool_results = []
+                for payload in payloads:
+                    tool_results.append(
+                        await self.available_tools.execute(
+                            name=payload["name"],
+                            tool_input=payload["tool_input"],
+                        )
+                    )
+
+            for (index, command, name, _args), tool_result in zip(
+                prepared_calls,
+                tool_results,
+            ):
+                try:
+                    await self._handle_special_tool(name=name, result=tool_result)
+                except Exception as e:
+                    logger.exception(f"Special tool handling failed for '{name}': {e}")
+
+                base64_image = (
+                    tool_result.base64_image
+                    if hasattr(tool_result, "base64_image")
+                    else None
+                )
+
+                observation = (
+                    f"Observed output of cmd `{name}` executed:\n{str(tool_result)}"
+                    if tool_result
+                    else f"Cmd `{name}` completed with no output"
+                )
+
+                indexed_outputs.append((index, command, observation, base64_image))
+
+        indexed_outputs.sort(key=lambda item: item[0])
+        return [
+            (command, observation, base64_image)
+            for _, command, observation, base64_image in indexed_outputs
+        ]
 
     async def execute_tool(self, command: ToolCall) -> str:
         """Execute a single tool call with robust error handling"""

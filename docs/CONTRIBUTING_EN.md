@@ -1,289 +1,147 @@
-# Developer Guide
+# Developer Contribution Guide
 
-**Language / 語言 / 言語:**
+**Language / 言語 / 语言:**
 
 - [中文](./CONTRIBUTING.md)
 - [English](./CONTRIBUTING_EN.md)
 - [日本語](./CONTRIBUTING_JA.md)
 
-This document describes how to set up the development environment, run tests, and contribute code to Local-project.
+This guide explains the recommended development, testing, and contribution workflow.
 
-## Table of Contents
-
-- [Development Environment Setup](#development-environment-setup)
-- [Project Structure](#project-structure)
-- [Code Standards](#code-standards)
-- [Testing](#testing)
-- [CI/CD](#cicd)
-- [Module Documentation](#module-documentation)
-
-## Development Environment Setup
+## 1. Development Environment
 
 ### Prerequisites
 
-- Python 3.9 - 3.11
-- pip or Poetry
+- Python 3.10 - 3.11 (recommended)
 - Git
+- Rust toolchain (required only when changing `rust_modules/web_fetcher_rs`)
+- C++/CMake toolchain (required only when changing `cpp_modules/voice_cpp_engine`)
 
-### Quick Start
+### Setup
 
 ```powershell
-# 1. Clone repository
 git clone https://github.com/your-org/local-project.git
 cd local-project
 
-# 2. Create virtual environment
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# 3. Install dependencies
-.\dev.ps1 setup
-
-# 4. Set up pre-commit hooks
-.\dev.ps1 pre-commit
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-### Using Poetry (Recommended)
+## 2. Run and Test Locally
 
 ```powershell
-# Install Poetry
-pip install poetry
-
-# Install all dependencies
-poetry install
-
-# Activate virtual environment
-poetry shell
-```
-
-## Project Structure
-
-```
-Local-project/
-├── modules/              # Core modules
-│   ├── agent/           # AI Agent module
-│   ├── avatar/          # Avatar module
-│   ├── memory/          # Memory system
-│   ├── config.py        # Configuration management
-│   ├── health.py        # Health check
-│   ├── llm.py           # LLM calls
-│   ├── resilience.py    # Error handling & retry
-│   ├── utils.py         # Utility functions
-│   └── voice.py         # Voice synthesis
-├── microservices/       # Microservices framework (gateway/orchestrator/services)
-├── tests/               # Test files
-├── assets/              # Static assets
-├── data/                # Data directory
-├── dev.ps1              # Development script entry
-├── start_microservices_with_monitor.ps1  # Microservice startup script
-├── .github/workflows/   # CI/CD configuration
-├── main.py              # Main entry point
-├── pyproject.toml       # Project configuration
-└── requirements.txt     # Dependencies list
-```
-
-## Code Standards
-
-### Formatting
-
-The project uses the following tools to maintain consistent code style:
-
-- **Black**: Code formatting (line width 120)
-- **isort**: Import sorting
-- **Ruff**: Fast Python linter
-
-```powershell
-# Format code
-.\dev.ps1 format
-
-# Or run manually
-black modules/ tests/ main.py
-isort modules/ tests/ main.py
-```
-
-### Type Hints
-
-Type hints are recommended and checked with mypy:
-
-```python
-def process_text(text: str, max_length: int = 100) -> Optional[str]:
-    """Process text and return result"""
-    if not text:
-        return None
-    return text[:max_length]
+python main.py
 ```
 
 ```powershell
-# Type check
-mypy modules/ --ignore-missing-imports
+python -m pytest -q
 ```
 
-### Pre-commit Hooks
-
-Checks run automatically before commit:
+For OpenManus toolchain updates, run at least:
 
 ```powershell
-# Install hooks
-pre-commit install
-
-# Run all checks manually
-pre-commit run --all-files
+python -m pytest tests/test_openmanus_web_search_fetcher.py -q
+python -m pytest tests/test_openmanus_browser_enhancements.py -q
+python -m pytest tests/test_voice_tts_chain.py -q
 ```
 
-## Testing
+## 3. Rust Fetcher Extension Workflow
 
-### Running Tests
+When changing:
+
+- `rust_modules/web_fetcher_rs`
+- `modules/openmanus/app/tool/web_search.py`
+
+build and verify the extension:
 
 ```powershell
-# Run all tests
-.\dev.ps1 test
-
-# Or run directly with pytest
-pytest tests/ -v
-
-# Run specific test file
-pytest tests/test_utils.py -v
-
-# Run specific test
-pytest tests/test_utils.py::TestCleanText::test_clean_text -v
+python -m pip install maturin
+python -m maturin develop --manifest-path rust_modules/web_fetcher_rs/Cargo.toml
+python -m pytest tests/test_openmanus_web_search_fetcher.py -q
 ```
 
-### Test Coverage
+Optional native check:
 
 ```powershell
-# Generate coverage report
-.\dev.ps1 test-cov
-
-# View HTML report
-start htmlcov/index.html
+cargo check --manifest-path rust_modules/web_fetcher_rs/Cargo.toml
 ```
 
-### Writing Tests
+## 4. C++ Voice Acceleration Workflow
 
-Test files are placed in the `tests/` directory with naming format `test_<module>.py`:
+When changing:
 
-```python
-# tests/test_example.py
-import pytest
-from modules.example import my_function
+- `cpp_modules/voice_cpp_engine`
+- `modules/voice.py`
+- `modules/voice_cpp_accel.py`
 
-class TestMyFunction:
-    """Tests for my_function."""
-    
-    def test_basic_case(self):
-        """Test basic functionality."""
-        result = my_function("input")
-        assert result == "expected"
-    
-    @pytest.mark.slow
-    def test_slow_operation(self):
-        """Test that takes a long time."""
-        # Marked as slow, skipped by default
-        pass
-```
-
-### Test Markers
-
-- `@pytest.mark.slow` - Slow tests (run with `--runslow`)
-- `@pytest.mark.integration` - Integration tests (run with `--runintegration`)
-- `@pytest.mark.unit` - Unit tests
-
-## CI/CD
-
-The project uses GitHub Actions for continuous integration:
-
-### CI Pipeline
-
-1. **Code Quality Checks** - Black, isort, Ruff, mypy
-2. **Unit Tests** - Run on multiple Python versions and operating systems
-3. **Coverage Report** - Upload to Codecov
-4. **Security Scan** - Bandit, pip-audit
-
-### Local Verification
-
-Run full checks before commit:
+build and verify the C++ library and voice regressions:
 
 ```powershell
-.\dev.ps1 check
+cmake -S cpp_modules/voice_cpp_engine -B build/voice_cpp_engine -DCMAKE_BUILD_TYPE=Release
+cmake --build build/voice_cpp_engine --config Release
+python -m pytest tests/test_voice_tts_chain.py -q
+python -m pytest tests/test_voice_service_wav_cleanup.py -q
 ```
 
-## Module Documentation
+## 5. Tool Dispatch Parallelism Policy
 
-### resilience.py - Error Handling & Retry
+`ToolCollection` supports batched and parallel dispatch via `execute_many`.
 
-Provides unified error handling mechanism:
+The following tools are serial-only by default:
 
-```python
-from modules.resilience import retry, RetryStrategy, CircuitBreaker
+- `python_execute`
+- `str_replace_editor`
+- `file_operator`
+- `terminate`
+- `browser_use`
+- `tool_selector`
 
-# Use retry decorator
-@retry(max_retries=3, strategy=RetryStrategy.EXPONENTIAL)
-def call_external_api():
-    # API call
-    pass
+When adding a new side-effect tool, evaluate whether it must remain serial.
 
-# Use circuit breaker
-breaker = CircuitBreaker(failure_threshold=5)
+Relevant env vars:
 
-@breaker
-def risky_operation():
-    # Operation that might fail
-    pass
+- `OPENMANUS_TOOL_PARALLEL_ENABLED`: enable/disable parallel dispatch
+- `OPENMANUS_TOOL_PARALLEL_MAX`: max concurrency
+
+## 6. Documentation Sync Requirements
+
+If architecture/runtime/performance behavior changes, update all six docs:
+
+- `docs/README.md`
+- `docs/README_EN.md`
+- `docs/README_JA.md`
+- `docs/CONTRIBUTING.md`
+- `docs/CONTRIBUTING_EN.md`
+- `docs/CONTRIBUTING_JA.md`
+
+## 7. Contribution Flow
+
+1. Create a branch: `git checkout -b feat/your-topic`
+2. Implement and commit your change
+3. Ensure tests pass
+4. Open a Pull Request
+
+Commit message format:
+
+```text
+<type>: <summary>
 ```
 
-### health.py - Health Check
+Common `type` values:
 
-Monitor critical service status:
+- `feat`
+- `fix`
+- `refactor`
+- `test`
+- `docs`
+- `chore`
 
-```python
-from modules.health import health_checker, check_sovits_health
+## 8. PR Checklist
 
-# Register health check
-health_checker.register("sovits", check_sovits_health)
-
-# Run check
-result = health_checker.check("sovits")
-print(f"Status: {result.status}")
-
-# Check all services
-health = health_checker.check_all()
-print(f"Overall: {health.overall_status}")
-```
-
-### microservices - Service Startup and Orchestration
-
-Runtime is fully migrated to microservices mode:
-
-```batch
-run_with_runtime.bat
-```
-
-Notes:
-- GUI communicates with backend through gateway and orchestrator
-- Service ports, URLs, and auth settings are managed under microservices config
-
-## Contribution Guidelines
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Create a Pull Request
-
-### Commit Message Convention
-
-```
-<type>: <description>
-
-[optional body]
-```
-
-Types:
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation update
-- `style`: Code formatting (no functional change)
-- `refactor`: Refactoring
-- `test`: Test-related
-- `chore`: Build/tooling-related
-
+- [ ] Change scope matches the goal
+- [ ] Relevant regression tests were executed
+- [ ] No obvious performance regression introduced
+- [ ] CN/EN/JA docs updated when applicable
+- [ ] Commit messages are clear

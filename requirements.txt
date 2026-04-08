@@ -50,7 +50,6 @@ duckduckgo_search>=7.5.3
 tomli>=2.0.0
 httpx>=0.27.0
 beautifulsoup4>=4.12.0
-requests>=2.31.0
 
 # OCR（Tesseract 后端）
 # - Python 端库：pytesseract

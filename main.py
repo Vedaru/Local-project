@@ -29,12 +29,14 @@ from PyQt6.QtWidgets import QApplication
 import modules._patch_ctranslate2  # noqa: F401, E402
 from modules.config import load_config
 from modules.logging_config import get_logger
+from modules.python_runtime_guard import ensure_supported_python_runtime
 
 
 def main() -> None:
     """Main entry: bridge asyncio and Qt event loops via qasync."""
     logger = get_logger("ProjectLocal")
     logger.info("启动 Project Local...")
+    ensure_supported_python_runtime(logger=logger)
 
     quit_event: Optional[asyncio.Event] = None
 

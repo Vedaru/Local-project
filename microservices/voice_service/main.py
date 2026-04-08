@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from modules.logging_config import get_logger
+from modules.python_runtime_guard import ensure_supported_python_runtime
 
 app = FastAPI(title="project-local-voice-service", version="0.1.0")
 
@@ -109,6 +110,7 @@ def _try_init_voice() -> None:
 async def startup_event() -> None:
     global _CLEANUP_TASK
 
+    ensure_supported_python_runtime(logger=logger)
     await asyncio.to_thread(_ensure_wav_output_dir)
     await asyncio.to_thread(_try_init_voice)
 

@@ -122,6 +122,8 @@ class WebContentFetcher:
     _rust_fetcher_module_cache: Optional[Any] = None
     _rust_fetcher_module_attempted: bool = False
     _rust_fetcher_extension_missing_logged: bool = False
+    _rust_fetcher_windows_dll_handles: List[Any] = []
+    _rust_fetcher_windows_dll_dirs_seen: set[str] = set()
     _rust_fetcher_stats: Dict[str, int] = {
         "requests": 0,
         "extension_attempts": 0,
@@ -151,6 +153,12 @@ class WebContentFetcher:
     @classmethod
     def _increment_rust_fetcher_stat(cls, key: str) -> None:
         cls._rust_fetcher_stats[key] = int(cls._rust_fetcher_stats.get(key, 0)) + 1
+
+    @classmethod
+    def _increment_rust_fetcher_stat_by(cls, key: str, amount: int) -> None:
+        if amount <= 0:
+            return
+        cls._rust_fetcher_stats[key] = int(cls._rust_fetcher_stats.get(key, 0)) + amount
 
     @classmethod
     def reset_rust_fetcher_stats(cls) -> None:
@@ -222,7 +230,71 @@ class WebContentFetcher:
         return candidates
 
     @classmethod
+    def _register_windows_dll_dirs(cls, extra_dirs: Optional[List[Path]] = None) -> None:
+        if os.name != "nt":
+            return
+
+        add_dll_directory = getattr(os, "add_dll_directory", None)
+        if add_dll_directory is None:
+            return
+
+        candidate_dirs: List[Path] = []
+        if extra_dirs:
+            candidate_dirs.extend(extra_dirs)
+
+        path_raw = os.environ.get("PATH", "")
+        if path_raw:
+            for item in path_raw.split(os.pathsep):
+                item = item.strip().strip('"')
+                if item:
+                    candidate_dirs.append(Path(item))
+
+        rustup_home = os.environ.get(
+            "RUSTUP_HOME",
+            str(Path.home() / ".rustup"),
+        )
+        candidate_dirs.extend(
+            [
+                Path("D:/mingw64/bin"),
+                Path("C:/mingw64/bin"),
+                Path(rustup_home) / "toolchains" / "stable-x86_64-pc-windows-gnu" / "bin",
+                Path(rustup_home) / "toolchains" / "stable-x86_64-pc-windows-msvc" / "bin",
+                Path.home()
+                / "AppData"
+                / "Local"
+                / "Microsoft"
+                / "WinGet"
+                / "Packages"
+                / "MartinStorsjo.LLVM-MinGW.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe"
+                / "llvm-mingw-20260324-ucrt-x86_64"
+                / "bin",
+            ]
+        )
+
+        for candidate_dir in candidate_dirs:
+            try:
+                resolved = str(candidate_dir.resolve())
+            except Exception:
+                resolved = str(candidate_dir)
+
+            normalized = resolved.lower().rstrip("\\/")
+            if not normalized or normalized in cls._rust_fetcher_windows_dll_dirs_seen:
+                continue
+
+            if not Path(resolved).exists():
+                continue
+
+            try:
+                handle = add_dll_directory(resolved)
+                cls._rust_fetcher_windows_dll_handles.append(handle)
+                cls._rust_fetcher_windows_dll_dirs_seen.add(normalized)
+            except Exception:
+                continue
+
+    @classmethod
     def _load_extension_module_from_path(cls, extension_path: Path) -> Optional[Any]:
+        cls._register_windows_dll_dirs([extension_path.parent])
+
         module_name = cls.RUST_FETCHER_EXT_MODULE
         loader = importlib.machinery.ExtensionFileLoader(module_name, str(extension_path))
         spec = importlib.util.spec_from_file_location(
@@ -257,6 +329,9 @@ class WebContentFetcher:
 
         cls._rust_fetcher_module_attempted = True
 
+        extension_paths = cls._candidate_extension_paths()
+        cls._register_windows_dll_dirs([path.parent for path in extension_paths])
+
         try:
             module = importlib.import_module(cls.RUST_FETCHER_EXT_MODULE)
             if hasattr(module, "fetch_content"):
@@ -265,7 +340,7 @@ class WebContentFetcher:
         except Exception as exc:
             logger.debug(f"Rust extension import by module name failed: {exc}")
 
-        for extension_path in cls._candidate_extension_paths():
+        for extension_path in extension_paths:
             try:
                 module = cls._load_extension_module_from_path(extension_path)
                 if module is not None:
@@ -303,6 +378,139 @@ class WebContentFetcher:
         if isinstance(content, str):
             return cls._trim_output(content)
         return ""
+
+    @classmethod
+    def _run_rust_extension_batch_sync(
+        cls,
+        rust_module: Any,
+        urls: List[str],
+        timeout: int,
+    ) -> Dict[str, str]:
+        if not hasattr(rust_module, "fetch_content_batch"):
+            return {}
+
+        try:
+            payload = rust_module.fetch_content_batch(
+                urls,
+                timeout,
+                cls.MAX_CONTENT_CHARS,
+            )
+        except Exception as exc:
+            logger.warning(f"Rust extension batch fetch failed: {exc}")
+            return {}
+
+        if not isinstance(payload, (list, tuple)):
+            logger.warning("Rust extension batch fetch returned unexpected payload")
+            return {}
+
+        if len(payload) != len(urls):
+            logger.warning(
+                "Rust extension batch fetch returned mismatched result count: "
+                f"expected={len(urls)} actual={len(payload)}"
+            )
+
+        content_by_url: Dict[str, str] = {}
+        for index, url in enumerate(urls):
+            item = payload[index] if index < len(payload) else None
+            if not isinstance(item, (list, tuple)) or len(item) != 3:
+                cls._increment_rust_fetcher_stat("extension_empty_or_error")
+                continue
+
+            success, content, error = item
+            trimmed_content = cls._trim_output(content) if isinstance(content, str) else ""
+
+            if cls._is_usable_content(trimmed_content):
+                content_by_url[url] = trimmed_content
+                cls._increment_rust_fetcher_stat("extension_success")
+                continue
+
+            if trimmed_content:
+                cls._increment_rust_fetcher_stat("extension_unusable")
+            else:
+                cls._increment_rust_fetcher_stat("extension_empty_or_error")
+
+            error_message = normalize_whitespace_text(str(error or ""))[:300]
+            if error_message:
+                logger.warning(
+                    "Rust extension reported no usable content "
+                    f"for {url}: {error_message}"
+                )
+
+            if bool(success) and isinstance(content, str):
+                fallback_content = cls._trim_output(content)
+                if cls._is_usable_content(fallback_content):
+                    content_by_url[url] = fallback_content
+                    cls._increment_rust_fetcher_stat("extension_success")
+
+        return content_by_url
+
+    @classmethod
+    async def _fetch_many_with_rust(cls, urls: List[str], timeout: int) -> Dict[str, str]:
+        if not urls:
+            return {}
+
+        cls._increment_rust_fetcher_stat_by("requests", len(urls))
+        rust_module = cls._load_rust_fetcher_module()
+        if rust_module is None:
+            if not cls._rust_fetcher_extension_missing_logged:
+                logger.warning(
+                    "Rust web fetcher extension is unavailable. "
+                    "Build/install rust_modules/web_fetcher_rs or set WEB_FETCHER_RS_PY_EXT."
+                )
+                cls._rust_fetcher_extension_missing_logged = True
+            cls._increment_rust_fetcher_stat_by("extension_unavailable", len(urls))
+            return {}
+
+        loop = asyncio.get_running_loop()
+        cls._increment_rust_fetcher_stat_by("extension_attempts", len(urls))
+
+        if hasattr(rust_module, "fetch_content_batch"):
+            try:
+                return await loop.run_in_executor(
+                    None,
+                    lambda: cls._run_rust_extension_batch_sync(
+                        rust_module,
+                        urls,
+                        timeout,
+                    ),
+                )
+            except Exception as exc:
+                logger.warning(f"Rust extension batch execution failed: {exc}")
+                cls._increment_rust_fetcher_stat_by(
+                    "extension_empty_or_error", len(urls)
+                )
+                return {}
+
+        tasks = [
+            loop.run_in_executor(
+                None,
+                lambda target_url=url: cls._run_rust_extension_sync(
+                    rust_module,
+                    target_url,
+                    timeout,
+                ),
+            )
+            for url in urls
+        ]
+        payloads = await asyncio.gather(*tasks, return_exceptions=True)
+        content_by_url: Dict[str, str] = {}
+        for url, payload in zip(urls, payloads):
+            if isinstance(payload, Exception):
+                logger.warning(
+                    f"Rust extension fetch failed for {url} with exception: {payload}"
+                )
+                cls._increment_rust_fetcher_stat("extension_empty_or_error")
+                continue
+
+            if cls._is_usable_content(payload):
+                content_by_url[url] = payload
+                cls._increment_rust_fetcher_stat("extension_success")
+            elif payload:
+                cls._increment_rust_fetcher_stat("extension_unusable")
+            else:
+                cls._increment_rust_fetcher_stat("extension_empty_or_error")
+
+        return content_by_url
 
     @classmethod
     async def _fetch_with_rust(cls, url: str, timeout: int) -> str:
@@ -383,6 +591,30 @@ class WebContentFetcher:
             return None
 
         return cls._trim_output(rust_content)
+
+    @classmethod
+    async def fetch_content_batch(
+        cls,
+        urls: List[str],
+        timeout: int = 10,
+    ) -> Dict[str, str]:
+        if not urls:
+            return {}
+
+        normalized_timeout = max(5, timeout)
+        deduped_urls: List[str] = []
+        seen_urls: set[str] = set()
+        for raw_url in urls:
+            candidate = str(raw_url or "").strip()
+            if not candidate or candidate in seen_urls:
+                continue
+            seen_urls.add(candidate)
+            deduped_urls.append(candidate)
+
+        if not deduped_urls:
+            return {}
+
+        return await cls._fetch_many_with_rust(deduped_urls, normalized_timeout)
 
 
 class WebSearch(BaseTool):
@@ -568,21 +800,36 @@ class WebSearch(BaseTool):
         if not results:
             return []
 
-        # Create tasks for each result
-        tasks = [self._fetch_single_result_content(result) for result in results]
+        fetch_timeout = (
+            int(getattr(config.search_config, "fetch_timeout", 10))
+            if config.search_config
+            else 10
+        )
+        fetch_timeout = max(5, fetch_timeout)
 
-        # Type annotation to help type checker
-        fetched_results = await asyncio.gather(*tasks)
+        urls = [result.url for result in results if result.url]
+        content_by_url = await self.content_fetcher.fetch_content_batch(
+            urls,
+            timeout=fetch_timeout,
+        )
 
-        # Explicit validation of return type
-        return [
-            (
-                result
-                if isinstance(result, SearchResult)
-                else SearchResult(**result.dict())
-            )
-            for result in fetched_results
-        ]
+        pending_results: List[SearchResult] = []
+        for result in results:
+            if not result.url:
+                continue
+
+            rust_content = content_by_url.get(result.url)
+            if rust_content:
+                result.raw_content = rust_content
+                continue
+
+            pending_results.append(result)
+
+        if pending_results:
+            tasks = [self._fetch_single_result_content(result) for result in pending_results]
+            await asyncio.gather(*tasks)
+
+        return results
 
     async def _fetch_single_result_content(self, result: SearchResult) -> SearchResult:
         """Fetch content for a single search result."""

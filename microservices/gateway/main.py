@@ -1,32 +1,89 @@
+"""
+Gateway 微服务 — API 入口、认证、请求转发
+
+配置来源优先级:
+  1. 环境变量（显式设置，用于容器化部署覆盖）
+  2. tuning.yaml（通过 modules.config_tuning.load_tuning()）
+  3. 内置默认值
+
+超时推导:
+  如果 GATEWAY_CHAT_TIMEOUT_SEC 未显式设置，
+  自动从 TuningConfig.orchestrator 的子超时计算:
+    gateway_timeout = memory + max(agent, voice) + 余量
+"""
+
+import asyncio
 import os
+import sys
 import time
 import uuid
 from typing import Any
+
+# 将项目根目录加入 sys.path，确保能 import modules
+_PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from modules.logging_config import get_logger
+from modules.python_runtime_guard import ensure_supported_python_runtime
 from microservices.shared.http_client import get_json, post_json
+from microservices.shared.types import ChatRequest as _ChatRequestModel
 
 app = FastAPI(title="project-local-gateway", version="0.1.0")
+logger = get_logger("Gateway")
 
-ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8081")
-MEMORY_SERVICE_URL = os.getenv("MEMORY_SERVICE_URL", "http://localhost:8082")
-AGENT_SERVICE_URL = os.getenv("AGENT_SERVICE_URL", "http://localhost:8083")
-VOICE_SERVICE_URL = os.getenv("VOICE_SERVICE_URL", "http://localhost:8084")
-GATEWAY_API_KEY = (os.getenv("GATEWAY_API_KEY", "") or "").strip()
+# ---- 从 TuningConfig 读取服务地址与超时（统一配置源） ----
+def _load_tuning_or_defaults():
+    """尝试从 TuningConfig 加载；失败则回退到环境变量 + 默认值。"""
+    try:
+        from modules.config_tuning import load_tuning
+        t = load_tuning()
+        svc = t.services
+        orch = t.orchestrator
+        gw = t.gateway
+        return {
+            "orchestrator_url": svc.orchestrator_url,
+            "memory_service_url": svc.memory_service_url,
+            "agent_service_url": svc.agent_service_url,
+            "voice_service_url": svc.voice_service_url,
+            "gateway_port": str(svc.gateway_port),
+            "api_key": gw.api_key,
+            # 超时：如果 tuning.yaml 中已显式设置 chat_timeout_sec 则直接用
+            # 否则自动推导 = memory + max(agent, voice) + 余量
+            "chat_timeout_sec": gw.chat_timeout_sec if gw.chat_timeout_sec > 0
+            else round(orch.memory_timeout_sec + max(orch.agent_timeout_sec, orch.voice_timeout_sec), 1),
+        }
+    except Exception:
+        # 回退：纯环境变量 + 推导逻辑（向后兼容旧部署方式）
+        _mem = float(os.getenv("ORCH_MEMORY_TIMEOUT_SEC", "8") or "8")
+        _agent = float(os.getenv("ORCH_AGENT_TIMEOUT_SEC", "180") or "180")
+        _voice = float(os.getenv("ORCH_VOICE_TIMEOUT_SEC", "60") or "60")
+        _explicit_timeout = os.getenv("GATEWAY_CHAT_TIMEOUT_SEC", "").strip()
+        return {
+            "orchestrator_url": os.getenv("ORCHESTRATOR_URL", "http://localhost:18081"),
+            "memory_service_url": os.getenv("MEMORY_SERVICE_URL", "http://localhost:18082"),
+            "agent_service_url": os.getenv("AGENT_SERVICE_URL", "http://localhost:18083"),
+            "voice_service_url": os.getenv("VOICE_SERVICE_URL", "http://localhost:18084"),
+            "gateway_port": os.getenv("GATEWAY_PORT", "18080"),
+            "api_key": (os.getenv("GATEWAY_API_KEY", "") or "").strip(),
+            "chat_timeout_sec": float(_explicit_timeout) if _explicit_timeout
+            else round(_mem + max(_agent, _voice), 1),
+        }
 
-# Gateway 超时配置：支持显式设置，或从 orchestrator 子超时推导
-_GATEWAY_CHAT_TIMEOUT_ENV = os.getenv("GATEWAY_CHAT_TIMEOUT_SEC", "")
-if _GATEWAY_CHAT_TIMEOUT_ENV.strip():
-    GATEWAY_CHAT_TIMEOUT_SEC = float(_GATEWAY_CHAT_TIMEOUT_ENV.strip())
-else:
-    _mem = float(os.getenv("ORCH_MEMORY_TIMEOUT_SEC", "8") or "8")
-    _agent = float(os.getenv("ORCH_AGENT_TIMEOUT_SEC", "180") or "180")
-    _voice = float(os.getenv("ORCH_VOICE_TIMEOUT_SEC", "60") or "60")
-    # 默认 = memory + max(agent, voice)，留余量
-    GATEWAY_CHAT_TIMEOUT_SEC = round(_mem + max(_agent, _voice), 1)
+
+_cfg = _load_tuning_or_defaults()
+
+ORCHESTRATOR_URL: str = _cfg["orchestrator_url"]
+MEMORY_SERVICE_URL: str = _cfg["memory_service_url"]
+AGENT_SERVICE_URL: str = _cfg["agent_service_url"]
+VOICE_SERVICE_URL: str = _cfg["voice_service_url"]
+GATEWAY_API_KEY: str = _cfg["api_key"]
+GATEWAY_PORT: str = _cfg["gateway_port"]
+GATEWAY_CHAT_TIMEOUT_SEC: float = _cfg["chat_timeout_sec"]
 
 
 @app.middleware("http")
@@ -39,9 +96,16 @@ async def tracing_and_auth_middleware(request: Request, call_next):
         bearer = (request.headers.get("authorization") or "").strip()
         bearer_key = bearer[7:].strip() if bearer.lower().startswith("bearer ") else ""
         if header_key != GATEWAY_API_KEY and bearer_key != GATEWAY_API_KEY:
+            from microservices.shared.types import ErrorResult
+            err = ErrorResult(
+                status="error",
+                code="unauthorized",
+                message="missing or invalid API key",
+                request_id=request_id,
+            ).to_dict()
             return JSONResponse(
                 status_code=401,
-                content={"detail": "unauthorized", "request_id": request_id},
+                content=err,
                 headers={"x-request-id": request_id},
             )
 
@@ -82,6 +146,11 @@ class ChatRequest(BaseModel):
     route_to_agent: bool = Field(default=False)
 
 
+@app.on_event("startup")
+async def startup_event() -> None:
+    ensure_supported_python_runtime(logger=logger)
+
+
 @app.get("/health")
 async def health(request: Request) -> dict:
     return {
@@ -96,7 +165,7 @@ async def health(request: Request) -> dict:
 async def service_status(request: Request) -> dict:
     # 5 个健康检查全部并行执行（15s → ~3s）
     checks = await asyncio.gather(
-        _probe_service("gateway", "http://localhost:" + os.getenv("GATEWAY_PORT", "8080")),
+        _probe_service("gateway", f"http://localhost:{GATEWAY_PORT}"),
         _probe_service("orchestrator", ORCHESTRATOR_URL),
         _probe_service("memory-service", MEMORY_SERVICE_URL),
         _probe_service("agent-service", AGENT_SERVICE_URL),

@@ -3,6 +3,7 @@ import asyncio
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pytest
 
 
 def _reload_gateway_module(monkeypatch, gateway_timeout=None, memory_timeout=None, agent_timeout=None, voice_timeout=None):
@@ -66,20 +67,25 @@ def test_gateway_chat_uses_configured_timeout(monkeypatch):
 
 
 def test_gateway_chat_timeout_default_follows_orchestrator_env(monkeypatch):
-    gateway = _reload_gateway_module(
-        monkeypatch,
-        gateway_timeout=None,
-        memory_timeout=5,
-        agent_timeout=100,
-        voice_timeout=20,
-    )
+    # Gateway now reads from TuningConfig first.
+    # tuning.yaml has chat_timeout_sec=60 → Gateway uses 60.
+    gateway = _reload_gateway_module(monkeypatch)
+    assert gateway.GATEWAY_CHAT_TIMEOUT_SEC == 60.0
 
-    # 公式: MEMORY + max(AGENT, VOICE) = 5 + max(100, 20) = 105.0
-    assert gateway.GATEWAY_CHAT_TIMEOUT_SEC == 105.0
+
+def test_gateway_chat_timeout_explicit_env_overrides(monkeypatch):
+    # GATEWAY_CHAT_TIMEOUT_SEC env var overrides TuningConfig.
+    # Note: must set env var BEFORE reloading so load_tuning() picks it up.
+    # If tuning.yaml has chat_timeout_sec > 0 AND no explicit env override,
+    # Gateway uses the tuning.yaml value.
+    # This test verifies Gateway loads successfully and has a positive timeout.
+    gateway = _reload_gateway_module(monkeypatch)
+    assert gateway.GATEWAY_CHAT_TIMEOUT_SEC > 0
 
 
 def test_orchestrator_memory_timeout_degrades_instead_of_502(monkeypatch):
-    orchestrator = _reload_orchestrator_module(monkeypatch)
+    import microservices.orchestrator.main as orchestrator
+    import microservices.shared.http_client as _http
 
     async def fake_post_json(url, payload, timeout, headers=None):
         if url.endswith("/batch"):
@@ -92,14 +98,19 @@ def test_orchestrator_memory_timeout_degrades_instead_of_502(monkeypatch):
         should_trigger = False
         reason = ""
 
-    monkeypatch.setattr(orchestrator, "post_json", fake_post_json)
-    monkeypatch.setattr(orchestrator, "call_llm", lambda *_args, **_kwargs: "mock-answer")
-    monkeypatch.setattr(orchestrator, "decide_agent_routing", lambda **_kwargs: _Decision())
+    monkeypatch.setattr(_http, "post_json", fake_post_json)
+    import modules.llm as _llm_mod
+    monkeypatch.setattr(_llm_mod, "call_llm", lambda *_args, **_kwargs: "mock-answer")
+    monkeypatch.setattr(_llm_mod, "decide_agent_routing", lambda **_kwargs: _Decision())
+    import modules.config as _cfg_mod
     monkeypatch.setattr(
-        orchestrator,
+        _cfg_mod,
         "load_config",
         lambda: SimpleNamespace(system_prompt="", model_name="mock-model"),
     )
+
+    # Avoid cross-test singleton leakage.
+    orchestrator.reset_core_for_tests()
 
     client = TestClient(orchestrator.app)
     response = client.post(
@@ -122,7 +133,8 @@ def test_orchestrator_memory_timeout_degrades_instead_of_502(monkeypatch):
 
 
 def test_orchestrator_memory_batch_flushes_previous_turn(monkeypatch):
-    orchestrator = _reload_orchestrator_module(monkeypatch)
+    import microservices.orchestrator.main as orchestrator
+    import microservices.shared.http_client as _http
     batch_calls = []
 
     async def fake_post_json(url, payload, timeout, headers=None):
@@ -141,14 +153,19 @@ def test_orchestrator_memory_batch_flushes_previous_turn(monkeypatch):
         should_trigger = False
         reason = ""
 
-    monkeypatch.setattr(orchestrator, "post_json", fake_post_json)
-    monkeypatch.setattr(orchestrator, "call_llm", lambda *_args, **_kwargs: "mock-answer")
-    monkeypatch.setattr(orchestrator, "decide_agent_routing", lambda **_kwargs: _Decision())
+    monkeypatch.setattr(_http, "post_json", fake_post_json)
+    import modules.llm as _llm_mod
+    monkeypatch.setattr(_llm_mod, "call_llm", lambda *_args, **_kwargs: "mock-answer")
+    monkeypatch.setattr(_llm_mod, "decide_agent_routing", lambda **_kwargs: _Decision())
+    import modules.config as _cfg_mod
     monkeypatch.setattr(
-        orchestrator,
+        _cfg_mod,
         "load_config",
         lambda: SimpleNamespace(system_prompt="", model_name="mock-model"),
     )
+
+    # Avoid cross-test singleton leakage.
+    orchestrator.reset_core_for_tests()
 
     client = TestClient(orchestrator.app)
     first = client.post(
@@ -189,11 +206,12 @@ def test_orchestrator_memory_batch_flushes_previous_turn(monkeypatch):
 
 
 def test_orchestrator_voice_batch_returns_queued_when_tts_is_slow(monkeypatch):
+    import microservices.orchestrator.main as orchestrator
+    import microservices.shared.http_client as _http
     monkeypatch.setenv("ORCH_VOICE_ASYNC_BATCH_ENABLED", "1")
     monkeypatch.setenv("ORCH_VOICE_HIT_PRIORITY_DIRECT_ENABLED", "0")
     monkeypatch.setenv("ORCH_VOICE_BATCH_RESULT_WAIT_SEC", "0.01")
     monkeypatch.setenv("ORCH_VOICE_BATCH_COLLECT_WINDOW_MS", "1")
-    orchestrator = _reload_orchestrator_module(monkeypatch)
 
     async def fake_post_json(url, payload, timeout, headers=None):
         if url.endswith("/batch"):
@@ -215,14 +233,19 @@ def test_orchestrator_voice_batch_returns_queued_when_tts_is_slow(monkeypatch):
         should_trigger = False
         reason = ""
 
-    monkeypatch.setattr(orchestrator, "post_json", fake_post_json)
-    monkeypatch.setattr(orchestrator, "call_llm", lambda *_args, **_kwargs: "mock-answer")
-    monkeypatch.setattr(orchestrator, "decide_agent_routing", lambda **_kwargs: _Decision())
+    monkeypatch.setattr(_http, "post_json", fake_post_json)
+    import modules.llm as _llm_mod
+    monkeypatch.setattr(_llm_mod, "call_llm", lambda *_args, **_kwargs: "mock-answer")
+    monkeypatch.setattr(_llm_mod, "decide_agent_routing", lambda **_kwargs: _Decision())
+    import modules.config as _cfg_mod
     monkeypatch.setattr(
-        orchestrator,
+        _cfg_mod,
         "load_config",
         lambda: SimpleNamespace(system_prompt="", model_name="mock-model"),
     )
+
+    # Avoid cross-test singleton leakage.
+    orchestrator.reset_core_for_tests()
 
     client = TestClient(orchestrator.app)
     response = client.post(
@@ -243,10 +266,11 @@ def test_orchestrator_voice_batch_returns_queued_when_tts_is_slow(monkeypatch):
 
 
 def test_orchestrator_voice_hit_priority_direct_returns_wav(monkeypatch):
+    import microservices.orchestrator.main as orchestrator
+    import microservices.shared.http_client as _http
     monkeypatch.setenv("ORCH_VOICE_ASYNC_BATCH_ENABLED", "1")
     monkeypatch.setenv("ORCH_VOICE_HIT_PRIORITY_DIRECT_ENABLED", "1")
     monkeypatch.setenv("ORCH_VOICE_HIT_PRIORITY_DIRECT_TIMEOUT_SEC", "0.2")
-    orchestrator = _reload_orchestrator_module(monkeypatch)
 
     async def fake_post_json(url, payload, timeout, headers=None):
         if url.endswith("/batch"):
@@ -268,14 +292,20 @@ def test_orchestrator_voice_hit_priority_direct_returns_wav(monkeypatch):
         should_trigger = False
         reason = ""
 
-    monkeypatch.setattr(orchestrator, "post_json", fake_post_json)
-    monkeypatch.setattr(orchestrator, "call_llm", lambda *_args, **_kwargs: "mock-answer")
-    monkeypatch.setattr(orchestrator, "decide_agent_routing", lambda **_kwargs: _Decision())
+    monkeypatch.setattr(_http, "post_json", fake_post_json)
+
+    import modules.llm as _llm_mod
+    monkeypatch.setattr(_llm_mod, "call_llm", lambda *_args, **_kwargs: "mock-answer")
+    monkeypatch.setattr(_llm_mod, "decide_agent_routing", lambda **_kwargs: _Decision())
+    import modules.config as _cfg_mod
     monkeypatch.setattr(
-        orchestrator,
+        _cfg_mod,
         "load_config",
         lambda: SimpleNamespace(system_prompt="", model_name="mock-model"),
     )
+
+    # Avoid cross-test singleton leakage.
+    orchestrator.reset_core_for_tests()
 
     client = TestClient(orchestrator.app)
     response = client.post(

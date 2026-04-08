@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
-import threading
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+from ..logging_config import get_logger
+from .text_search import tokenize_for_search
+
+logger = get_logger("Memory.Semantic")
 
 
 @dataclass
@@ -49,6 +54,7 @@ class SemanticMemory:
         self.path = path
         self.min_confidence = min_confidence
         self.decay_rate = decay_rate
+        self.min_relevance_score = float(os.environ.get("MEMORY_SEMANTIC_MIN_SCORE", "0.05") or "0.05")
         self.max_facts_per_slot = max_facts_per_slot
         self._facts: list[Fact] = []
         self._lock = threading.RLock()
@@ -100,9 +106,21 @@ class SemanticMemory:
 
         return fact
 
-    def search(self, query: str, top_k: int = 5) -> list[Fact]:
+    @staticmethod
+    def _normalize_user_id(user_id: Optional[str]) -> str:
+        return (user_id or "").strip()
+
+    @classmethod
+    def _matches_user(cls, fact: Fact, user_id: Optional[str]) -> bool:
+        uid = cls._normalize_user_id(user_id)
+        if not uid:
+            return True
+        fact_uid = cls._normalize_user_id((fact.metadata or {}).get("user_id"))
+        return fact_uid == uid
+
+    def search(self, query: str, top_k: int = 5, user_id: Optional[str] = None) -> list[Fact]:
         """Search facts by keyword overlap and relevance scoring."""
-        query_words = set((query or "").lower().split())
+        query_words = tokenize_for_search(query)
         if not query_words:
             return []
 
@@ -113,18 +131,20 @@ class SemanticMemory:
             for f in self._facts:
                 if not f.active or f.confidence < self.min_confidence:
                     continue
+                if not self._matches_user(f, user_id):
+                    continue
 
                 content_lower = f.content.lower()
                 # Keyword match
-                matches = sum(1 for w in query_words if len(w) > 1 and w in content_lower)
+                matches = sum(1 for w in query_words if w in content_lower)
                 containment = matches / max(len(query_words), 1)
 
                 # Confidence decay over time
                 age_days = (now - f.updated_at) / 86400.0
-                decayed_conf = f.confidence / (self.decay_factor ** age_days)
+                decayed_conf = f.confidence / (self.decay_rate ** age_days)
 
                 score = containment * 0.6 + decayed_conf * 0.4
-                if score > 0.05:
+                if score > self.min_relevance_score:
                     scored.append((score, f))
                     f.access_count += 1
 
@@ -165,13 +185,13 @@ class SemanticMemory:
                 try:
                     import shutil
                     shutil.copy2(target, backup)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[语义记忆] backup failed: %s", exc)
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, ensure_ascii=False, indent=2)
             os.replace(tmp, target)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[语义记忆] save failed: %s", exc)
 
     # ---- internal ----
 
@@ -184,8 +204,8 @@ class SemanticMemory:
             for raw in data.get("facts", []):
                 f = Fact(**{k: v for k, v in raw.items() if hasattr(Fact, k)})
                 self._facts.append(f)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[语义记忆] load failed: %s", exc)
 
     def _prune_inactive(self):
         cutoff = time.time() - 86400 * 30  # 30 days

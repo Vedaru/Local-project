@@ -7,7 +7,7 @@ import threading
 import unicodedata
 import wave
 from collections import deque
-from typing import Optional, Union
+from typing import Iterator, Optional, Union
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -20,7 +20,7 @@ except ImportError:
     pyaudio = None
     PYAUDIO_AVAILABLE = False
 
-from .config import GPT_SOVITS_PATH
+from .config import GPT_SOVITS_PATH, get_tuning
 from .logging_config import get_logger
 from .utils import check_sovits_service, start_gpt_sovits_api
 from .voice_cpp_accel import load_voice_cpp_backend
@@ -31,15 +31,20 @@ logger = get_logger("voice")
 class VoiceManager:
     _STREAM_START = b"__START__"
     _STREAM_END = b"__END__"
-    TTS_BUFFERED_FALLBACK_ENV = "TTS_ENABLE_BUFFERED_FALLBACK"
-    SYSTEM_TTS_FALLBACK_ENV = "VOICE_ENABLE_SYSTEM_TTS_FALLBACK"
-    TTS_TEXT_SPLIT_ENV = "VOICE_TTS_TEXT_SPLIT_METHOD"
-    TTS_STREAMING_MODE_ENV = "VOICE_TTS_STREAMING_MODE"
-    TTS_PARALLEL_INFER_ENV = "VOICE_TTS_PARALLEL_INFER"
-    TTS_MIN_CHUNK_LENGTH_ENV = "VOICE_TTS_MIN_CHUNK_LENGTH"
-    TTS_OVERLAP_LENGTH_ENV = "VOICE_TTS_OVERLAP_LENGTH"
+    _TTS_ALLOWED_UNICODE_RANGES = (
+        (0x20, 0x7E),
+        (0x3000, 0x303F),
+        (0x3040, 0x30FF),
+        (0x3400, 0x4DBF),
+        (0x4E00, 0x9FFF),
+        (0xAC00, 0xD7AF),
+        (0xF900, 0xFAFF),
+        (0xFF00, 0xFFEF),
+        (0x20000, 0x2EBEF),
+        (0x2F800, 0x2FA1F),
+    )
 
-    def __init__(self, sovits_url: str = "http://127.0.0.1:9880", ref_audio: str = "", prompt_text: str = "") -> None:
+    def __init__(self, sovits_url: str = "http://127.0.0.1:9880", ref_audio: str = "", prompt_text: str = "", tuning=None) -> None:
         self.sovits_url = sovits_url
         self.ref_audio = ref_audio
         self.prompt_text = prompt_text
@@ -47,19 +52,19 @@ class VoiceManager:
         self._bootstrap_attempted = False
         self._bootstrap_lock = threading.Lock()
 
-        self.connect_timeout_sec = int(os.getenv("VOICE_TTS_CONNECT_TIMEOUT_SEC", "5") or "5")
-        self.read_timeout_sec = int(os.getenv("VOICE_TTS_READ_TIMEOUT_SEC", "30") or "30")
-        self.system_tts_enabled = (os.getenv(self.SYSTEM_TTS_FALLBACK_ENV, "1") or "1").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        self.tts_text_split_method = (os.getenv(self.TTS_TEXT_SPLIT_ENV, "cut1") or "cut1").strip()
-        self.tts_streaming_mode = self._read_streaming_mode_env(self.TTS_STREAMING_MODE_ENV, default=3)
-        self.tts_parallel_infer = self._read_bool_env(self.TTS_PARALLEL_INFER_ENV, default=False)
-        self.tts_min_chunk_length = self._read_int_env(self.TTS_MIN_CHUNK_LENGTH_ENV, default=8, minimum=4)
-        self.tts_overlap_length = self._read_int_env(self.TTS_OVERLAP_LENGTH_ENV, default=1, minimum=0)
+        # 从 TuningConfig 读取行为调优参数（替代散落的 os.getenv）
+        t = tuning or get_tuning()
+        vt = t.voice
+
+        self.connect_timeout_sec = vt.connect_timeout_sec
+        self.read_timeout_sec = vt.read_timeout_sec
+        self.system_tts_enabled = vt.system_tts_fallback_enabled
+        self.tts_text_split_method = vt.text_split_method
+        self.tts_streaming_mode = vt.streaming_mode
+        self.tts_parallel_infer = vt.parallel_infer
+        self.tts_min_chunk_length = vt.min_chunk_length
+        self.tts_overlap_length = vt.overlap_length
+        self.cpp_accel_lib = vt.cpp_accel_lib
         self.text_queue: queue.Queue[Optional[str]] = queue.Queue()
         self.audio_queue: queue.Queue[Optional[bytes]] = queue.Queue()
         self.session = requests.Session()
@@ -74,7 +79,11 @@ class VoiceManager:
 
         self._tts_stats_lock = threading.Lock()
         self._tts_stats = self._initial_tts_stats()
-        self._voice_cpp_backend = load_voice_cpp_backend()
+        try:
+            self._voice_cpp_backend = load_voice_cpp_backend(explicit_library=self.cpp_accel_lib)
+        except Exception as exc:
+            self._voice_cpp_backend = None
+            logger.warning("Voice C++ acceleration unavailable, fallback to Python path: %s", exc)
 
         # 验证参考音频是否存在 —— GPT-SoVITS 要求必须提供 `ref_audio_path`，若文件缺失会导致 400 错误。
         self._ref_audio_missing = False
@@ -91,10 +100,25 @@ class VoiceManager:
             logger.warning("SoVITS 服务当前不可达: %s/tts，已启用本机语音兜底。", self.sovits_url.rstrip("/"))
             self._trigger_sovits_bootstrap_async()
 
-        # 低延迟音频配置
+        # 低延迟音频配置（仅配置，不初始化 pyaudio）
         self.sample_rate = 32000
-        self.chunk_size = 256  # 更小的chunk降低延迟
+        self.chunk_size = 256
 
+        # 延迟初始化状态标记
+        self.p = None
+        self.stream = None
+
+        # 播放状态控制
+        self.is_playing = False
+        self.stop_current = threading.Event()
+
+    def start(self) -> None:
+        """
+        启动 VoiceManager 的运行时资源。
+
+        包括：pyaudio 初始化、工作线程启动、TTS预热。
+        此方法应在 __init__ 之后显式调用，将副作用从构造中分离。
+        """
         if not PYAUDIO_AVAILABLE:
             raise ImportError("pyaudio is required for VoiceManager but is not installed.")
 
@@ -104,12 +128,8 @@ class VoiceManager:
             channels=1,
             rate=self.sample_rate,
             output=True,
-            frames_per_buffer=self.chunk_size,  # 匹配chunk大小
+            frames_per_buffer=self.chunk_size,
         )
-
-        # 播放状态控制
-        self.is_playing = False
-        self.stop_current = threading.Event()
 
         # 启动工作线程
         threading.Thread(target=self.tts_worker, daemon=True).start()
@@ -121,7 +141,11 @@ class VoiceManager:
     def speak(self, text):
         """发送文本到TTS队列"""
         # 如果正在播放，可以选择打断
-        self.text_queue.put(text)
+        sanitized_text = self._sanitize_tts_input_text(str(text or ""))
+        if not sanitized_text:
+            logger.warning("TTS 文本在非法字符清洗后为空，已忽略本次请求")
+            return
+        self.text_queue.put(sanitized_text)
 
     @staticmethod
     def _read_bool_env(name: str, default: bool = False) -> bool:
@@ -203,7 +227,13 @@ class VoiceManager:
             "sync_empty": 0,
             "sync_errors": 0,
             "cpp_wav_accel_success": 0,
-            "cpp_wav_accel_fallback": 0,
+            "cpp_wav_accel_errors": 0,
+            "python_wav_fallback_success": 0,
+            "python_wav_fallback_errors": 0,
+            "cpp_volume_accel_success": 0,
+            "cpp_volume_accel_errors": 0,
+            "cpp_chunk_accel_success": 0,
+            "cpp_chunk_accel_errors": 0,
         }
 
     def _increment_tts_stat(self, key: str) -> None:
@@ -211,8 +241,7 @@ class VoiceManager:
             self._tts_stats[key] = int(self._tts_stats.get(key, 0)) + 1
 
     def _is_buffered_fallback_enabled(self) -> bool:
-        raw_value = os.environ.get(self.TTS_BUFFERED_FALLBACK_ENV, "1")
-        return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+        return self.system_tts_enabled  # already loaded from TuningConfig via tuning.voice.buffered_fallback_enabled
 
     def reset_tts_stats(self) -> None:
         with self._tts_stats_lock:
@@ -297,6 +326,49 @@ class VoiceManager:
             return completed.returncode == 0
         except Exception:
             return False
+
+    @classmethod
+    def _is_allowed_tts_char(cls, ch: str) -> bool:
+        if ch in {"\n", "\r", "\t", " "}:
+            return True
+
+        code = ord(ch)
+        for start, end in cls._TTS_ALLOWED_UNICODE_RANGES:
+            if start <= code <= end:
+                return True
+        return False
+
+    @classmethod
+    def _sanitize_tts_input_text(cls, text: str) -> str:
+        normalized = unicodedata.normalize("NFKC", text or "")
+        cleaned_chars: list[str] = []
+        removed_count = 0
+
+        for ch in normalized:
+            category = unicodedata.category(ch)
+
+            # Drop private-use/surrogate/unassigned chars and most control chars.
+            if category in {"Co", "Cs", "Cn"}:
+                removed_count += 1
+                continue
+            if category.startswith("C") and ch not in {"\n", "\r", "\t"}:
+                removed_count += 1
+                continue
+            if ch == "\ufffd":
+                removed_count += 1
+                continue
+
+            # Keep only language/punctuation ranges known to be safe for local TTS.
+            if not cls._is_allowed_tts_char(ch):
+                removed_count += 1
+                continue
+
+            cleaned_chars.append(ch)
+
+        sanitized = "".join(cleaned_chars).strip()
+        if removed_count > 0:
+            logger.warning("TTS 输入已剔除非法字符 count=%s", removed_count)
+        return sanitized
 
     @staticmethod
     def _sanitize_system_tts_text(text: str) -> str:
@@ -384,56 +456,185 @@ class VoiceManager:
         self._raise_for_status_with_body(response, context="buffered")
         return response.content or b""
 
-    def _save_audio_to_wav(self, wav_path: str, audio_data: bytes) -> bool:
-        backend = getattr(self, "_voice_cpp_backend", None)
-        if backend is not None:
-            try:
-                if backend.save_pcm_mono16(wav_path, audio_data, int(self.sample_rate)):
-                    self._increment_tts_stat("cpp_wav_accel_success")
-                    return True
-            except Exception:
-                pass
-            self._increment_tts_stat("cpp_wav_accel_fallback")
+    @staticmethod
+    def _looks_like_wav_container(audio_data: bytes) -> bool:
+        return len(audio_data) >= 12 and audio_data[:4] == b"RIFF" and audio_data[8:12] == b"WAVE"
+
+    def _save_wav_with_python_writer(self, wav_path: str, audio_data: bytes) -> bool:
+        payload = audio_data or b""
+        if not payload:
+            return False
+
+        if self._looks_like_wav_container(payload):
+            with open(wav_path, "wb") as output_file:
+                output_file.write(payload)
+            return True
+
+        # Some providers may occasionally return an odd-length PCM payload.
+        # Trim the tail byte to preserve 16-bit frame alignment.
+        if len(payload) % 2 != 0:
+            payload = payload[:-1]
+        if not payload:
+            return False
 
         with wave.open(wav_path, "wb") as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
-            wav_file.setframerate(self.sample_rate)
-            wav_file.writeframes(audio_data)
-
+            wav_file.setframerate(int(getattr(self, "sample_rate", 32000) or 32000))
+            wav_file.writeframes(payload)
         return True
 
-    def _compute_lip_volume(self, pcm_chunk: bytes) -> float:
-        if not pcm_chunk:
-            return 0.0
+    def _save_audio_to_wav(self, wav_path: str, audio_data: bytes) -> bool:
+        payload = audio_data or b""
+        if isinstance(payload, bytearray):
+            payload = bytes(payload)
+
+        if not isinstance(payload, bytes):
+            raise TypeError("audio_data must be bytes-like")
+
+        if self._looks_like_wav_container(payload):
+            if self._save_wav_with_python_writer(wav_path, payload):
+                self._increment_tts_stat("python_wav_fallback_success")
+                return True
+            self._increment_tts_stat("python_wav_fallback_errors")
+            raise RuntimeError("Voice Python fallback failed to persist WAV container bytes")
+
+        if len(payload) % 2 != 0:
+            logger.warning("TTS audio payload length is odd (%s); trimming one byte for PCM16 alignment.", len(payload))
+            payload = payload[:-1]
+
+        if not payload:
+            self._increment_tts_stat("cpp_wav_accel_errors")
+            self._increment_tts_stat("python_wav_fallback_errors")
+            raise RuntimeError("TTS audio payload is empty after normalization")
 
         backend = getattr(self, "_voice_cpp_backend", None)
         if backend is not None:
             try:
-                accelerated = backend.compute_volume_from_pcm16(
-                    pcm_chunk,
-                    gate=500.0,
-                    normalizer=8000.0,
-                    power=0.8,
-                )
-                if accelerated is not None:
-                    return float(accelerated)
+                if backend.save_pcm_mono16(wav_path, payload, int(getattr(self, "sample_rate", 32000) or 32000)):
+                    self._increment_tts_stat("cpp_wav_accel_success")
+                    return True
+            except Exception as exc:
+                logger.warning("Voice C++ backend write raised exception, falling back to Python writer: %s", exc)
+
+            self._increment_tts_stat("cpp_wav_accel_errors")
+            logger.warning("Voice C++ backend failed to write WAV, falling back to Python writer.")
+        else:
+            self._increment_tts_stat("cpp_wav_accel_errors")
+
+        if self._save_wav_with_python_writer(wav_path, payload):
+            self._increment_tts_stat("python_wav_fallback_success")
+            return True
+
+        self._increment_tts_stat("python_wav_fallback_errors")
+        raise RuntimeError("Voice WAV write failed in both C++ and Python fallback")
+
+    def _compute_lip_volumes(self, pcm_chunks: list[bytes]) -> list[float]:
+        backend = getattr(self, "_voice_cpp_backend", None)
+        if backend is None:
+            self._increment_tts_stat("cpp_volume_accel_errors")
+            raise RuntimeError("Voice C++ backend is unavailable")
+
+        non_empty_chunks: list[bytes] = []
+        frame_sizes: list[int] = []
+        for chunk in pcm_chunks:
+            if not chunk:
+                continue
+            if len(chunk) % 2 != 0:
+                self._increment_tts_stat("cpp_volume_accel_errors")
+                return []
+            samples = len(chunk) // 2
+            if samples <= 0:
+                continue
+            non_empty_chunks.append(chunk)
+            frame_sizes.append(samples)
+
+        if not non_empty_chunks:
+            return []
+
+        if len(set(frame_sizes)) == 1:
+            merged = b"".join(non_empty_chunks)
+            batch_result = backend.compute_volume_batch_from_pcm16(
+                merged,
+                frame_samples=frame_sizes[0],
+                gate=500.0,
+                normalizer=8000.0,
+                power=0.8,
+            )
+            if batch_result is not None and len(batch_result) == len(non_empty_chunks):
+                self._increment_tts_stat("cpp_volume_accel_success")
+                return [float(value) for value in batch_result]
+
+        volumes: list[float] = []
+        for chunk in non_empty_chunks:
+            accelerated = backend.compute_volume_from_pcm16(
+                chunk,
+                gate=500.0,
+                normalizer=8000.0,
+                power=0.8,
+            )
+            if accelerated is None:
+                self._increment_tts_stat("cpp_volume_accel_errors")
+                return []
+            volumes.append(float(accelerated))
+
+        self._increment_tts_stat("cpp_volume_accel_success")
+        return volumes
+
+    def _compute_lip_volume(self, pcm_chunk: bytes) -> float:
+        if not pcm_chunk:
+            return 0.0
+        try:
+            volumes = self._compute_lip_volumes([pcm_chunk])
+        except Exception:
+            return 0.0
+        if not volumes:
+            return 0.0
+        return float(volumes[0])
+
+    @staticmethod
+    def _build_python_chunk_index(total_size: int, chunk_size: int) -> list[tuple[int, int]]:
+        total_size = int(total_size or 0)
+        chunk_size = int(chunk_size or 0)
+        if total_size <= 0 or chunk_size <= 0:
+            return []
+
+        return [
+            (offset, min(chunk_size, total_size - offset))
+            for offset in range(0, total_size, chunk_size)
+        ]
+
+    def _iter_audio_packets(self, audio_data: bytes, *, packet_size: int = 512) -> Iterator[bytes]:
+        if not audio_data:
+            return
+
+        packet_size = max(1, int(packet_size or 512))
+        chunk_index: Optional[list[tuple[int, int]]] = None
+
+        backend = getattr(self, "_voice_cpp_backend", None)
+        build_chunk_index = getattr(backend, "build_chunk_index", None) if backend is not None else None
+        if callable(build_chunk_index):
+            try:
+                chunk_index = build_chunk_index(len(audio_data), packet_size)
             except Exception:
-                pass
+                chunk_index = None
 
-        import numpy as np
+            if chunk_index is None or (len(audio_data) > 0 and not chunk_index):
+                self._increment_tts_stat("cpp_chunk_accel_errors")
+                chunk_index = None
+            else:
+                self._increment_tts_stat("cpp_chunk_accel_success")
 
-        audio_data = np.frombuffer(pcm_chunk, dtype=np.int16)
-        if audio_data.size == 0:
-            return 0.0
+        if not chunk_index:
+            chunk_index = self._build_python_chunk_index(len(audio_data), packet_size)
 
-        # Use float32 math to avoid int16 overflow during squaring.
-        samples = audio_data.astype(np.float32)
-        rms = float(np.sqrt(np.mean(samples * samples)))
-        if rms < 500.0:
-            return 0.0
-
-        return min((rms / 8000.0) ** 0.8, 1.0)
+        for offset, size in chunk_index:
+            if size <= 0:
+                continue
+            end = min(offset + size, len(audio_data))
+            if offset < 0 or offset >= end:
+                continue
+            yield audio_data[offset:end]
 
     def _stream_tts_to_queue(self, text: str, *, connect_timeout: int, read_timeout: int) -> tuple[str, bytes]:
         """流式拉取音频并实时推送到播放队列。"""
@@ -472,6 +673,12 @@ class VoiceManager:
             是否成功
         """
         try:
+            text = self._sanitize_tts_input_text(str(text or ""))
+            if not text:
+                logger.error("TTS 保存中止: 文本在非法字符清洗后为空")
+                self._increment_tts_stat("sync_errors")
+                return False
+
             if self._ref_audio_missing:
                 logger.error(
                     f"TTS aborted: reference audio missing ({self.ref_audio}). Place the file or update `REF_AUDIO` in config."
@@ -507,7 +714,7 @@ class VoiceManager:
             self._increment_tts_stat("sync_errors")
             return False
         except Exception as e:
-            logger.error(f"TTS 保存错误: {e}", exc_info=True)
+            logger.error("TTS 保存错误: %s", e)
             self._increment_tts_stat("sync_errors")
             return False
 
@@ -549,6 +756,7 @@ class VoiceManager:
 
                 # 用于控制发送频率
                 update_counter = 0
+                volume_batch: list[bytes] = []
 
                 data = wav_file.readframes(chunk_size)
                 while data and not self.stop_current.is_set():
@@ -557,14 +765,25 @@ class VoiceManager:
                     # --- 优化点 2: 不要每一帧都发指令，降低浏览器负担 ---
                     if lip_sync_callback:
                         update_counter += 1
+                        volume_batch.append(data)
                         if update_counter % 2 == 0:  # 每 2 个 chunk 发送一次 (降频)
                             try:
-                                volume = self._compute_lip_volume(data)
+                                volumes = self._compute_lip_volumes(volume_batch)
+                                volume = float(volumes[-1]) if volumes else 0.0
                                 lip_sync_callback(volume)
+                                volume_batch.clear()
                             except Exception:
                                 pass  # 忽略回调错误，继续播放
 
                     data = wav_file.readframes(chunk_size)
+
+                if lip_sync_callback and volume_batch:
+                    try:
+                        volumes = self._compute_lip_volumes(volume_batch)
+                        if volumes:
+                            lip_sync_callback(float(volumes[-1]))
+                    except Exception:
+                        pass
 
                 # 播放完成，关闭嘴巴
                 if lip_sync_callback:
@@ -624,13 +843,18 @@ class VoiceManager:
             self.is_playing = True
 
             try:
+                text = self._sanitize_tts_input_text(str(text or ""))
+                if not text:
+                    logger.warning("TTS 请求文本在非法字符清洗后为空，已跳过")
+                    continue
+
                 cached_audio = self._get_cached_audio(text)
                 if cached_audio:
                     self.audio_queue.put(self._STREAM_START)
-                    for offset in range(0, len(cached_audio), 512):
+                    for packet in self._iter_audio_packets(cached_audio, packet_size=512):
                         if self.stop_current.is_set():
                             break
-                        self.audio_queue.put(cached_audio[offset : offset + 512])
+                        self.audio_queue.put(packet)
                     continue
 
                 if self._ref_audio_missing:
@@ -678,10 +902,10 @@ class VoiceManager:
                             self._increment_tts_stat("buffered_fallback_success")
                             self._set_cached_audio(text, fallback_audio)
                             self.audio_queue.put(self._STREAM_START)
-                            for offset in range(0, len(fallback_audio), 512):
+                            for packet in self._iter_audio_packets(fallback_audio, packet_size=512):
                                 if self.stop_current.is_set():
                                     break
-                                self.audio_queue.put(fallback_audio[offset : offset + 512])
+                                self.audio_queue.put(packet)
                             continue
                     except requests.exceptions.RequestException as e:
                         logger.error(f"TTS 缓冲回退网络错误: {e}")

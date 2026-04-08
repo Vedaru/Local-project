@@ -12,13 +12,35 @@ import threading
 import time
 from dataclasses import dataclass
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError as OpenAIRateLimitError
 
 from .config import client
 from .json_utils import extract_first_json
 from .logging_config import get_logger
+from .resilience import (
+    RateLimitError as LocalRateLimitError,
+    ServiceUnavailableError,
+)
 
 logger = get_logger("llm")
+
+
+# ---- OpenAI 异常到自定义异常的映射 ----
+def _translate_openai_error(e: Exception) -> Exception:
+    """将 OpenAI SDK 异常映射为 resilience 自定义异常，供调用方统一处理。"""
+    if isinstance(e, (APIConnectionError, APITimeoutError)):
+        return ServiceUnavailableError(
+            service_name="llm",
+            message=str(e),
+        )
+    if isinstance(e, OpenAIRateLimitError):
+        return LocalRateLimitError(service_name="llm")
+    if isinstance(e, APIStatusError):
+        return ServiceUnavailableError(
+            service_name="llm",
+            message=f"HTTP {e.status_code}: {e.message}",
+        )
+    return e  # 其他异常原样返回
 
 
 @dataclass(frozen=True)
@@ -206,7 +228,7 @@ def decide_agent_routing(
                 continue
             return AgentRoutingDecision(reason="router connectivity failure")
         except Exception as e:
-            logger.warning(f"agent routing failed: {e}", exc_info=True)
+            logger.warning("agent routing failed: %s", e, exc_info=True)
             return AgentRoutingDecision(reason="router exception")
 
     return AgentRoutingDecision(reason="router retries exhausted")
@@ -244,13 +266,15 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
     # 注入记忆上下文
     if memory_context:
         memory_prompt = (
-            '以下是你的记忆，请自然地运用这些记忆来回应用户，但不要生硬地提及"我记得"：\n\n'
+            "以下是与你当前用户相关的记忆上下文。仅当与当前输入语义相关时再参考；"
+            "若相关性弱，请忽略这些记忆并按当前输入自然作答。\n\n"
             f"{memory_context}\n\n"
-            "注意：\n"
-            "- 【最近对话】是刚才的对话上下文，保持对话连贯性\n"
-            "- 【相关记忆】是与当前话题相关的历史记忆\n"
-            "- 【关联记忆】是可能相关的其他记忆片段\n"
-            "- 自然地融入记忆内容，像人类一样回忆和联想"
+            "回答规则：\n"
+            "- 仅在记忆与当前问题明显相关时使用记忆事实，禁止为了引用记忆而强行转移话题\n"
+            "- 事实性问题优先使用记忆中的明确事实，尤其是用户偏好、习惯和近期确认的信息\n"
+            "- 记忆冲突时按优先级处理：最近对话 > 已知事实 > 历史对话(用户输入) > 相关记忆\n"
+            "- 若记忆中没有足够依据，直接说明不确定，并向用户追问，不要猜测\n"
+            "- 表达自然，不要机械复述“我记得”或逐段引用标题"
         )
         messages.append({"role": "system", "content": memory_prompt})
 
@@ -270,21 +294,24 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
 
             content = response.choices[0].message.content
             return (content or "").strip() or "抱歉，我没能生成有效回复。"
-        except (APIConnectionError, APITimeoutError) as e:
+        except OpenAIRateLimitError as e:
+            logger.warning("触发限流: %s", e)
             if attempt < max_retries:
-                time.sleep(1.0 * (2**attempt))  # 1s, 2s
+                time.sleep(1.0 * (2**attempt))
                 continue
-            logger.error(f"连接失败: {e}")
-            return "抱歉，我现在连接不上服务。"
-        except RateLimitError as e:
-            logger.warning(f"触发限流: {e}")
             return "抱歉，请求太频繁了，稍后再试。"
+        except (APIConnectionError, APITimeoutError) as e:
+            translated = _translate_openai_error(e)
+            if attempt < max_retries:
+                logger.warning("LLM 连接异常(将重试 %d/%d): %s", attempt + 1, max_retries, translated.message)
+                time.sleep(1.0 * (2**attempt))
+                continue
+            logger.error("连接失败: %s", translated.message)
+            return "抱歉，我现在连接不上服务。"
         except APIStatusError as e:
-            logger.error(f"服务返回错误: {e}")
+            translated = _translate_openai_error(e)
+            logger.error("服务返回错误: %s", translated.message)
             return "抱歉，服务出现错误，请稍后再试。"
-        except Exception as e:
-            logger.error(f"LLM 错误: {e}", exc_info=True)
-            return "抱歉，我现在有点卡住了。"
 
 
 async def call_llm_async(system_prompt, model_name, prompt, memory_context="", max_retries=2):

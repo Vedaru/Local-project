@@ -1,0 +1,255 @@
+"""Unit tests for memory retrieval formatting and Chinese lexical matching."""
+
+from pathlib import Path
+
+import pytest
+
+from modules.memory.core import HumanMemoryEngine
+from modules.memory.core_enums import MemoryTier
+from modules.memory.engram_config import EngramConfig
+from modules.memory.engram_store import EngramMemoryStore
+from modules.memory.episodic import EpisodicMemory
+from modules.memory.retrieval import RetrievalEngine, RetrievalResult
+from modules.memory.semantic import SemanticMemory
+from modules.memory.working import WorkingMemory
+
+
+def _build_retrieval_engine(tmp_path: Path) -> RetrievalEngine:
+    return RetrievalEngine(
+        working_memory=WorkingMemory(capacity=7),
+        semantic_memory=SemanticMemory(path=str(tmp_path / "semantic.json"), min_confidence=0.0),
+        episodic_memory=EpisodicMemory(path=str(tmp_path / "episodes.jsonl"), similarity_threshold=0.2),
+    )
+
+
+@pytest.mark.unit
+def test_format_results_keeps_episodic_section_grouped(tmp_path: Path):
+    engine = _build_retrieval_engine(tmp_path)
+    results = [
+        RetrievalResult(
+            id="e1",
+            content="用户: 我今天喜欢吃苹果\nAI: 好的",
+            source_tier=MemoryTier.EPISODIC,
+            confidence=0.5,
+            relevance=0.4,
+            composite_score=0.4,
+            metadata={"source": "episodic_event"},
+        ),
+        RetrievalResult(
+            id="e2",
+            content="用户: 最近在学Rust\nAI: 很棒",
+            source_tier=MemoryTier.EPISODIC,
+            confidence=0.5,
+            relevance=0.4,
+            composite_score=0.3,
+            metadata={"source": "episodic_event"},
+        ),
+    ]
+
+    context = engine._format_results(results, query="学习", n_results=5)
+
+    assert context.count("【历史对话(用户输入)】") == 1
+    assert "用户: 我今天喜欢吃苹果" in context
+    assert "用户: 最近在学Rust" in context
+    assert "AI:" not in context
+
+
+@pytest.mark.unit
+def test_semantic_search_supports_chinese_without_spaces(tmp_path: Path):
+    semantic = SemanticMemory(path=str(tmp_path / "semantic.json"), min_confidence=0.0)
+    semantic.upsert("我今天喜欢吃苹果", confidence=0.95)
+
+    hits = semantic.search("喜欢苹果", top_k=3)
+
+    assert hits
+    assert hits[0].content == "我今天喜欢吃苹果"
+
+
+@pytest.mark.unit
+def test_episodic_search_supports_chinese_without_spaces(tmp_path: Path):
+    episodic = EpisodicMemory(path=str(tmp_path / "episodes.jsonl"), similarity_threshold=0.2)
+    episodic.add_episode("我今天喜欢吃苹果", "好的，记住了")
+
+    hits = episodic.search("喜欢苹果", top_k=3)
+
+    assert hits
+    assert hits[0].user_input == "我今天喜欢吃苹果"
+
+
+@pytest.mark.unit
+def test_engram_filters_uncertain_short_content(tmp_path: Path):
+    cfg = EngramConfig(persist_dir=str(tmp_path))
+    cfg.base_dir = str(tmp_path)
+    cfg.ngram_n_values = (2, 3)
+    cfg.prime_moduli = (500003, 499979, 499969, 499957)
+
+    store = EngramMemoryStore(config=cfg)
+    store.store("我不知道", confidence=0.95)
+
+    hits = store.retrieve("不知道", top_k=5)
+
+    assert all("不知道" not in item.get("content", "") for item in hits)
+
+
+@pytest.mark.unit
+def test_working_memory_search_falls_back_to_recent_turns():
+    working = WorkingMemory(capacity=7)
+    working.add_turn("今天中午我吃了苹果", "好的，记住了")
+    working.add_turn("今晚打算去散步", "听起来不错")
+
+    hits = working.search("完全不相关的问题", n_results=2)
+
+    assert len(hits) == 2
+    assert hits[0].user_text == "今天中午我吃了苹果"
+    assert hits[1].user_text == "今晚打算去散步"
+
+
+@pytest.mark.unit
+def test_working_memory_search_handles_whitespace_variation():
+    working = WorkingMemory(capacity=7)
+    working.add_turn("你还记得我喜欢吃苹果吗", "记得，你喜欢吃苹果")
+
+    hits = working.search("你 还记得我喜欢吃苹果吗", n_results=1)
+
+    assert hits
+    assert hits[0].user_text == "你还记得我喜欢吃苹果吗"
+
+
+@pytest.mark.unit
+def test_store_can_skip_fact_extraction(tmp_path: Path):
+    calls = {"count": 0}
+
+    def _fake_llm_extract(_text: str) -> dict:
+        calls["count"] += 1
+        return {
+            "facts": [
+                {
+                    "fact": "用户喜欢苹果",
+                    "category": "preference",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+    engine = HumanMemoryEngine(
+        base_dir=str(tmp_path / "memoripy"),
+        llm_extract_fn=_fake_llm_extract,
+    )
+
+    status = engine.store(
+        "用户: 我喜欢苹果\nAI: 记住了",
+        metadata={"disable_fact_extraction": True},
+    )
+
+    assert status == "stored"
+    assert calls["count"] == 0
+    engine.close()
+
+
+@pytest.mark.unit
+def test_store_deferred_persist_skips_immediate_full_save(tmp_path: Path):
+    engine = HumanMemoryEngine(base_dir=str(tmp_path / "memoripy"))
+
+    save_calls = {"engram": 0, "semantic": 0}
+
+    def _engram_save() -> None:
+        save_calls["engram"] += 1
+
+    def _semantic_save() -> None:
+        save_calls["semantic"] += 1
+
+    engine.engram.save = _engram_save  # type: ignore[assignment]
+    engine.semantic.save = _semantic_save  # type: ignore[assignment]
+    engine._config.deferred_persist_turns = 999
+    engine._config.deferred_persist_interval_sec = 9999.0
+
+    status = engine.store(
+        "用户: 我今天吃了苹果\nAI: 好的，我记住了",
+        metadata={"deferred_persist": True, "disable_fact_extraction": True},
+    )
+
+    assert status == "stored"
+    assert save_calls["engram"] == 0
+    assert save_calls["semantic"] == 0
+
+    engine.close()
+
+
+@pytest.mark.unit
+def test_retrieve_isolated_by_user_id(tmp_path: Path):
+    engine = HumanMemoryEngine(base_dir=str(tmp_path / "memoripy"))
+
+    engine.store(
+        "用户: 我喜欢吃苹果\nAI: 好的，记住了",
+        metadata={"user_id": "user-a", "disable_fact_extraction": True},
+    )
+    engine.store(
+        "用户: 我喜欢吃香蕉\nAI: 好的，记住了",
+        metadata={"user_id": "user-b", "disable_fact_extraction": True},
+    )
+
+    ctx_a = engine.retrieve("喜欢吃", n_results=4, user_id="user-a")
+    ctx_b = engine.retrieve("喜欢吃", n_results=4, user_id="user-b")
+
+    assert "苹果" in ctx_a
+    assert "香蕉" not in ctx_a
+    assert "香蕉" in ctx_b
+    assert "苹果" not in ctx_b
+
+    engine.close()
+
+
+@pytest.mark.unit
+def test_retrieve_low_information_query_keeps_memory_unbound(tmp_path: Path):
+    engine = HumanMemoryEngine(base_dir=str(tmp_path / "memoripy"))
+
+    engine.store(
+        "用户: 我喜欢吃苹果\nAI: 好的，记住了",
+        metadata={"user_id": "user-a", "disable_fact_extraction": True},
+    )
+
+    ctx = engine.retrieve("你好", n_results=4, user_id="user-a")
+
+    assert ctx == ""
+
+    engine.close()
+
+
+@pytest.mark.unit
+def test_retrieve_context_dependent_query_uses_recent_continuity_fallback(tmp_path: Path):
+    engine = HumanMemoryEngine(base_dir=str(tmp_path / "memoripy"))
+
+    engine.store(
+        "用户: 我刚刚把你的记忆模块升级了\nAI: 好的，我记住了",
+        metadata={"user_id": "user-a", "disable_fact_extraction": True},
+    )
+
+    ctx = engine.retrieve("我之前不是说了吗", n_results=4, user_id="user-a")
+
+    assert "我刚刚把你的记忆模块升级了" in ctx
+
+    engine.close()
+
+
+@pytest.mark.unit
+def test_working_continuity_fallback_excludes_warmup_turns(tmp_path: Path):
+    engine = _build_retrieval_engine(tmp_path)
+
+    engine.working.add_turn(
+        "之前提过苹果蘸花生酱",
+        "收到",
+        metadata={"source": "episodic_warmup"},
+        timestamp=1.0,
+    )
+
+    ctx_without_live_turn = engine.multi_strategy_recall("我之前不是说了吗", n_results=3)
+    assert ctx_without_live_turn == ""
+
+    engine.working.add_turn(
+        "我们刚刚在聊记忆模块测试",
+        "是的，我记得",
+        metadata={"user_id": "user-a"},
+    )
+    ctx_with_live_turn = engine.multi_strategy_recall("我之前不是说了吗", n_results=3, user_id="user-a")
+
+    assert "我们刚刚在聊记忆模块测试" in ctx_with_live_turn

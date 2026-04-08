@@ -1,3 +1,7 @@
+use std::cmp;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
 use std::time::Duration;
 
 use pyo3::prelude::*;
@@ -11,6 +15,11 @@ use serde::Serialize;
 pub const MIN_VALID_CONTENT_CHARS: usize = 220;
 pub const DEFAULT_TIMEOUT_SECONDS: u64 = 12;
 pub const DEFAULT_MAX_CHARS: usize = 10_000;
+pub const DEFAULT_BATCH_WORKERS: usize = 4;
+
+static SHARED_HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+
+type BatchFetchRow = (bool, Option<String>, Option<String>);
 
 #[derive(Serialize, Debug, Clone)]
 pub struct FetchResult {
@@ -151,7 +160,7 @@ fn extract_best_content(html: &str) -> String {
     best_text_from_selector(&document, "body")
 }
 
-pub fn fetch_url(url: &str, timeout_seconds: u64, max_chars: usize) -> FetchResult {
+fn build_default_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
         USER_AGENT,
@@ -166,24 +175,53 @@ pub fn fetch_url(url: &str, timeout_seconds: u64, max_chars: usize) -> FetchResu
     headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("zh-CN,zh;q=0.9,en;q=0.8"));
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+    headers
+}
 
-    let client = match Client::builder()
-        .default_headers(headers)
+fn get_shared_http_client() -> Result<&'static Client, String> {
+    let result = SHARED_HTTP_CLIENT.get_or_init(|| {
+        Client::builder()
+            .default_headers(build_default_headers())
+            .no_proxy()
+            .build()
+            .map_err(|error| format!("failed to build shared HTTP client: {error}"))
+    });
+
+    match result {
+        Ok(client) => Ok(client),
+        Err(error) => Err(error.clone()),
+    }
+}
+
+fn resolve_batch_worker_count(url_count: usize) -> usize {
+    if url_count == 0 {
+        return 0;
+    }
+
+    let default_workers = std::thread::available_parallelism()
+        .map(|count| cmp::max(1, cmp::min(8, count.get())))
+        .unwrap_or(DEFAULT_BATCH_WORKERS);
+
+    let configured_workers = std::env::var("WEB_FETCHER_RS_BATCH_WORKERS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_workers);
+
+    cmp::min(url_count, cmp::max(1, configured_workers))
+}
+
+fn fetch_url_with_client(
+    client: &Client,
+    url: &str,
+    timeout_seconds: u64,
+    max_chars: usize,
+) -> FetchResult {
+    let response = match client
+        .get(url)
         .timeout(Duration::from_secs(timeout_seconds.max(5)))
-        .build()
+        .send()
     {
-        Ok(client) => client,
-        Err(error) => {
-            return FetchResult {
-                success: false,
-                source: "rust_static",
-                content: None,
-                error: Some(format!("failed to build HTTP client: {error}")),
-            }
-        }
-    };
-
-    let response = match client.get(url).send() {
         Ok(response) => response,
         Err(error) => {
             return FetchResult {
@@ -253,19 +291,135 @@ pub fn fetch_url(url: &str, timeout_seconds: u64, max_chars: usize) -> FetchResu
     }
 }
 
+pub fn fetch_url(url: &str, timeout_seconds: u64, max_chars: usize) -> FetchResult {
+    let client = match get_shared_http_client() {
+        Ok(client) => client,
+        Err(error) => {
+            return FetchResult {
+                success: false,
+                source: "rust_static",
+                content: None,
+                error: Some(error),
+            }
+        }
+    };
+
+    fetch_url_with_client(client, url, timeout_seconds, max_chars)
+}
+
 #[pyfunction]
 #[pyo3(signature = (url, timeout=None, max_chars=None))]
-fn fetch_content(url: String, timeout: Option<u64>, max_chars: Option<usize>) -> (bool, Option<String>, Option<String>) {
-    let result = fetch_url(
-        &url,
-        timeout.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
-        max_chars.unwrap_or(DEFAULT_MAX_CHARS),
-    );
-    (result.success, result.content, result.error)
+fn fetch_content(
+    py: Python<'_>,
+    url: String,
+    timeout: Option<u64>,
+    max_chars: Option<usize>,
+) -> (bool, Option<String>, Option<String>) {
+    py.allow_threads(|| {
+        let result = fetch_url(
+            &url,
+            timeout.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
+            max_chars.unwrap_or(DEFAULT_MAX_CHARS),
+        );
+        (result.success, result.content, result.error)
+    })
+}
+
+#[pyfunction]
+#[pyo3(signature = (urls, timeout=None, max_chars=None))]
+fn fetch_content_batch(
+    py: Python<'_>,
+    urls: Vec<String>,
+    timeout: Option<u64>,
+    max_chars: Option<usize>,
+) -> Vec<BatchFetchRow> {
+    if urls.is_empty() {
+        return Vec::new();
+    }
+
+    py.allow_threads(|| {
+        let timeout_seconds = timeout.unwrap_or(DEFAULT_TIMEOUT_SECONDS);
+        let max_chars = max_chars.unwrap_or(DEFAULT_MAX_CHARS);
+        let client = match get_shared_http_client() {
+            Ok(client) => client,
+            Err(error) => {
+                return urls
+                    .into_iter()
+                    .map(|_| (false, None, Some(error.clone())))
+                    .collect()
+            }
+        };
+
+        let worker_count = resolve_batch_worker_count(urls.len());
+        if worker_count <= 1 {
+            return urls
+                .into_iter()
+                .map(|url| {
+                    let result = fetch_url_with_client(client, &url, timeout_seconds, max_chars);
+                    (result.success, result.content, result.error)
+                })
+                .collect();
+        }
+
+        let shared_urls = Arc::new(urls);
+        let next_index = Arc::new(AtomicUsize::new(0));
+        let results: Arc<Mutex<Vec<Option<BatchFetchRow>>>> =
+            Arc::new(Mutex::new(vec![None; shared_urls.len()]));
+
+        let mut workers = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let shared_urls = Arc::clone(&shared_urls);
+            let next_index = Arc::clone(&next_index);
+            let results = Arc::clone(&results);
+            let client = client.clone();
+
+            workers.push(thread::spawn(move || {
+                loop {
+                    let index = next_index.fetch_add(1, Ordering::Relaxed);
+                    if index >= shared_urls.len() {
+                        break;
+                    }
+
+                    let url = &shared_urls[index];
+                    let fetch = fetch_url_with_client(&client, url, timeout_seconds, max_chars);
+                    let row = (fetch.success, fetch.content, fetch.error);
+
+                    if let Ok(mut guard) = results.lock() {
+                        guard[index] = Some(row);
+                    } else {
+                        break;
+                    }
+                }
+            }));
+        }
+
+        for worker in workers {
+            let _ = worker.join();
+        }
+
+        let batch_output: Vec<BatchFetchRow> = if let Ok(mut guard) = results.lock() {
+            guard
+                .iter_mut()
+                .map(|item| {
+                    item.take().unwrap_or_else(|| {
+                        (false, None, Some("batch worker failed".to_string()))
+                    })
+                })
+                .collect()
+        } else {
+            shared_urls
+                .iter()
+                .map(|_| (false, None, Some("batch result lock failed".to_string())))
+                .collect()
+        };
+
+        batch_output
+    })
 }
 
 #[pymodule]
 fn _web_fetcher_rs(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fetch_content, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch_content_batch, m)?)?;
     Ok(())
 }

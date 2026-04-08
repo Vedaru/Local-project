@@ -8,11 +8,37 @@ from tkinter import ttk
 from urllib import error, request
 
 
-DEFAULT_GATEWAY_PORT = os.getenv("GATEWAY_PORT", "8080")
-DEFAULT_ORCHESTRATOR_PORT = os.getenv("ORCHESTRATOR_PORT", "8081")
-DEFAULT_MEMORY_PORT = os.getenv("MEMORY_SERVICE_PORT", "8082")
-DEFAULT_AGENT_PORT = os.getenv("AGENT_SERVICE_PORT", "8083")
-DEFAULT_VOICE_PORT = os.getenv("VOICE_SERVICE_PORT", "8084")
+def _resolve_default_ports() -> dict[str, str]:
+    defaults = {
+        "gateway": "18080",
+        "orchestrator": "18081",
+        "memory": "18082",
+        "agent": "18083",
+        "voice": "18084",
+    }
+    try:
+        from modules.config_tuning import load_tuning
+
+        svc = load_tuning().services
+        defaults = {
+            "gateway": str(svc.gateway_port),
+            "orchestrator": str(svc.orchestrator_port),
+            "memory": str(svc.memory_service_port),
+            "agent": str(svc.agent_service_port),
+            "voice": str(svc.voice_service_port),
+        }
+    except Exception:
+        pass
+    return defaults
+
+
+_DEFAULT_PORTS = _resolve_default_ports()
+
+DEFAULT_GATEWAY_PORT = os.getenv("GATEWAY_PORT", _DEFAULT_PORTS["gateway"])
+DEFAULT_ORCHESTRATOR_PORT = os.getenv("ORCHESTRATOR_PORT", _DEFAULT_PORTS["orchestrator"])
+DEFAULT_MEMORY_PORT = os.getenv("MEMORY_SERVICE_PORT", _DEFAULT_PORTS["memory"])
+DEFAULT_AGENT_PORT = os.getenv("AGENT_SERVICE_PORT", _DEFAULT_PORTS["agent"])
+DEFAULT_VOICE_PORT = os.getenv("VOICE_SERVICE_PORT", _DEFAULT_PORTS["voice"])
 
 
 class ServiceMonitorApp:

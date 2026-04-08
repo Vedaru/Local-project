@@ -5,7 +5,11 @@ from typing import Optional
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+from modules.logging_config import get_logger
+from modules.python_runtime_guard import ensure_supported_python_runtime
+
 app = FastAPI(title="project-local-agent-service", version="0.1.0")
+logger = get_logger("AgentService")
 
 _REAL_AGENT: Optional[object] = None
 _AGENT_INIT_ERROR = ""
@@ -36,6 +40,7 @@ def _try_init_agent() -> None:
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    ensure_supported_python_runtime(logger=logger)
     await asyncio.to_thread(_try_init_agent)
 
 

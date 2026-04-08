@@ -10,15 +10,18 @@ from __future__ import annotations
 
 import json
 import os
-import time
 import threading
+import time
 from typing import Any, Optional
 
 import numpy as np
 
+from ..logging_config import get_logger
 from .engram_config import ENGRAM_CONFIG, EngramConfig
 from .engram_hashing import NgramHashMapper
 from .engram_tokenizer import CompressedTokenizer
+
+logger = get_logger("Memory.Engram")
 
 
 class EngramMemoryStore:
@@ -94,7 +97,13 @@ class EngramMemoryStore:
 
         return results
 
-    def retrieve(self, query: str, top_k: int = 5, gate_threshold: float = 0.1) -> list[dict]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 5,
+        gate_threshold: float = 0.1,
+        user_id: Optional[str] = None,
+    ) -> list[dict]:
         """Retrieve top-k most relevant entries by query hash matching."""
         token_ids = self.tokenizer.encode(query)
         if not token_ids:
@@ -107,7 +116,11 @@ class EngramMemoryStore:
             for key, addr in addresses.items():
                 slot = self.tables.get(key, {}).get(addr)
                 if slot and slot.get("confidence", 0.0) >= gate_threshold:
-                        candidates.append(dict(slot))
+                    if self._is_contaminated_content(slot):
+                        continue
+                    if not self._matches_user(slot, user_id):
+                        continue
+                    candidates.append(dict(slot))
 
         # Deduplicate by content
         seen: set[str] = set()
@@ -153,8 +166,8 @@ class EngramMemoryStore:
                     with open(tmp, "w", encoding="utf-8") as fh:
                         json.dump(data, fh, ensure_ascii=False, indent=2)
                     os.replace(tmp, fpath)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("[engram] save table failed (%s): %s", fpath, exc)
                 idx += 1
 
             self.tokenizer.save(os.path.join(self._config.base_dir, "engram_vocab.json"))
@@ -186,11 +199,11 @@ class EngramMemoryStore:
                     for k_str, val in raw_slots.items():
                         try:
                             loaded[int(k_str)] = val
-                        except ValueError:
-                            pass
+                        except ValueError as exc:
+                            logger.debug("[engram] invalid slot key '%s': %s", k_str, exc)
                     self.tables[key].update(loaded)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[engram] load table failed (%s): %s", fpath, exc)
 
     @staticmethod
     def _is_contaminated_content(slot: dict) -> bool:
@@ -202,3 +215,15 @@ class EngramMemoryStore:
             "no information", "uncertain",
         )
         return any(p in content for p in uncertain_patterns) and len(content) < 80
+
+    @staticmethod
+    def _normalize_user_id(user_id: Optional[str]) -> str:
+        return (user_id or "").strip()
+
+    @classmethod
+    def _matches_user(cls, slot: dict[str, Any], user_id: Optional[str]) -> bool:
+        target_uid = cls._normalize_user_id(user_id)
+        if not target_uid:
+            return True
+        slot_uid = cls._normalize_user_id(slot.get("user_id"))
+        return slot_uid == target_uid

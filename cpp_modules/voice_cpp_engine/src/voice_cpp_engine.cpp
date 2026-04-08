@@ -133,6 +133,77 @@ bool write_wav_header(FILE* file, std::uint32_t sample_rate, std::uint32_t pcm_s
     return true;
 }
 
+double apply_volume_curve(double normalized, double safe_power) {
+    if (normalized <= 0.0) {
+        return 0.0;
+    }
+
+    const double power_delta_1 = std::abs(safe_power - 1.0);
+    if (power_delta_1 < 1e-9) {
+        return normalized;
+    }
+
+    const double power_delta_half = std::abs(safe_power - 0.5);
+    if (power_delta_half < 1e-9) {
+        return std::sqrt(normalized);
+    }
+
+    const double power_delta_2 = std::abs(safe_power - 2.0);
+    if (power_delta_2 < 1e-9) {
+        return normalized * normalized;
+    }
+
+    return std::pow(normalized, safe_power);
+}
+
+double compute_pcm_volume_value(
+    const std::int16_t* samples,
+    std::size_t sample_count,
+    double safe_gate,
+    double safe_normalizer,
+    double safe_power
+) {
+    if (samples == nullptr || sample_count == 0u) {
+        return 0.0;
+    }
+
+    double sum_sq = 0.0;
+    std::size_t i = 0u;
+    const std::size_t unrolled_end = sample_count - (sample_count % 8u);
+    for (; i < unrolled_end; i += 8u) {
+        const double s0 = static_cast<double>(samples[i]);
+        const double s1 = static_cast<double>(samples[i + 1u]);
+        const double s2 = static_cast<double>(samples[i + 2u]);
+        const double s3 = static_cast<double>(samples[i + 3u]);
+        const double s4 = static_cast<double>(samples[i + 4u]);
+        const double s5 = static_cast<double>(samples[i + 5u]);
+        const double s6 = static_cast<double>(samples[i + 6u]);
+        const double s7 = static_cast<double>(samples[i + 7u]);
+        sum_sq +=
+            (s0 * s0) +
+            (s1 * s1) +
+            (s2 * s2) +
+            (s3 * s3) +
+            (s4 * s4) +
+            (s5 * s5) +
+            (s6 * s6) +
+            (s7 * s7);
+    }
+    for (; i < sample_count; ++i) {
+        const double sample = static_cast<double>(samples[i]);
+        sum_sq += sample * sample;
+    }
+
+    const double rms = std::sqrt(sum_sq / static_cast<double>(sample_count));
+    if (rms < safe_gate) {
+        return 0.0;
+    }
+
+    const double normalized = std::max(0.0, rms / safe_normalizer);
+    const double curved = apply_volume_curve(normalized, safe_power);
+    return std::min(curved, 1.0);
+}
+
 }  // namespace
 
 extern "C" {
@@ -197,22 +268,110 @@ VOICE_API int compute_pcm_volume_cpp(
     const double safe_normalizer = std::max(1.0, normalizer);
     const double safe_power = std::max(0.01, power);
 
-    long double sum_sq = 0.0;
-    for (std::size_t i = 0; i < sample_count; ++i) {
-        const long double sample = static_cast<long double>(samples[i]);
-        sum_sq += sample * sample;
-    }
+    *out_volume = compute_pcm_volume_value(
+        samples,
+        sample_count,
+        safe_gate,
+        safe_normalizer,
+        safe_power
+    );
+    return 0;
+}
 
-    const long double mean_sq = sum_sq / static_cast<long double>(sample_count);
-    const double rms = std::sqrt(static_cast<double>(mean_sq));
-    if (rms < safe_gate) {
-        *out_volume = 0.0;
+VOICE_API int compute_pcm_volume_batch_cpp(
+    const std::int16_t* samples,
+    std::size_t sample_count,
+    std::size_t frame_samples,
+    double gate,
+    double normalizer,
+    double power,
+    double* out_volumes,
+    std::size_t out_capacity,
+    std::size_t* out_count
+) {
+    if (out_count == nullptr) {
+        return 1;
+    }
+    *out_count = 0u;
+
+    if (sample_count == 0u) {
         return 0;
     }
+    if (samples == nullptr) {
+        return 2;
+    }
+    if (frame_samples == 0u) {
+        return 3;
+    }
+    if (out_volumes == nullptr || out_capacity == 0u) {
+        return 4;
+    }
 
-    const double normalized = std::max(0.0, rms / safe_normalizer);
-    const double curved = std::pow(normalized, safe_power);
-    *out_volume = std::min(curved, 1.0);
+    const std::size_t frame_count = sample_count / frame_samples;
+    if (frame_count == 0u) {
+        return 0;
+    }
+    if (frame_count > out_capacity) {
+        return 5;
+    }
+
+    const double safe_gate = std::max(0.0, gate);
+    const double safe_normalizer = std::max(1.0, normalizer);
+    const double safe_power = std::max(0.01, power);
+
+    for (std::size_t frame_index = 0u; frame_index < frame_count; ++frame_index) {
+        const std::size_t offset = frame_index * frame_samples;
+        out_volumes[frame_index] = compute_pcm_volume_value(
+            samples + offset,
+            frame_samples,
+            safe_gate,
+            safe_normalizer,
+            safe_power
+        );
+    }
+
+    *out_count = frame_count;
+    return 0;
+}
+
+VOICE_API int build_chunk_index_cpp(
+    std::size_t total_size,
+    std::size_t chunk_size,
+    std::size_t* out_offsets,
+    std::size_t* out_sizes,
+    std::size_t out_capacity,
+    std::size_t* out_count
+) {
+    if (out_count == nullptr) {
+        return 1;
+    }
+    *out_count = 0u;
+
+    if (chunk_size == 0u) {
+        return 2;
+    }
+    if (total_size == 0u) {
+        return 0;
+    }
+    if (out_offsets == nullptr || out_sizes == nullptr || out_capacity == 0u) {
+        return 3;
+    }
+
+    const std::size_t chunk_count = (total_size + chunk_size - 1u) / chunk_size;
+    if (chunk_count > out_capacity) {
+        return 4;
+    }
+
+    std::size_t offset = 0u;
+    for (std::size_t index = 0u; index < chunk_count; ++index) {
+        const std::size_t remaining = total_size - offset;
+        const std::size_t size = std::min(chunk_size, remaining);
+        out_offsets[index] = offset;
+        out_sizes[index] = size;
+        offset += size;
+    }
+
+    *out_count = chunk_count;
     return 0;
 }
 

@@ -130,6 +130,8 @@ def retry(
     base_delay: float = 1.0,
     max_delay: float = 60.0,
     strategy: RetryStrategy = RetryStrategy.EXPONENTIAL,
+    jitter: bool = True,
+    jitter_factor: float = 0.1,
     retryable_exceptions: tuple = (Exception,),
     on_retry: Optional[Callable[[Exception, int], None]] = None,
 ):
@@ -155,6 +157,8 @@ def retry(
         base_delay=base_delay,
         max_delay=max_delay,
         strategy=strategy,
+        jitter=jitter,
+        jitter_factor=jitter_factor,
         retryable_exceptions=retryable_exceptions,
     )
 
@@ -197,6 +201,8 @@ def async_retry(
     base_delay: float = 1.0,
     max_delay: float = 60.0,
     strategy: RetryStrategy = RetryStrategy.EXPONENTIAL,
+    jitter: bool = True,
+    jitter_factor: float = 0.1,
     retryable_exceptions: tuple = (Exception,),
     on_retry: Optional[Callable[[Exception, int], None]] = None,
 ):
@@ -212,6 +218,8 @@ def async_retry(
         base_delay=base_delay,
         max_delay=max_delay,
         strategy=strategy,
+        jitter=jitter,
+        jitter_factor=jitter_factor,
         retryable_exceptions=retryable_exceptions,
     )
 
@@ -388,10 +396,10 @@ class GlobalExceptionHandler:
 
     def handle(self, exception: Exception) -> Any:
         """处理异常"""
-        # 查找最匹配的处理器
-        for exc_type, handler in self._handlers.items():
-            if isinstance(exception, exc_type):
-                return handler(exception)
+        # 按异常 MRO 查找最匹配处理器，避免注册顺序影响匹配结果
+        for exc_type in type(exception).mro():
+            if exc_type in self._handlers:
+                return self._handlers[exc_type](exception)
 
         # 使用默认处理器
         if self._default_handler:

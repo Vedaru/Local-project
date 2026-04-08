@@ -7,7 +7,6 @@ external code. Keep public method signatures stable to preserve compatibility.
 """
 
 import re
-import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional
@@ -270,12 +269,23 @@ class ExpressionManager:
             kept.append(" ".join(segments[max_segments - 1 :]))
             segments = kept
 
-        raw_min_segment = (os.getenv("LOCAL_EXPRESSION_MIN_SEGMENT_SEC", "0.30") or "0.30").strip()
+        # 从 TuningConfig 读取情感分析参数（替代散落的 os.getenv）
         try:
-            min_segment_sec = float(raw_min_segment)
-        except ValueError:
+            from modules.config import get_tuning
+            _expr_tuning = get_tuning().expression
+            min_segment_sec = max(0.12, min(0.8, _expr_tuning.min_segment_sec))
+            min_hold_sec = max(0.2, min(1.5, _expr_tuning.min_hold_sec))
+            switch_margin = max(0.02, min(0.35, _expr_tuning.switch_margin))
+            continuity_bias = max(0.0, min(0.30, _expr_tuning.continuity_bias))
+            smooth_window_sec = max(0.15, min(1.2, _expr_tuning.smooth_window_sec))
+            tail_neutral_sec = max(0.12, min(1.0, _expr_tuning.neutral_tail_sec))
+        except Exception:
             min_segment_sec = 0.30
-        min_segment_sec = max(0.12, min(0.8, min_segment_sec))
+            min_hold_sec = 0.55
+            switch_margin = 0.10
+            continuity_bias = 0.12
+            smooth_window_sec = 0.55
+            tail_neutral_sec = 0.26
 
         total_chars = max(1, sum(len(segment) for segment in segments))
         min_total_duration = max(1.2, len(segments) * min_segment_sec)
@@ -294,26 +304,7 @@ class ExpressionManager:
         carry[Emotion.NEUTRAL] = 1.0
         offset = 0.0
 
-        raw_hold = (os.getenv("LOCAL_EXPRESSION_MIN_HOLD_SEC", "0.55") or "0.55").strip()
-        try:
-            min_hold_sec = float(raw_hold)
-        except ValueError:
-            min_hold_sec = 0.55
-        min_hold_sec = max(0.2, min(1.5, min_hold_sec))
-
-        raw_margin = (os.getenv("LOCAL_EXPRESSION_SWITCH_MARGIN", "0.10") or "0.10").strip()
-        try:
-            switch_margin = float(raw_margin)
-        except ValueError:
-            switch_margin = 0.10
-        switch_margin = max(0.02, min(0.35, switch_margin))
-
-        raw_continuity = (os.getenv("LOCAL_EXPRESSION_CONTINUITY_BIAS", "0.12") or "0.12").strip()
-        try:
-            continuity_bias = float(raw_continuity)
-        except ValueError:
-            continuity_bias = 0.12
-        continuity_bias = max(0.0, min(0.30, continuity_bias))
+        # min_hold_sec, switch_margin, continuity_bias 已在上方从 TuningConfig 统一读取
 
         previous_selected: Optional[Emotion] = None
         previous_selected_offset = 0.0
@@ -367,12 +358,7 @@ class ExpressionManager:
         if not timeline:
             timeline.append(ExpressionTimelinePoint(offset_sec=0.0, emotion=Emotion.NEUTRAL, confidence=1.0, segment=""))
 
-        raw_smooth = (os.getenv("LOCAL_EXPRESSION_SMOOTH_WINDOW_SEC", "0.55") or "0.55").strip()
-        try:
-            smooth_window_sec = float(raw_smooth)
-        except ValueError:
-            smooth_window_sec = 0.55
-        smooth_window_sec = max(0.15, min(1.2, smooth_window_sec))
+        # smooth_window_sec 已在上方从 TuningConfig 统一读取
 
         # Smooth out short neutral flashes or low-confidence spikes between same neighboring emotions.
         if len(timeline) >= 3:
@@ -410,12 +396,7 @@ class ExpressionManager:
             if timeline[idx].offset_sec < required_offset:
                 timeline[idx].offset_sec = required_offset
 
-        raw_tail = (os.getenv("LOCAL_EXPRESSION_NEUTRAL_TAIL_SEC", "0.26") or "0.26").strip()
-        try:
-            tail_neutral_sec = float(raw_tail)
-        except ValueError:
-            tail_neutral_sec = 0.26
-        tail_neutral_sec = max(0.12, min(1.0, tail_neutral_sec))
+        # tail_neutral_sec 已在上方从 TuningConfig 统一读取
 
         if timeline[-1].emotion != Emotion.NEUTRAL:
             timeline.append(

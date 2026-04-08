@@ -1,289 +1,147 @@
-# 開発者ガイド
+# 開発者向け貢献ガイド
 
-**Language / 語言 / 言語:**
+**Language / 言語 / 语言:**
 
 - [中文](./CONTRIBUTING.md)
 - [English](./CONTRIBUTING_EN.md)
 - [日本語](./CONTRIBUTING_JA.md)
 
-このドキュメントでは、開発環境のセットアップ、テストの実行、および Local-project へのコード貢献方法について説明します。
+このドキュメントは、推奨される開発・テスト・貢献フローをまとめたものです。
 
-## 目次
-
-- [開発環境のセットアップ](#開発環境のセットアップ)
-- [プロジェクト構造](#プロジェクト構造)
-- [コード規約](#コード規約)
-- [テスト](#テスト)
-- [CI/CD](#cicd)
-- [モジュール説明](#モジュール説明)
-
-## 開発環境のセットアップ
+## 1. 開発環境
 
 ### 前提条件
 
-- Python 3.9 - 3.11
-- pip または Poetry
+- Python 3.10 - 3.11（推奨）
 - Git
+- Rust ツールチェーン（`rust_modules/web_fetcher_rs` を変更する場合のみ必須）
+- C++/CMake ツールチェーン（`cpp_modules/voice_cpp_engine` を変更する場合のみ必須）
 
-### クイックスタート
+### セットアップ
 
 ```powershell
-# 1. リポジトリをクローンする
 git clone https://github.com/your-org/local-project.git
 cd local-project
 
-# 2. 仮想環境を作成する
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# 3. 依存関係をインストールする
-.\dev.ps1 setup
-
-# 4. pre-commit フックをセットアップする
-.\dev.ps1 pre-commit
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-### Poetry を使用する（推奨）
+## 2. ローカル実行とテスト
 
 ```powershell
-# Poetry をインストールする
-pip install poetry
-
-# すべての依存関係をインストールする
-poetry install
-
-# 仮想環境を有効化する
-poetry shell
-```
-
-## プロジェクト構造
-
-```
-Local-project/
-├── modules/              # コアモジュール
-│   ├── agent/           # AI Agent モジュール
-│   ├── avatar/          # アバターモジュール
-│   ├── memory/          # メモリシステム
-│   ├── config.py        # 設定管理
-│   ├── health.py        # ヘルスチェック
-│   ├── llm.py           # LLM 呼び出し
-│   ├── resilience.py    # エラーハンドリングとリトライ
-│   ├── utils.py         # ユーティリティ関数
-│   └── voice.py         # 音声合成
-├── microservices/       # マイクロサービス構成（gateway/orchestrator/各サービス）
-├── tests/               # テストファイル
-├── assets/              # 静的アセット
-├── data/                # データディレクトリ
-├── dev.ps1              # 開発スクリプトのエントリ
-├── start_microservices_with_monitor.ps1  # マイクロサービス起動スクリプト
-├── .github/workflows/   # CI/CD 設定
-├── main.py              # メインエントリーポイント
-├── pyproject.toml       # プロジェクト設定
-└── requirements.txt     # 依存関係リスト
-```
-
-## コード規約
-
-### フォーマッティング
-
-プロジェクトは一貫したコードスタイルを維持するために、以下のツールを使用しています：
-
-- **Black**: コード フォーマッティング（行幅 120）
-- **isort**: インポート並べ替え
-- **Ruff**: 高速 Python リンター
-
-```powershell
-# コードをフォーマットする
-.\dev.ps1 format
-
-# または手動で実行する
-black modules/ tests/ main.py
-isort modules/ tests/ main.py
-```
-
-### 型ヒント
-
-型ヒント の使用が推奨され、mypy で検査されます：
-
-```python
-def process_text(text: str, max_length: int = 100) -> Optional[str]:
-    """テキストを処理して結果を返す"""
-    if not text:
-        return None
-    return text[:max_length]
+python main.py
 ```
 
 ```powershell
-# 型チェック
-mypy modules/ --ignore-missing-imports
+python -m pytest -q
 ```
 
-### Pre-commit フック
-
-コミット前に自動的にチェックが実行されます：
+OpenManus のツールチェーンを変更した場合は、少なくとも次を実行してください：
 
 ```powershell
-# フックをインストールする
-pre-commit install
-
-# すべてのチェックを手動で実行する
-pre-commit run --all-files
+python -m pytest tests/test_openmanus_web_search_fetcher.py -q
+python -m pytest tests/test_openmanus_browser_enhancements.py -q
+python -m pytest tests/test_voice_tts_chain.py -q
 ```
 
-## テスト
+## 3. Rust 取得拡張の開発フロー
 
-### テストの実行
+次のファイルを変更した場合：
+
+- `rust_modules/web_fetcher_rs`
+- `modules/openmanus/app/tool/web_search.py`
+
+拡張のビルドと検証を実行してください：
 
 ```powershell
-# すべてのテストを実行する
-.\dev.ps1 test
-
-# または pytest で直接実行する
-pytest tests/ -v
-
-# 特定のテストファイルを実行する
-pytest tests/test_utils.py -v
-
-# 特定のテストを実行する
-pytest tests/test_utils.py::TestCleanText::test_clean_text -v
+python -m pip install maturin
+python -m maturin develop --manifest-path rust_modules/web_fetcher_rs/Cargo.toml
+python -m pytest tests/test_openmanus_web_search_fetcher.py -q
 ```
 
-### テストカバレッジ
+任意のネイティブチェック：
 
 ```powershell
-# カバレッジレポートを生成する
-.\dev.ps1 test-cov
-
-# HTML レポートを表示する
-start htmlcov/index.html
+cargo check --manifest-path rust_modules/web_fetcher_rs/Cargo.toml
 ```
 
-### テストの作成
+## 4. C++ 音声アクセラレーション開発フロー
 
-テストファイルは `tests/` ディレクトリに配置され、命名形式は `test_<module>.py` です：
+次のファイルを変更した場合：
 
-```python
-# tests/test_example.py
-import pytest
-from modules.example import my_function
+- `cpp_modules/voice_cpp_engine`
+- `modules/voice.py`
+- `modules/voice_cpp_accel.py`
 
-class TestMyFunction:
-    """my_function のテスト"""
-    
-    def test_basic_case(self):
-        """基本的な機能をテストする"""
-        result = my_function("input")
-        assert result == "expected"
-    
-    @pytest.mark.slow
-    def test_slow_operation(self):
-        """時間がかかるテスト"""
-        # スロー としてマーク、デフォルトはスキップ
-        pass
-```
-
-### テストマーカー
-
-- `@pytest.mark.slow` - 遅いテスト（`--runslow` で実行）
-- `@pytest.mark.integration` - 統合テスト（`--runintegration` で実行）
-- `@pytest.mark.unit` - ユニットテスト
-
-## CI/CD
-
-プロジェクトは GitHub Actions を使用して継続的インテグレーションを実行します：
-
-### CI パイプライン
-
-1. **コード品質チェック** - Black, isort, Ruff, mypy
-2. **ユニットテスト** - 複数の Python バージョンと OS で実行
-3. **カバレッジレポート** - Codecov にアップロード
-4. **セキュリティスキャン** - Bandit, pip-audit
-
-### ローカル検証
-
-コミット前に完全なチェックを実行します：
+C++ ライブラリのビルドと音声回帰テストを実行してください：
 
 ```powershell
-.\dev.ps1 check
+cmake -S cpp_modules/voice_cpp_engine -B build/voice_cpp_engine -DCMAKE_BUILD_TYPE=Release
+cmake --build build/voice_cpp_engine --config Release
+python -m pytest tests/test_voice_tts_chain.py -q
+python -m pytest tests/test_voice_service_wav_cleanup.py -q
 ```
 
-## モジュール説明
+## 5. Tool 並列実行ポリシー
 
-### resilience.py - エラーハンドリングとリトライ
+`ToolCollection` は `execute_many` によりバッチ/並列実行をサポートします。
 
-統一されたエラーハンドリングメカニズムを提供します：
+安全性のため、以下は既定で直列実行です：
 
-```python
-from modules.resilience import retry, RetryStrategy, CircuitBreaker
+- `python_execute`
+- `str_replace_editor`
+- `file_operator`
+- `terminate`
+- `browser_use`
+- `tool_selector`
 
-# リトライデコレーターを使用する
-@retry(max_retries=3, strategy=RetryStrategy.EXPONENTIAL)
-def call_external_api():
-    # API 呼び出し
-    pass
+副作用のある新規ツールを追加する際は、直列実行対象にすべきかを必ず評価してください。
 
-# サーキットブレーカーを使用する
-breaker = CircuitBreaker(failure_threshold=5)
+関連環境変数：
 
-@breaker
-def risky_operation():
-    # 失敗する可能性のある操作
-    pass
+- `OPENMANUS_TOOL_PARALLEL_ENABLED`：並列実行の有効/無効
+- `OPENMANUS_TOOL_PARALLEL_MAX`：最大同時実行数
+
+## 6. ドキュメント同期要件
+
+アーキテクチャ、実行方式、性能仕様を変更した場合は、次の 6 ファイルを同期更新してください：
+
+- `docs/README.md`
+- `docs/README_EN.md`
+- `docs/README_JA.md`
+- `docs/CONTRIBUTING.md`
+- `docs/CONTRIBUTING_EN.md`
+- `docs/CONTRIBUTING_JA.md`
+
+## 7. 貢献フロー
+
+1. ブランチ作成：`git checkout -b feat/your-topic`
+2. 実装とコミット
+3. テスト成功を確認
+4. Pull Request を作成
+
+コミットメッセージ形式：
+
+```text
+<type>: <summary>
 ```
 
-### health.py - ヘルスチェック
+よく使う `type`：
 
-重要なサービスのステータスを監視します：
+- `feat`
+- `fix`
+- `refactor`
+- `test`
+- `docs`
+- `chore`
 
-```python
-from modules.health import health_checker, check_sovits_health
+## 8. PR チェックリスト
 
-# ヘルスチェックを登録する
-health_checker.register("sovits", check_sovits_health)
-
-# チェックを実行する
-result = health_checker.check("sovits")
-print(f"Status: {result.status}")
-
-# すべてのサービスをチェックする
-health = health_checker.check_all()
-print(f"Overall: {health.overall_status}")
-```
-
-### microservices - サービス起動とオーケストレーション
-
-ランタイムは microservices モードへ完全移行済みです：
-
-```batch
-run_with_runtime.bat
-```
-
-補足：
-- GUI は gateway と orchestrator 経由でバックエンドを呼び出します
-- ポート、URL、認証設定は microservices 配下の設定で一元管理されます
-
-## 貢献ガイドライン
-
-1. リポジトリをフォークする
-2. フィーチャーブランチを作成する (`git checkout -b feature/amazing-feature`)
-3. 変更をコミットする (`git commit -m 'Add amazing feature'`)
-4. ブランチにプッシュする (`git push origin feature/amazing-feature`)
-5. Pull Request を作成する
-
-### コミットメッセージ規約
-
-```
-<type>: <description>
-
-[optional body]
-```
-
-タイプ：
-- `feat`: 新機能
-- `fix`: バグ修正
-- `docs`: ドキュメント更新
-- `style`: コードフォーマッティング（機能に影響なし）
-- `refactor`: リファクタリング
-- `test`: テスト関連
-- `chore`: ビルド/ツール関連
-
+- [ ] 変更範囲が目的に一致している
+- [ ] 関連する回帰テストを実行した
+- [ ] 明らかな性能劣化を導入していない
+- [ ] 必要時に CN/EN/JA 文書を同期更新した
+- [ ] コミットメッセージが明確である

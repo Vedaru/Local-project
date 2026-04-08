@@ -10,7 +10,43 @@ from .logging_config import get_logger
 
 logger = get_logger("voice_cpp_accel")
 
-_ENABLED_VALUES = {"1", "true", "yes", "on"}
+_PY_BYTES_AS_STRING = ctypes.pythonapi.PyBytes_AsString
+_PY_BYTES_AS_STRING.argtypes = [ctypes.py_object]
+_PY_BYTES_AS_STRING.restype = ctypes.c_void_p
+
+
+def _as_uint8_pointer(data: bytes | bytearray) -> tuple[object, object]:
+    if isinstance(data, bytes):
+        address = int(_PY_BYTES_AS_STRING(data))
+        pointer = ctypes.cast(address, ctypes.POINTER(ctypes.c_uint8))
+        return pointer, data
+
+    if isinstance(data, bytearray):
+        if not data:
+            return ctypes.cast(ctypes.c_void_p(), ctypes.POINTER(ctypes.c_uint8)), data
+        view = (ctypes.c_uint8 * len(data)).from_buffer(data)
+        pointer = ctypes.cast(view, ctypes.POINTER(ctypes.c_uint8))
+        return pointer, view
+
+    raise TypeError("pcm buffer must be bytes or bytearray")
+
+
+def _as_int16_pointer(data: bytes | bytearray) -> tuple[object, int, object]:
+    sample_count = len(data) // 2
+    if sample_count <= 0:
+        return ctypes.cast(ctypes.c_void_p(), ctypes.POINTER(ctypes.c_int16)), 0, data
+
+    if isinstance(data, bytes):
+        address = int(_PY_BYTES_AS_STRING(data))
+        pointer = ctypes.cast(address, ctypes.POINTER(ctypes.c_int16))
+        return pointer, sample_count, data
+
+    if isinstance(data, bytearray):
+        view = (ctypes.c_int16 * sample_count).from_buffer(data)
+        pointer = ctypes.cast(view, ctypes.POINTER(ctypes.c_int16))
+        return pointer, sample_count, view
+
+    raise TypeError("pcm buffer must be bytes or bytearray")
 
 
 class VoiceCppBackend:
@@ -38,7 +74,33 @@ class VoiceCppBackend:
         ]
         self._compute_volume.restype = ctypes.c_int
 
-    def save_pcm_mono16(self, wav_path: str, pcm_data: bytes, sample_rate: int) -> bool:
+        self._compute_volume_batch = self._library.compute_pcm_volume_batch_cpp
+        self._compute_volume_batch.argtypes = [
+            ctypes.POINTER(ctypes.c_int16),
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_double,
+            ctypes.c_double,
+            ctypes.c_double,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        self._compute_volume_batch.restype = ctypes.c_int
+
+        self._build_chunk_index = getattr(self._library, "build_chunk_index_cpp", None)
+        if self._build_chunk_index is not None:
+            self._build_chunk_index.argtypes = [
+                ctypes.c_size_t,
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_size_t),
+                ctypes.POINTER(ctypes.c_size_t),
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_size_t),
+            ]
+            self._build_chunk_index.restype = ctypes.c_int
+
+    def save_pcm_mono16(self, wav_path: str, pcm_data: bytes | bytearray, sample_rate: int) -> bool:
         pcm_data = pcm_data or b""
         if not wav_path or int(sample_rate or 0) <= 0:
             return False
@@ -46,14 +108,14 @@ class VoiceCppBackend:
             return False
 
         path_bytes = os.fspath(wav_path).encode("utf-8")
-        pcm_buffer = ctypes.create_string_buffer(pcm_data)
-        pcm_ptr = ctypes.cast(pcm_buffer, ctypes.POINTER(ctypes.c_uint8))
+        pcm_ptr, keepalive = _as_uint8_pointer(pcm_data)
+        _ = keepalive
         result = int(self._write_wav(path_bytes, pcm_ptr, len(pcm_data), int(sample_rate)))
         return result == 0
 
     def compute_volume_from_pcm16(
         self,
-        pcm_chunk: bytes,
+        pcm_chunk: bytes | bytearray,
         *,
         gate: float,
         normalizer: float,
@@ -65,10 +127,11 @@ class VoiceCppBackend:
         sample_count = len(pcm_chunk) // 2
         if sample_count <= 0:
             return 0.0
+        if len(pcm_chunk) % 2 != 0:
+            return None
 
-        packed = pcm_chunk[: sample_count * 2]
-        sample_buffer = ctypes.create_string_buffer(packed)
-        sample_ptr = ctypes.cast(sample_buffer, ctypes.POINTER(ctypes.c_int16))
+        sample_ptr, sample_count, keepalive = _as_int16_pointer(pcm_chunk)
+        _ = keepalive
 
         out_volume = ctypes.c_double(0.0)
         result = int(
@@ -91,24 +154,114 @@ class VoiceCppBackend:
             return 1.0
         return value
 
+    def compute_volume_batch_from_pcm16(
+        self,
+        pcm_chunk: bytes | bytearray,
+        *,
+        frame_samples: int,
+        gate: float,
+        normalizer: float,
+        power: float,
+    ) -> Optional[list[float]]:
+        if not pcm_chunk:
+            return []
+        if len(pcm_chunk) % 2 != 0:
+            return None
+        if int(frame_samples or 0) <= 0:
+            return []
+
+        sample_ptr, sample_count, keepalive = _as_int16_pointer(pcm_chunk)
+        _ = keepalive
+        frame_samples = int(frame_samples)
+        frame_count = sample_count // frame_samples
+        if frame_count <= 0:
+            return []
+
+        out_values = (ctypes.c_double * frame_count)()
+        out_count = ctypes.c_size_t(0)
+        result = int(
+            self._compute_volume_batch(
+                sample_ptr,
+                sample_count,
+                frame_samples,
+                float(gate),
+                float(normalizer),
+                float(power),
+                out_values,
+                frame_count,
+                ctypes.byref(out_count),
+            )
+        )
+        if result != 0:
+            return None
+
+        actual_count = min(int(out_count.value), frame_count)
+        volumes: list[float] = []
+        for index in range(actual_count):
+            value = float(out_values[index])
+            if value < 0.0:
+                value = 0.0
+            elif value > 1.0:
+                value = 1.0
+            volumes.append(value)
+        return volumes
+
+    def build_chunk_index(self, total_size: int, chunk_size: int) -> Optional[list[tuple[int, int]]]:
+        if self._build_chunk_index is None:
+            return None
+
+        total_size = int(total_size or 0)
+        chunk_size = int(chunk_size or 0)
+        if total_size <= 0:
+            return []
+        if chunk_size <= 0:
+            return []
+
+        chunk_count = (total_size + chunk_size - 1) // chunk_size
+        offsets = (ctypes.c_size_t * chunk_count)()
+        sizes = (ctypes.c_size_t * chunk_count)()
+        out_count = ctypes.c_size_t(0)
+
+        result = int(
+            self._build_chunk_index(
+                total_size,
+                chunk_size,
+                offsets,
+                sizes,
+                chunk_count,
+                ctypes.byref(out_count),
+            )
+        )
+        if result != 0:
+            return None
+
+        actual_count = min(int(out_count.value), chunk_count)
+        chunk_index: list[tuple[int, int]] = []
+        for index in range(actual_count):
+            offset = int(offsets[index])
+            size = int(sizes[index])
+            if size <= 0:
+                continue
+            chunk_index.append((offset, size))
+        return chunk_index
+
 
 _backend_lock = threading.Lock()
 _backend_cache: Optional[VoiceCppBackend] = None
 _backend_attempted = False
+_backend_error: Optional[str] = None
 _windows_dll_handles: list[object] = []
 _windows_dll_dirs_seen: set[str] = set()
 
 
-def _is_cpp_accel_enabled() -> bool:
-    raw_value = (os.getenv("VOICE_CPP_ACCEL_ENABLED", "1") or "1").strip().lower()
-    return raw_value in _ENABLED_VALUES
-
-
-def _candidate_library_paths() -> list[Path]:
+def _candidate_library_paths(explicit_library: str = "") -> list[Path]:
     root_dir = Path(__file__).resolve().parents[1]
+    explicit_library = (explicit_library or "").strip()
     env_library = (os.getenv("VOICE_CPP_ACCEL_LIB", "") or "").strip()
 
     candidates: list[Path] = []
+    if explicit_library:
+        candidates.append(Path(explicit_library))
     if env_library:
         candidates.append(Path(env_library))
 
@@ -207,21 +360,26 @@ def _register_windows_dll_dirs(extra_dirs: list[Path]) -> None:
             continue
 
 
-def load_voice_cpp_backend() -> Optional[VoiceCppBackend]:
+def load_voice_cpp_backend(*, explicit_library: str = "") -> VoiceCppBackend:
     global _backend_cache
     global _backend_attempted
-
-    if not _is_cpp_accel_enabled():
-        return None
+    global _backend_error
 
     with _backend_lock:
-        if _backend_attempted:
+        if _backend_cache is not None:
             return _backend_cache
 
+        if _backend_attempted and _backend_error:
+            raise RuntimeError(_backend_error)
+
         _backend_attempted = True
-        for candidate in _candidate_library_paths():
+        errors: list[str] = []
+        attempted_paths: list[str] = []
+
+        for candidate in _candidate_library_paths(explicit_library=explicit_library):
             if not candidate.exists() or not candidate.is_file():
                 continue
+            attempted_paths.append(str(candidate))
             try:
                 _register_windows_dll_dirs([candidate.parent])
                 library = ctypes.CDLL(str(candidate))
@@ -230,7 +388,21 @@ def load_voice_cpp_backend() -> Optional[VoiceCppBackend]:
                 return _backend_cache
             except OSError as exc:
                 logger.warning("Failed to load voice C++ acceleration (%s): %s", candidate, exc)
+                errors.append(f"{candidate}: {exc}")
             except Exception as exc:
                 logger.warning("Failed to initialize voice C++ backend (%s): %s", candidate, exc)
+                errors.append(f"{candidate}: {exc}")
 
-    return _backend_cache
+        if attempted_paths:
+            detail = "; ".join(errors) if errors else "no successful candidate"
+            _backend_error = (
+                "Voice C++ acceleration backend is required but failed to load. "
+                f"Tried {len(attempted_paths)} path(s): {', '.join(attempted_paths)}. "
+                f"Details: {detail}"
+            )
+        else:
+            _backend_error = (
+                "Voice C++ acceleration backend is required but no library file was found in candidate paths."
+            )
+
+        raise RuntimeError(_backend_error)
