@@ -197,7 +197,7 @@ class EmotionAnalyzer:
     def analyze(self, text: str) -> tuple[Emotion, float]:
         """返回主情感与置信度。"""
         weights = self.score_weights(text)
-        max_emotion = max(weights, key=weights.get)
+        max_emotion = max(weights, key=lambda emotion: weights.get(emotion, 0.0))
         max_weight = weights[max_emotion]
 
         if max_emotion == Emotion.NEUTRAL or max_weight < 0.24:
@@ -321,7 +321,7 @@ class ExpressionManager:
                 if previous_selected != Emotion.NEUTRAL:
                     blended[Emotion.NEUTRAL] = blended.get(Emotion.NEUTRAL, 0.0) * 0.92
 
-            selected = max(blended, key=blended.get)
+            selected = max(blended, key=lambda emotion: blended.get(emotion, 0.0))
             confidence = blended[selected]
             if confidence < 0.22:
                 selected = Emotion.NEUTRAL
@@ -453,7 +453,7 @@ class ExpressionManager:
             检测到的情感
         """
         weights = self._analyzer.score_weights(text)
-        emotion = max(weights, key=weights.get)
+        emotion = max(weights, key=lambda item: weights.get(item, 0.0))
         confidence = weights[emotion]
 
         if emotion != Emotion.NEUTRAL and confidence >= 0.24:

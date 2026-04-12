@@ -266,3 +266,44 @@ class TestStartGptSovitsApi:
 
         result = start_gpt_sovits_api(None)
         assert result is None
+
+
+class TestUtilityHelpers:
+    """Tests for newly added generic utility helpers."""
+
+    def test_truncate_text(self):
+        from modules.utils import truncate_text
+
+        assert truncate_text("hello", 10) == "hello"
+        assert truncate_text("hello world", 8) == "hello..."
+        assert truncate_text("hello world", 8, "..") == "hello .."
+
+    def test_normalize_whitespace(self):
+        from modules.utils import normalize_whitespace
+
+        assert normalize_whitespace("a   b") == "a b"
+        assert normalize_whitespace("a\n\t b") == "a b"
+        assert normalize_whitespace(None) == ""
+
+    def test_safe_json_loads(self):
+        from modules.utils import safe_json_loads
+
+        assert safe_json_loads('{"k": 1}') == {"k": 1}
+        assert safe_json_loads("{bad", default={}) == {}
+        assert safe_json_loads(b'{"ok": true}') == {"ok": True}
+
+    def test_clamp_value(self):
+        from modules.utils import clamp_value
+
+        assert clamp_value(5.0, 0.0, 10.0) == 5.0
+        assert clamp_value(-1.0, 0.0, 10.0) == 0.0
+        assert clamp_value(15.0, 0.0, 10.0) == 10.0
+        assert clamp_value(5.0, 10.0, 0.0) == 5.0
+
+    def test_is_valid_identifier(self):
+        from modules.utils import is_valid_identifier
+
+        assert is_valid_identifier("user_001") is True
+        assert is_valid_identifier("user-001") is True
+        assert is_valid_identifier("bad name") is False
+        assert is_valid_identifier("../../etc") is False

@@ -19,7 +19,7 @@ class AvatarManager:
     由于 PyQt 的 GUI 必须在主线程运行，此管理器提供线程安全的方法
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.widget: Optional[AvatarWidget] = None
         self._app: Optional[QApplication] = None
 
@@ -31,32 +31,32 @@ class AvatarManager:
         log_info(f"AvatarManager created widget ({width}x{height} at {x},{y})")
         return self.widget
 
-    def show(self):
+    def show(self) -> None:
         """显示窗口"""
         if self.widget:
             self.widget.show()
 
-    def hide(self):
+    def hide(self) -> None:
         """隐藏窗口"""
         if self.widget:
             self.widget.hide()
 
-    def load_model(self, model_path: str, callback: Optional[Callable] = None):
+    def load_model(self, model_path: str, callback: Optional[Callable[[bool], None]] = None) -> None:
         """加载模型"""
         if self.widget:
             self.widget.load_model(model_path, callback)
 
-    def update_lip_sync(self, value: float):
+    def update_lip_sync(self, value: float) -> None:
         """更新口型"""
         if self.widget:
             self.widget.update_lip_sync(value)
 
-    def change_expression(self, expression: Union[int, str]):
+    def change_expression(self, expression: Union[int, str]) -> None:
         """切换表情"""
         if self.widget:
             self.widget.change_expression(expression)
 
-    def play_motion(self, group: str, index: Optional[int] = None):
+    def play_motion(self, group: str, index: Optional[int] = None) -> None:
         """播放动作"""
         if self.widget:
             self.widget.play_motion(group, index)

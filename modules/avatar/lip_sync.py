@@ -78,7 +78,7 @@ class LipSyncAnalyzer:
         "？": 0.0,
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._frames: list[LipSyncFrame] = []
 
     def analyze_text(self, text: str, duration_per_char: float = 0.15) -> list[LipSyncFrame]:
@@ -189,7 +189,7 @@ class LipSyncAnalyzer:
 class LipSyncPlayer:
     """口型同步播放器 - 实时播放口型动画"""
 
-    def __init__(self, update_callback: Callable[[float], None]):
+    def __init__(self, update_callback: Callable[[float], None]) -> None:
         """
         Args:
             update_callback: 口型更新回调函数，接收一个 0-1 的值
@@ -200,7 +200,7 @@ class LipSyncPlayer:
         self._frames: list[LipSyncFrame] = []
         self._stop_event = threading.Event()
 
-    def play(self, frames: list[LipSyncFrame], blocking: bool = False):
+    def play(self, frames: list[LipSyncFrame], blocking: bool = False) -> None:
         """
         播放口型动画
 
@@ -218,7 +218,7 @@ class LipSyncPlayer:
             self._thread = threading.Thread(target=self._play_frames, daemon=True)
             self._thread.start()
 
-    def _play_frames(self):
+    def _play_frames(self) -> None:
         """播放帧序列"""
         if not self._frames:
             log_debug("No frames to play")
@@ -249,7 +249,7 @@ class LipSyncPlayer:
         self._callback(0.0)
         self._playing = False
 
-    def stop(self):
+    def stop(self) -> None:
         """停止播放"""
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
@@ -265,7 +265,7 @@ class LipSyncPlayer:
 class LipSyncManager:
     """口型同步管理器 - 统一的口型同步接口"""
 
-    def __init__(self, update_callback: Callable[[float], None]):
+    def __init__(self, update_callback: Callable[[float], None]) -> None:
         """
         Args:
             update_callback: 口型更新回调函数
@@ -274,7 +274,7 @@ class LipSyncManager:
         self._player = LipSyncPlayer(update_callback)
         log_info("LipSyncManager initialized")
 
-    def sync_with_text(self, text: str, duration_per_char: float = 0.12, blocking: bool = False):
+    def sync_with_text(self, text: str, duration_per_char: float = 0.12, blocking: bool = False) -> None:
         """
         基于文本的口型同步
 
@@ -286,7 +286,7 @@ class LipSyncManager:
         frames = self._analyzer.analyze_text(text, duration_per_char)
         self._player.play(frames, blocking=blocking)
 
-    def sync_with_audio(self, audio_path: str, blocking: bool = False):
+    def sync_with_audio(self, audio_path: str, blocking: bool = False) -> None:
         """
         基于音频的口型同步
 
@@ -297,11 +297,11 @@ class LipSyncManager:
         frames = self._analyzer.analyze_audio(audio_path)
         self._player.play(frames, blocking=blocking)
 
-    def play_wav_with_lipsync(self, wav_path: str, blocking: bool = False):
+    def play_wav_with_lipsync(self, wav_path: str, blocking: bool = False) -> None:
         """基于 wav 文件的口型同步（application 层调用的统一入口）。"""
         self.sync_with_audio(wav_path, blocking=blocking)
 
-    def stop(self):
+    def stop(self) -> None:
         """停止口型同步"""
         self._player.stop()
 

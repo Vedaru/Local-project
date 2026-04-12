@@ -8,10 +8,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
-
 
 # ===================== 统一错误响应 =====================
 
@@ -115,6 +115,58 @@ class ErrorResult:
             request_id=request_id,
             extra={"mode": mode, "wav_path": wav_path},
         )
+
+
+@dataclass(frozen=True)
+class ErrorResponse:
+    """标准错误响应结构（兼容旧有 ErrorResult）。"""
+
+    error: str
+    error_code: str
+    details: Optional[dict[str, Any]] = None
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": False,
+            "error": self.error,
+            "error_code": self.error_code,
+            "details": self.details,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass(frozen=True)
+class SuccessResponse:
+    """标准成功响应结构。"""
+
+    data: Any
+    message: str = "success"
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": True,
+            "data": self.data,
+            "message": self.message,
+            "timestamp": self.timestamp,
+        }
+
+
+class ErrorCode:
+    """常用错误码常量。"""
+
+    UNKNOWN_ERROR = "UNKNOWN_ERROR"
+    INVALID_REQUEST = "INVALID_REQUEST"
+    SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
+    SERVICE_TIMEOUT = "SERVICE_TIMEOUT"
+    AGENT_NOT_INITIALIZED = "AGENT_NOT_INITIALIZED"
+    AGENT_EXECUTION_ERROR = "AGENT_EXECUTION_ERROR"
+    AGENT_TIMEOUT = "AGENT_TIMEOUT"
+    TTS_ERROR = "TTS_ERROR"
+    ASR_ERROR = "ASR_ERROR"
+    MEMORY_ERROR = "MEMORY_ERROR"
+    MEMORY_NOT_FOUND = "MEMORY_NOT_FOUND"
 
 
 # ===================== 通用请求/响应模型 =====================

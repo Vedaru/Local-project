@@ -13,16 +13,19 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 # Ensure project root is in path
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+if TYPE_CHECKING:
+    from microservices.orchestrator.core import OrchestratorCore
 
 
 # ============================================================
@@ -31,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 @pytest.fixture
-def core() -> "microservices.orchestrator.core.OrchestratorCore":
+def core() -> "OrchestratorCore":
     """Create an OrchestratorCore with default config."""
     from microservices.orchestrator.core import OrchestratorCore
 

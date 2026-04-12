@@ -6,7 +6,6 @@ AudioPlaybackController — 音频播放 + LipSync 驱动
 - pyaudio 播放线程管理
 """
 
-import logging
 import threading
 import time
 from pathlib import Path
@@ -20,6 +19,12 @@ logger = get_logger("AudioPlaybackController")
 
 # 最近种子文本复用窗口（秒）
 EXPRESSION_SEED_REUSE_WINDOW_SEC = 1.2
+AUDIO_FADE_MS = 8
+AUDIO_FRAMES_PER_BUFFER = 512
+AUDIO_RMS_THRESHOLD = 500.0
+AUDIO_RMS_NORMALIZER = 8000.0
+AUDIO_VOLUME_EXPONENT = 0.8
+AUDIO_LIPSYNC_UPDATE_INTERVAL = 2
 
 
 class AudioPlaybackController:
@@ -65,15 +70,11 @@ class AudioPlaybackController:
         text = ""
         wav_path = ""
         tts_status = ""
-        duration_sec: Optional[float] = None
 
         if isinstance(payload, dict):
             text = str(payload.get("text") or "").strip()
             wav_path = str(payload.get("wav_path") or "").strip()
             tts_status = str(payload.get("status") or "").strip()
-            raw_duration = payload.get("duration_sec")
-            if isinstance(raw_duration, (int, float)) and raw_duration > 0:
-                duration_sec = float(raw_duration)
         elif isinstance(payload, str):
             text = payload.strip()
 
@@ -194,6 +195,69 @@ class AudioPlaybackController:
 
         return struct.pack(f"<{len(samples)}h", *samples)
 
+    @staticmethod
+    def _compute_lipsync_volume_from_pcm16(samples: tuple[int, ...]) -> float:
+        if not samples:
+            return 0.0
+        import math
+
+        rms = math.sqrt(sum(s * s for s in samples) / max(1, len(samples)))
+        if rms <= AUDIO_RMS_THRESHOLD:
+            return 0.0
+        return float(min((rms / AUDIO_RMS_NORMALIZER) ** AUDIO_VOLUME_EXPONENT, 1.0))
+
+    @staticmethod
+    def _open_output_stream(pa: Any, stream: Any, sampwidth: int, channels: int, framerate: int) -> tuple[Any, Any]:
+        if stream is not None:
+            return pa, stream
+
+        import pyaudio
+
+        if pa is None:
+            pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=pa.get_format_from_width(sampwidth),
+            channels=channels,
+            rate=framerate,
+            output=True,
+            frames_per_buffer=AUDIO_FRAMES_PER_BUFFER,
+        )
+        return pa, stream
+
+    @staticmethod
+    def _cleanup_output_stream(pa: Any, stream: Any) -> None:
+        if stream is not None:
+            stream.stop_stream()
+            stream.close()
+        if pa is not None:
+            pa.terminate()
+
+    def _stream_segment_and_drive_lipsync(self, stream: Any, raw_data: bytes, sampwidth: int, channels: int) -> None:
+        if not raw_data:
+            return
+
+        manager = self._lip_sync_manager
+        if manager is None:
+            return
+
+        import struct
+
+        chunk_size = max(2, AUDIO_FRAMES_PER_BUFFER * max(1, sampwidth) * max(1, channels))
+        update_counter = 0
+        for offset in range(0, len(raw_data), chunk_size):
+            chunk = raw_data[offset: offset + chunk_size]
+            if not chunk:
+                continue
+            stream.write(chunk)
+            update_counter += 1
+            if sampwidth != 2 or update_counter % AUDIO_LIPSYNC_UPDATE_INTERVAL != 0:
+                continue
+
+            fmt = f"<{len(chunk) // 2}h"
+            samples = struct.unpack(fmt, chunk)
+            volume = self._compute_lipsync_volume_from_pcm16(samples)
+            manager._player._callback(volume)
+
     def _play_audio_segments_with_lipsync(self, wav_paths: list[str]) -> None:
         """Play multiple wav files on one output stream to reduce gaps/clicks."""
         if not self._lip_sync_manager or not wav_paths:
@@ -201,15 +265,13 @@ class AudioPlaybackController:
 
         import wave as _wave
 
-        def _worker():
+        def _worker() -> None:
+            manager = self._lip_sync_manager
+            if manager is None:
+                return
             pa = None
             stream = None
             try:
-                import pyaudio
-                import struct
-                import math
-
-                frames_per_buffer = 512
                 total_segments = len(wav_paths)
 
                 for idx, wav_path in enumerate(wav_paths):
@@ -217,16 +279,7 @@ class AudioPlaybackController:
                         n_channels = int(wf.getnchannels() or 1)
                         sampwidth = int(wf.getsampwidth() or 2)
                         framerate = int(wf.getframerate() or 32000)
-
-                        if stream is None:
-                            pa = pyaudio.PyAudio()
-                            stream = pa.open(
-                                format=pa.get_format_from_width(sampwidth),
-                                channels=n_channels,
-                                rate=framerate,
-                                output=True,
-                                frames_per_buffer=frames_per_buffer,
-                            )
+                        pa, stream = self._open_output_stream(pa, stream, sampwidth, n_channels, framerate)
 
                         raw_data = wf.readframes(int(wf.getnframes() or 0))
                         if sampwidth == 2 and raw_data:
@@ -234,34 +287,21 @@ class AudioPlaybackController:
                                 raw_data,
                                 channels=n_channels,
                                 sample_rate=framerate,
-                                fade_ms=8,
+                                fade_ms=AUDIO_FADE_MS,
                                 fade_in=(idx > 0),
                                 fade_out=(idx < total_segments - 1),
                             )
 
-                        chunk_size = max(2, frames_per_buffer * max(1, sampwidth) * max(1, n_channels))
-                        update_counter = 0
-                        for offset in range(0, len(raw_data), chunk_size):
-                            chunk = raw_data[offset: offset + chunk_size]
-                            if not chunk:
-                                continue
-                            stream.write(chunk)
-                            update_counter += 1
-                            if sampwidth == 2 and update_counter % 2 == 0:
-                                fmt = f"<{len(chunk) // 2}h"
-                                samples = struct.unpack(fmt, chunk)
-                                rms = math.sqrt(sum(s * s for s in samples) / max(1, len(samples)))
-                                volume = min((rms / 8000.0) ** 0.8, 1.0) if rms > 500 else 0.0
-                                self._lip_sync_manager._player._callback(volume)
+                        self._stream_segment_and_drive_lipsync(stream, raw_data, sampwidth, n_channels)
 
-                self._lip_sync_manager._player._callback(0.0)
-                if stream is not None:
-                    stream.stop_stream()
-                    stream.close()
-                if pa is not None:
-                    pa.terminate()
+                manager._player._callback(0.0)
+                self._cleanup_output_stream(pa, stream)
             except Exception:
-                self._lip_sync_manager._player._callback(0.0)
+                manager._player._callback(0.0)
+                try:
+                    self._cleanup_output_stream(pa, stream)
+                except Exception:
+                    pass
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -272,13 +312,16 @@ class AudioPlaybackController:
 
         import wave as _wave
 
-        def _worker():
+        def _worker() -> None:
+            manager = self._lip_sync_manager
+            if manager is None:
+                return
             try:
                 with _wave.open(wav_path, "rb") as wf:
                     n_channels = wf.getnchannels()
                     sampwidth = wf.getsampwidth()
                     framerate = wf.getframerate()
-                    frames_per_buffer = 512
+                    frames_per_buffer = AUDIO_FRAMES_PER_BUFFER
 
                     import pyaudio
                     pa = pyaudio.PyAudio()
@@ -295,24 +338,23 @@ class AudioPlaybackController:
                     while data:
                         stream.write(data)
                         update_counter += 1
-                        if update_counter % 2 == 0:
+                        if update_counter % AUDIO_LIPSYNC_UPDATE_INTERVAL == 0:
                             # 计算 RMS 音量值驱动嘴型
-                            import struct, math
+                            import struct
                             fmt = f"<{len(data) // sampwidth}h" if sampwidth == 2 else None
                             if fmt:
                                 samples = struct.unpack(fmt, data)
-                                rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-                                volume = min((rms / 8000.0) ** 0.8, 1.0) if rms > 500 else 0.0
-                                self._lip_sync_manager._player._callback(volume)
+                                volume = self._compute_lipsync_volume_from_pcm16(samples)
+                                manager._player._callback(volume)
                         data = wf.readframes(frames_per_buffer)
 
                     # 播放完成，闭嘴
-                    self._lip_sync_manager._player._callback(0.0)
+                    manager._player._callback(0.0)
                     stream.stop_stream()
                     stream.close()
                     pa.terminate()
             except Exception:
-                self._lip_sync_manager._player._callback(0.0)
+                manager._player._callback(0.0)
 
         t = threading.Thread(target=_worker, daemon=True)
         t.start()

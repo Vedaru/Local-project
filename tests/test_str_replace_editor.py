@@ -69,8 +69,9 @@ spec.loader.exec_module(module)  # type: ignore
 StrReplaceEditor = module.StrReplaceEditor
 
 # we still need a file operator for running commands
-from modules.openmanus.app.tool.file_operators import LocalFileOperator  # noqa: E402
 from app.exceptions import ToolError  # noqa: E402
+
+from modules.openmanus.app.tool.file_operators import LocalFileOperator  # noqa: E402
 
 
 def test_view_directory_skips_hidden(tmp_path):

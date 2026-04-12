@@ -10,14 +10,14 @@ Covers:
 """
 
 import os
+
+# Ensure project root is in path
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 import yaml
-
-# Ensure project root is in path
-import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -26,7 +26,6 @@ import modules.config as config_module
 
 # Also import the base for direct path patching in legacy tests
 from modules import config_base  # noqa: E402
-
 
 # ============================================================
 # Tests for helper functions
@@ -207,6 +206,7 @@ class TestClientProxy:
     @patch("modules.config_legacy._get_client")
     def test_proxy_delegates_getattr(self, mock_get_client):
         from unittest.mock import MagicMock
+
         from modules.config_legacy import _ClientProxy
 
         mock_client_instance = MagicMock()

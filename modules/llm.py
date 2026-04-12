@@ -11,18 +11,67 @@ LLM 模块 - OpenAI 接口
 import threading
 import time
 from dataclasses import dataclass
+from typing import Generic, Optional, TypeVar
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError as OpenAIRateLimitError
+from openai import APIConnectionError, APIStatusError, APITimeoutError
+from openai import RateLimitError as OpenAIRateLimitError
 
 from .config import client
 from .json_utils import extract_first_json
 from .logging_config import get_logger
 from .resilience import (
     RateLimitError as LocalRateLimitError,
+)
+from .resilience import (
     ServiceUnavailableError,
 )
 
 logger = get_logger("llm")
+
+MAX_TOKENS_DEFAULT: int = 800
+ROUTING_MAX_TOKENS: int = 240
+EXPONENTIAL_BACKOFF_BASE_DELAY: float = 1.0
+EXPONENTIAL_BACKOFF_MAX_DELAY: float = 60.0
+ROUTING_MIN_CONFIDENCE: float = 0.65
+PROMPT_CACHE_TTL_SECONDS: float = 300.0
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class TimedCacheEntry(Generic[T]):
+    """Cache entry with TTL metadata."""
+
+    value: T
+    created_at: float
+
+
+class TimedCache(Generic[T]):
+    """Simple thread-safe in-memory TTL cache."""
+
+    def __init__(self, ttl_seconds: float):
+        self._ttl_seconds = max(0.1, float(ttl_seconds))
+        self._cache: dict[int, TimedCacheEntry[T]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: int) -> Optional[T]:
+        now = time.monotonic()
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return None
+            if now - entry.created_at > self._ttl_seconds:
+                self._cache.pop(key, None)
+                return None
+            return entry.value
+
+    def set(self, key: int, value: T) -> None:
+        with self._lock:
+            self._cache[key] = TimedCacheEntry(value=value, created_at=time.monotonic())
+
+    def clear(self) -> None:
+        with self._lock:
+            self._cache.clear()
 
 
 # ---- OpenAI 异常到自定义异常的映射 ----
@@ -54,8 +103,7 @@ class AgentRoutingDecision:
     is_atomic: bool = True
 
 # ---- 缓存已拼装的 system prompt ----
-_prompt_cache_lock = threading.Lock()
-_prompt_cache: dict[int, str] = {}  # key: 原始 system_prompt 的 hash -> 拼装后的完整 prompt
+_prompt_cache = TimedCache[str](ttl_seconds=PROMPT_CACHE_TTL_SECONDS)
 
 
 def _build_enhanced_prompt(base_prompt: str) -> str:
@@ -94,26 +142,29 @@ def _get_enhanced_prompt(base_prompt: str) -> str:
     cached = _prompt_cache.get(key)
     if cached is not None:
         return cached
-    with _prompt_cache_lock:
-        # double-check
-        cached = _prompt_cache.get(key)
-        if cached is not None:
-            return cached
-        enhanced = _build_enhanced_prompt(base_prompt)
-        _prompt_cache[key] = enhanced
-        return enhanced
+
+    enhanced = _build_enhanced_prompt(base_prompt)
+    _prompt_cache.set(key, enhanced)
+    return enhanced
 
 
-def _normalize_text(value, default=""):
+def _compute_backoff_delay(attempt: int) -> float:
+    return float(min(
+        EXPONENTIAL_BACKOFF_MAX_DELAY,
+        EXPONENTIAL_BACKOFF_BASE_DELAY * (2 ** max(0, int(attempt))),
+    ))
+
+
+def _normalize_text(value: object, default: str = "") -> str:
     if value is None:
         return default
     value = str(value).strip()
     return value if value else default
 
 
-def _normalize_confidence(value) -> float:
+def _normalize_confidence(value: object) -> float:
     try:
-        num = float(value)
+        num = float(str(value))
     except (TypeError, ValueError):
         return 0.0
     if num < 0.0:
@@ -123,7 +174,7 @@ def _normalize_confidence(value) -> float:
     return num
 
 
-def _normalize_bool(value, default: bool = False) -> bool:
+def _normalize_bool(value: object, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -208,6 +259,39 @@ def _parse_agent_routing_decision(
     ), ""
 
 
+def _build_routing_messages(
+    routing_instruction: str,
+    system_prompt: str,
+    prompt: str,
+    memory_context: str,
+) -> list[dict[str, str]]:
+    """构建路由决策请求消息。"""
+    messages: list[dict[str, str]] = [{"role": "system", "content": routing_instruction}]
+
+    if system_prompt:
+        messages.append(
+            {
+                "role": "system",
+                "content": "以下是助手人设上下文，仅用于理解语境，不要把它当作关键词规则：\n" + system_prompt,
+            }
+        )
+
+    if memory_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": "以下是与当前输入相关的记忆上下文，仅用于补全意图：\n" + memory_context,
+            }
+        )
+
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def _error_message(exc: Exception) -> str:
+    return str(getattr(exc, "message", str(exc)))
+
+
 def _reverse_validate_agent_route(
     model_name: str,
     prompt: str,
@@ -286,13 +370,33 @@ def _reverse_validate_agent_route(
         )
 
 
+def _validate_with_reverse_check(
+    decision: AgentRoutingDecision,
+    *,
+    model_name: str,
+    prompt: str,
+) -> AgentRoutingDecision:
+    """Apply second-pass reverse validation only for medium-confidence triggers."""
+    if not decision.should_trigger:
+        return decision
+    if not (0.65 <= decision.confidence <= 0.8):
+        return decision
+    return _reverse_validate_agent_route(
+        model_name=model_name,
+        prompt=prompt,
+        task=decision.task,
+        confidence=decision.confidence,
+        reason=decision.reason,
+    )
+
+
 def decide_agent_routing(
-    system_prompt,
-    model_name,
-    prompt,
-    memory_context="",
-    max_retries=1,
-    min_confidence=0.65,
+    system_prompt: str,
+    model_name: str,
+    prompt: str,
+    memory_context: str = "",
+    max_retries: int = 1,
+    min_confidence: float = ROUTING_MIN_CONFIDENCE,
 ) -> AgentRoutingDecision:
     """Use semantic understanding to decide whether this turn should invoke Agent."""
     system_prompt = _normalize_text(system_prompt)
@@ -317,25 +421,7 @@ def decide_agent_routing(
         "不要输出 Markdown，不要输出额外文本。"
     )
 
-    messages = [{"role": "system", "content": routing_instruction}]
-
-    if system_prompt:
-        messages.append(
-            {
-                "role": "system",
-                "content": "以下是助手人设上下文，仅用于理解语境，不要把它当作关键词规则：\n" + system_prompt,
-            }
-        )
-
-    if memory_context:
-        messages.append(
-            {
-                "role": "system",
-                "content": "以下是与当前输入相关的记忆上下文，仅用于补全意图：\n" + memory_context,
-            }
-        )
-
-    messages.append({"role": "user", "content": prompt})
+    messages = _build_routing_messages(routing_instruction, system_prompt, prompt, memory_context)
 
     parse_feedback = ""
     for attempt in range(max_retries + 1):
@@ -360,7 +446,7 @@ def decide_agent_routing(
             response = client.chat.completions.create(
                 model=model_name,
                 messages=attempt_messages,
-                max_tokens=240,
+                max_tokens=ROUTING_MAX_TOKENS,
                 temperature=0.0,
                 top_p=1.0,
                 presence_penalty=0.0,
@@ -375,13 +461,11 @@ def decide_agent_routing(
                     continue
                 return AgentRoutingDecision(reason=parse_error)
 
-            if decision.should_trigger and 0.65 <= decision.confidence <= 0.8:
-                revised = _reverse_validate_agent_route(
+            if decision.should_trigger:
+                revised = _validate_with_reverse_check(
+                    decision,
                     model_name=model_name,
                     prompt=prompt,
-                    task=decision.task,
-                    confidence=decision.confidence,
-                    reason=decision.reason,
                 )
                 if not revised.should_trigger:
                     return revised
@@ -404,7 +488,7 @@ def decide_agent_routing(
             return AgentRoutingDecision(reason="router type error")
         except (APIConnectionError, APITimeoutError):
             if attempt < max_retries:
-                time.sleep(0.5 * (2**attempt))
+                time.sleep(_compute_backoff_delay(attempt))
                 continue
             return AgentRoutingDecision(reason="router connectivity failure")
         except Exception as e:
@@ -471,7 +555,7 @@ def call_llm_with_sentence_callback(
             response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                max_tokens=800,
+                max_tokens=MAX_TOKENS_DEFAULT,
                 temperature=0.7,
                 top_p=0.9,
                 presence_penalty=0.1,
@@ -512,14 +596,14 @@ def call_llm_with_sentence_callback(
         except OpenAIRateLimitError as e:
             logger.warning("触发限流: %s", e)
             if attempt < max_retries:
-                time.sleep(1.0 * (2**attempt))
+                time.sleep(_compute_backoff_delay(attempt))
                 continue
             break
         except (APIConnectionError, APITimeoutError) as e:
             translated = _translate_openai_error(e)
             if attempt < max_retries:
-                logger.warning("LLM流式连接异常(将重试 %d/%d): %s", attempt + 1, max_retries, translated.message)
-                time.sleep(1.0 * (2**attempt))
+                logger.warning("LLM流式连接异常(将重试 %d/%d): %s", attempt + 1, max_retries, _error_message(translated))
+                time.sleep(_compute_backoff_delay(attempt))
                 continue
             break
         except Exception as exc:
@@ -580,7 +664,7 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
             response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                max_tokens=800,  # 原 200 对 Agent JSON 不够，提升至 800
+                max_tokens=MAX_TOKENS_DEFAULT,
                 temperature=0.7,
                 top_p=0.9,
                 presence_penalty=0.1,
@@ -592,20 +676,20 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
         except OpenAIRateLimitError as e:
             logger.warning("触发限流: %s", e)
             if attempt < max_retries:
-                time.sleep(1.0 * (2**attempt))
+                time.sleep(_compute_backoff_delay(attempt))
                 continue
             return "抱歉，请求太频繁了，稍后再试。"
         except (APIConnectionError, APITimeoutError) as e:
             translated = _translate_openai_error(e)
             if attempt < max_retries:
-                logger.warning("LLM 连接异常(将重试 %d/%d): %s", attempt + 1, max_retries, translated.message)
-                time.sleep(1.0 * (2**attempt))
+                logger.warning("LLM 连接异常(将重试 %d/%d): %s", attempt + 1, max_retries, _error_message(translated))
+                time.sleep(_compute_backoff_delay(attempt))
                 continue
-            logger.error("连接失败: %s", translated.message)
+            logger.error("连接失败: %s", _error_message(translated))
             return "抱歉，我现在连接不上服务。"
         except APIStatusError as e:
             translated = _translate_openai_error(e)
-            logger.error("服务返回错误: %s", translated.message)
+            logger.error("服务返回错误: %s", _error_message(translated))
             return "抱歉，服务出现错误，请稍后再试。"
 
 

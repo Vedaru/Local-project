@@ -10,13 +10,12 @@ Covers:
 """
 
 import os
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 import yaml
-
-import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -31,17 +30,17 @@ class TestConfigBase:
 
     def test_import_base(self):
         from modules.config_base import (
-            PROJECT_ROOT,
             CONFIG_PATH,
             ENV_PATH,
-            TUNING_PATH,
             GPT_SOVITS_ROOT,
+            PROJECT_ROOT,
+            TUNING_PATH,
             _clean_env_value,
-            _to_int,
-            _to_float,
-            _read_bool,
-            _env_str,
             _env_int,
+            _env_str,
+            _read_bool,
+            _to_float,
+            _to_int,
         )
         assert isinstance(PROJECT_ROOT, str)
         assert len(PROJECT_ROOT) > 0
@@ -128,6 +127,13 @@ class TestConfigApp:
         assert cfg.ear_enabled is True
         assert isinstance(cfg.controller_app_whitelist, dict)
 
+    def test_secret_access_and_masked_repr(self):
+        from modules.config_app import AppConfig
+
+        cfg = AppConfig(ark_api_key="secret-key")
+        assert cfg.get_api_key() == "secret-key"
+        assert "secret-key" not in repr(cfg)
+
     def test_load_config_with_temp_files(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         from modules.config_app import load_config
 
@@ -146,10 +152,23 @@ class TestConfigApp:
 
         cfg = load_config(env_path=str(env_file), config_path=str(yaml_file))
         assert cfg.ark_api_key == "test-key"
+        assert cfg.get_api_key() == "test-key"
         assert cfg.model_name == "test"
         assert cfg.sovits_url == "http://test:9999"
         assert cfg.audio_sample_rate == 44100
         assert cfg.ear_enabled is False
+
+    def test_sanitize_for_logging_masks_sensitive_fields(self):
+        from modules.config_app import sanitize_for_logging
+
+        payload = {
+            "api_key": "abc",
+            "nested": {"token": "def", "safe": "ok"},
+        }
+        masked = sanitize_for_logging(payload)
+        assert masked["api_key"] == "***"
+        assert masked["nested"]["token"] == "***"
+        assert masked["nested"]["safe"] == "ok"
 
 
 # ============================================================
@@ -162,15 +181,15 @@ class TestConfigTuning:
 
     def test_import_tuning(self):
         from modules.config_tuning import (
-            TuningConfig,
-            ServicesTuning,
-            OrchestratorTuning,
-            VoiceTuning,
+            ClientTuning,
             ExpressionTuning,
             GatewayTuning,
-            ClientTuning,
-            load_tuning,
+            OrchestratorTuning,
+            ServicesTuning,
+            TuningConfig,
+            VoiceTuning,
             get_tuning,
+            load_tuning,
         )
         assert all(v is not None for v in [
             TuningConfig, ServicesTuning, OrchestratorTuning,
@@ -211,8 +230,9 @@ class TestConfigTuning:
         assert t.voice.connect_timeout_sec == 10
 
     def test_get_tuning_singleton(self):
-        from modules.config_tuning import get_tuning, TuningConfig
         from unittest.mock import patch
+
+        from modules.config_tuning import TuningConfig, get_tuning
 
         mock_cfg = TuningConfig()
         with patch("modules.config_tuning.load_tuning", return_value=mock_cfg):
@@ -242,15 +262,15 @@ class TestConfigLegacy:
 
     def test_import_legacy_constants(self):
         from modules.config_legacy import (
-            SOVITS_URL,
-            REF_AUDIO,
-            PROMPT_TEXT,
-            GPT_SOVITS_PATH,
-            MODEL_NAME,
+            CONTROLLER_ENABLED,
             EAR_ENABLED,
             EAR_MODEL_SIZE,
+            GPT_SOVITS_PATH,
+            MODEL_NAME,
+            PROMPT_TEXT,
+            REF_AUDIO,
+            SOVITS_URL,
             SYSTEM_PROMPT,
-            CONTROLLER_ENABLED,
             client,
         )
         assert SOVITS_URL.startswith("http")

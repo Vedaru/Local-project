@@ -10,15 +10,25 @@
 - close_http_clients() 用于优雅关闭时清理连接池
 """
 
+from __future__ import annotations
+
+import os
+from typing import Any, Mapping, Optional
+
 import httpx
-from typing import Optional
 
 # ── 全局单例 + 连接池配置 ──────────────────────────────────────────────
 _client: Optional[httpx.AsyncClient] = None
 
 # 连接池参数：参考生产级微服务最佳实践
-_POOL_MAX_CONNECTIONS = int(__import__("os").getenv("HTTP_CLIENT_POOL_MAX", "100"))
-_POOL_MAX_KEEPALIVE = int(__import__("os").getenv("HTTP_CLIENT_KEEPALIVE", "20"))
+_POOL_MAX_CONNECTIONS = int(os.getenv("HTTP_CLIENT_POOL_MAX", "100"))
+_POOL_MAX_KEEPALIVE = int(os.getenv("HTTP_CLIENT_KEEPALIVE", "20"))
+
+
+def _as_json_object(data: Any) -> dict[str, Any]:
+    if isinstance(data, dict):
+        return dict(data)
+    return {"data": data}
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -38,18 +48,27 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-async def post_json(url: str, payload: dict, timeout: float = 15.0, headers: Optional[dict] = None) -> dict:
+async def post_json(
+    url: str,
+    payload: Mapping[str, Any],
+    timeout: float = 15.0,
+    headers: Optional[Mapping[str, str]] = None,
+) -> dict[str, Any]:
     client = _get_client()
-    response = await client.post(url, json=payload, headers=headers, timeout=timeout)
+    response = await client.post(url, json=dict(payload), headers=dict(headers or {}), timeout=timeout)
     response.raise_for_status()
-    return response.json()
+    return _as_json_object(response.json())
 
 
-async def get_json(url: str, timeout: float = 5.0, headers: Optional[dict] = None) -> dict:
+async def get_json(
+    url: str,
+    timeout: float = 5.0,
+    headers: Optional[Mapping[str, str]] = None,
+) -> dict[str, Any]:
     client = _get_client()
-    response = await client.get(url, headers=headers, timeout=timeout)
+    response = await client.get(url, headers=dict(headers or {}), timeout=timeout)
     response.raise_for_status()
-    return response.json()
+    return _as_json_object(response.json())
 
 
 async def close_http_clients() -> None:

@@ -4,7 +4,7 @@ import time
 import uuid
 import wave
 from pathlib import Path
-from typing import Optional
+from typing import Any, Protocol
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -26,9 +26,18 @@ VOICE_WAV_CLEANUP_ENABLED = (os.getenv("VOICE_WAV_CLEANUP_ENABLED", "1") or "1")
 VOICE_WAV_CLEANUP_INTERVAL_SEC = max(5.0, float(os.getenv("VOICE_WAV_CLEANUP_INTERVAL_SEC", "120") or "120"))
 VOICE_WAV_TTL_SEC = max(30.0, float(os.getenv("VOICE_WAV_TTL_SEC", "1800") or "1800"))
 
-_VOICE_MANAGER: Optional[object] = None
 _VOICE_INIT_ERROR = ""
-_CLEANUP_TASK: Optional[asyncio.Task] = None
+_CLEANUP_TASK: asyncio.Task[None] | None = None
+
+
+class VoiceRuntime(Protocol):
+    def close(self) -> None: ...
+    def get_tts_stats(self) -> dict[str, Any]: ...
+    def get_provider_status(self) -> dict[str, Any]: ...
+    def speak_and_save(self, text: str, output_path: str) -> bool: ...
+
+
+_VOICE_MANAGER: VoiceRuntime | None = None
 
 
 def _ensure_wav_output_dir() -> str:
@@ -91,10 +100,10 @@ def _try_init_voice() -> None:
     global _VOICE_INIT_ERROR
 
     try:
-        from modules.config import load_config
+        from modules.config import get_cached_config
         from modules.voice import VoiceManager
 
-        cfg = load_config()
+        cfg = get_cached_config()
         _VOICE_MANAGER = VoiceManager(
             sovits_url=os.getenv("SOVITS_URL", cfg.sovits_url),
             ref_audio=cfg.ref_audio,

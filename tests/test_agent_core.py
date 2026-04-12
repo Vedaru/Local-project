@@ -69,3 +69,38 @@ def test_run_task_normalizes_non_string_result(lightweight_agent: ManusAgent, mo
     result = lightweight_agent.run_task("执行测试任务")
     assert "status" in result
     assert "执行测试任务" in result
+
+
+@pytest.mark.asyncio
+async def test_run_task_async_executes_without_thread_wrapper(
+    lightweight_agent: ManusAgent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured = {}
+
+    async def fake_async_run_task(task_description: str):
+        captured["task"] = task_description
+        return {"result": "ok", "task": task_description}
+
+    async def fake_persist(task_description: str, result: str):
+        captured["persist_task"] = task_description
+        captured["persist_result"] = result
+
+    monkeypatch.setattr(lightweight_agent, "_async_run_task", fake_async_run_task)
+    monkeypatch.setattr(lightweight_agent, "_persist_session_memory_note_async", fake_persist)
+
+    result = await lightweight_agent.run_task_async("异步执行测试")
+    assert "result" in result
+    assert captured["task"] == "异步执行测试"
+    assert captured["persist_task"] == "异步执行测试"
+
+
+@pytest.mark.asyncio
+async def test_run_task_async_returns_busy_when_lock_held(lightweight_agent: ManusAgent):
+    acquired = lightweight_agent._run_lock.acquire(blocking=False)
+    assert acquired is True
+    try:
+        result = await lightweight_agent.run_task_async("并发测试")
+        assert "正在执行其他任务" in result
+    finally:
+        lightweight_agent._run_lock.release()

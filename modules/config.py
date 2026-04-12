@@ -14,6 +14,8 @@
 """
 
 # ---- 基础层: 路径 / 辅助函数 ----
+# ---- 应用配置 ----
+from .config_app import AppConfig, load_config, sanitize_for_logging  # noqa: F401
 from .config_base import (  # noqa: F401
     CONFIG_PATH,
     ENV_PATH,
@@ -27,24 +29,10 @@ from .config_base import (  # noqa: F401
     _read_bool,
     _to_float,
     _to_int,
+    get_cached_config,
     get_env_vars,
     get_yaml_config,
-)
-
-# ---- 应用配置 ----
-from .config_app import AppConfig, load_config  # noqa: F401
-
-# ---- 行为调优配置 ----
-from .config_tuning import (  # noqa: F401
-    ClientTuning,
-    ExpressionTuning,
-    GatewayTuning,
-    OrchestratorTuning,
-    ServicesTuning,
-    TuningConfig,
-  VoiceTuning,
-    get_tuning,
-    load_tuning,
+    invalidate_config_cache,
 )
 
 # ---- 向后兼容常量 & OpenAI client ----
@@ -62,6 +50,19 @@ from .config_legacy import (  # noqa: F401
     SOVITS_URL,
     SYSTEM_PROMPT,
     client,
+)
+
+# ---- 行为调优配置 ----
+from .config_tuning import (  # noqa: F401
+    ClientTuning,
+    ExpressionTuning,
+    GatewayTuning,
+    OrchestratorTuning,
+    ServicesTuning,
+    TuningConfig,
+    VoiceTuning,
+    get_tuning,
+    load_tuning,
 )
 
 __all__ = [
@@ -82,6 +83,9 @@ __all__ = [
     "get_env_vars",
     # app
     "AppConfig",
+    "sanitize_for_logging",
+    "get_cached_config",
+    "invalidate_config_cache",
     "load_config",
     # tuning
     "TuningConfig",

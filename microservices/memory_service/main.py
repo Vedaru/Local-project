@@ -15,11 +15,11 @@ import threading
 import time
 import uuid
 from collections import defaultdict
+from typing import Any, Optional
 
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from typing import Optional
 import uvicorn
+from fastapi import Body, FastAPI
+from pydantic import BaseModel, Field
 
 from modules.memory import HumanMemoryEngine
 from modules.python_runtime_guard import ensure_supported_python_runtime
@@ -250,8 +250,8 @@ def _create_llm_extract_fn():
         # 从 AppConfig 获取真实模型名（回退到环境变量）
         _model_name = ""
         try:
-            from modules.config import load_config
-            cfg = load_config()
+            from modules.config import get_cached_config
+            cfg = get_cached_config()
             _model_name = cfg.model_name or ""
         except Exception:
             pass
@@ -545,7 +545,7 @@ def _store_sync(content: str, user_id: str) -> dict:
 
 
 @app.post("/store")
-async def do_store(content: str = ..., user_id: str = "local-user"):
+async def do_store(content: str = Body(...), user_id: str = "local-user") -> dict[str, Any]:
     """Explicit store endpoint."""
     return await asyncio.to_thread(_store_sync, content, user_id)
 
@@ -553,11 +553,14 @@ async def do_store(content: str = ..., user_id: str = "local-user"):
 def _stats_sync() -> dict:
     """Stats sync worker."""
     eng = _get_engine()
-    return eng.stats()
+    data = eng.stats()
+    if isinstance(data, dict):
+        return dict(data)
+    return {"data": data}
 
 
 @app.get("/stats")
-async def stats():
+async def stats() -> dict[str, Any]:
     """Return memory statistics."""
     return await asyncio.to_thread(_stats_sync)
 

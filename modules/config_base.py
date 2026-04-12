@@ -12,10 +12,14 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
+import threading
+from typing import TYPE_CHECKING, Any, Optional
 
 import dotenv
 import yaml
+
+if TYPE_CHECKING:
+    from .config_app import AppConfig
 
 
 # ---- 路径常量（全局唯一真相来源） ----
@@ -71,10 +75,37 @@ def get_env_vars() -> dict[str, Optional[str]]:
     return dict(_env_vars)
 
 
+# ---- 配置缓存（线程安全，避免重复 load_config） ----
+_config_cache_lock = threading.Lock()
+_config_cache: AppConfig | None = None
+
+
+def get_cached_config() -> AppConfig:
+    """返回缓存的 AppConfig；首次调用时懒加载。"""
+    global _config_cache
+    if _config_cache is not None:
+        return _config_cache
+
+    with _config_cache_lock:
+        if _config_cache is not None:
+            return _config_cache
+        from .config_app import load_config
+
+        _config_cache = load_config()
+        return _config_cache
+
+
+def invalidate_config_cache() -> None:
+    """清空配置缓存，用于测试或热重载场景。"""
+    global _config_cache
+    with _config_cache_lock:
+        _config_cache = None
+
+
 # ===================== 辅助函数 =====================
 
 
-def _clean_env_value(value):
+def _clean_env_value(value: object) -> Optional[str]:
     """去除环境变量值两端的空白和多余引号。"""
     if value is None:
         return None
@@ -84,7 +115,7 @@ def _clean_env_value(value):
     return value
 
 
-def _to_int(value, default: int) -> int:
+def _to_int(value: Any, default: int) -> int:
     """安全转换为 int，失败时回退默认值。"""
     try:
         return int(value)
@@ -92,7 +123,7 @@ def _to_int(value, default: int) -> int:
         return default
 
 
-def _to_float(value, default: float) -> float:
+def _to_float(value: Any, default: float) -> float:
     """安全转换为 float，失败时回退默认值。"""
     try:
         return float(value)
@@ -100,14 +131,14 @@ def _to_float(value, default: float) -> float:
         return default
 
 
-def _read_bool(raw_value, default: bool = False) -> bool:
+def _read_bool(raw_value: object, default: bool = False) -> bool:
     """读取布尔环境变量或 YAML 值。"""
     if raw_value is None or str(raw_value).strip() == "":
         return default
     return str(raw_value).strip().lower() in {"1", "true", "yes", "on", "True"}
 
 
-def _env_str(env_name: str, fallback, *, allow_empty: bool = False) -> str:
+def _env_str(env_name: str, fallback: Any, *, allow_empty: bool = False) -> str:
     """安全读取环境变量：os.getenv 优先，fallback 兜底。处理 os.getenv 返回的 "None" 字符串。
 
     Returns:
@@ -130,6 +161,7 @@ def _env_int(env_name: str, fallback: int | None = None, *, minimum: int | None 
     raw = _env_str(env_name, fallback)
     if not raw:
         raw = "0"
+    val: int | None
     try:
         val = int(raw)
     except (ValueError, TypeError):

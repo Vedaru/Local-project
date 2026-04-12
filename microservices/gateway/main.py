@@ -12,11 +12,14 @@ Gateway 微服务 — API 入口、认证、请求转发
     gateway_timeout = memory + max(agent, voice) + 余量
 """
 
+# ruff: noqa: E402
+
 import asyncio
 import os
 import sys
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 # 将项目根目录加入 sys.path，确保能 import modules
@@ -24,14 +27,13 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from microservices.shared.http_client import get_json, post_json
 from modules.logging_config import get_logger
 from modules.python_runtime_guard import ensure_supported_python_runtime
-from microservices.shared.http_client import get_json, post_json
-from microservices.shared.types import ChatRequest as _ChatRequestModel
 
 app = FastAPI(title="project-local-gateway", version="0.1.0")
 logger = get_logger("Gateway")
@@ -87,7 +89,10 @@ GATEWAY_CHAT_TIMEOUT_SEC: float = _cfg["chat_timeout_sec"]
 
 
 @app.middleware("http")
-async def tracing_and_auth_middleware(request: Request, call_next):
+async def tracing_and_auth_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     request.state.request_id = request_id
 
@@ -173,9 +178,9 @@ async def service_status(request: Request) -> dict:
         return_exceptions=True,
     )
     # 将异常转换为失败结果
-    normalized = []
+    normalized: list[dict[str, object]] = []
     for c in checks:
-        if isinstance(c, Exception):
+        if isinstance(c, BaseException):
             normalized.append({
                 "service": "unknown",
                 "url": "",

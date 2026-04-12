@@ -20,8 +20,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from .text_search import tokenize_for_search
 from ..logging_config import get_logger
+from .text_search import tokenize_for_search
 
 logger = get_logger("Memory.PalaceStore")
 

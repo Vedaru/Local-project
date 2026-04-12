@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
@@ -267,7 +268,7 @@ def _candidate_library_paths(explicit_library: str = "") -> list[Path]:
 
     if os.name == "nt":
         library_names = ["voice_cpp_engine.dll"]
-    elif os.name == "posix" and "darwin" in os.sys.platform:
+    elif os.name == "posix" and "darwin" in sys.platform:
         library_names = ["voice_cpp_engine.dylib", "libvoice_cpp_engine.dylib"]
     else:
         library_names = ["voice_cpp_engine.so", "libvoice_cpp_engine.so"]

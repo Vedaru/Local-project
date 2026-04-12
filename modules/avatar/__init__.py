@@ -54,6 +54,7 @@ _GUI_SYMBOLS = {"AvatarWidget", "AvatarManager", "WebEnginePage", "AvatarBridge"
 
 
 def _load_gui_symbol(name: str) -> Any:
+    symbol: Any
     try:
         if name == "AvatarWidget":
             from .widget import AvatarWidget as symbol

@@ -1,59 +1,57 @@
-openai>=1.0.0
-python-dotenv>=1.0.0
-jieba>=0.42.1
-pyaudio>=0.2.13
-requests>=2.31.0
-pyyaml>=6.0
-python-pptx>=1.0.2
-python-docx>=1.1.2
-reportlab>=4.2.0
+# 核心依赖
+openai==1.35.0
+python-dotenv==1.0.0
+jieba==0.42.1
+pyaudio==0.2.13
+requests==2.31.0
+pyyaml==6.0
 
-# memoripy 记忆系统依赖
-faiss-cpu>=1.7.0
-scikit-learn>=1.2.0
-networkx>=3.0
-sentence-transformers>=2.2.0
-pydantic>=2.0.0
+# 文档处理
+python-pptx==1.0.2
+python-docx==1.1.2
+reportlab==4.2.0
 
-# Avatar 模块依赖（PyQt6 + WebEngine）
-PyQt6>=6.4.0
-PyQt6-WebEngine>=6.4.0
+# 记忆系统
+faiss-cpu==1.7.4
+scikit-learn==1.3.2
+networkx==3.2.1
+sentence-transformers==2.2.2
+pydantic==2.5.0
 
-# asyncio-Qt 事件循环集成
-qasync>=0.27.1
+# GUI
+PyQt6==6.6.1
+PyQt6-WebEngine==6.6.0
+qasync==0.27.1
 
-# 目前已包含备选方案，模块会自动选择可用的库
-openai-whisper>=20250101
-faster-whisper>=0.5.0
-ctranslate2>=4.0
-numpy>=1.22.0,<2.3.0
+# 语音识别
+openai-whisper==20231117
+faster-whisper==0.10.0
+ctranslate2==3.24.0
+numpy==1.24.3
 
-# 电脑控制模块依赖
-pyautogui>=0.9.53
-pygetwindow>=0.0.9
+# 电脑控制
+pyautogui==0.9.54
+pygetwindow==0.0.9
 
-# Agent / 浏览与检索能力（OpenManus 框架依赖）
-browser-use>=0.1.40
-playwright>=1.51.0
-tenacity>=9.0.0
-structlog>=24.0.0
-loguru>=0.7.3
-tiktoken>=0.9.0
-aiofiles>=24.1.0
-colorama>=0.4.6
-fastapi>=0.115.0
-uvicorn>=0.30.6
-html2text>=2024.2.26
-googlesearch-python>=1.3.0
-baidusearch>=1.0.3
-duckduckgo_search>=7.5.3
-tomli>=2.0.0
-httpx>=0.27.0
-beautifulsoup4>=4.12.0
+# Agent框架
+browser-use==0.1.40
+playwright==1.40.0
+tenacity==8.2.3
+structlog==23.2.0
+loguru==0.7.2
+tiktoken==0.5.1
+aiofiles==23.2.1
+colorama==0.4.6
+fastapi==0.104.1
+uvicorn==0.24.0
+html2text==2020.1.16
+googlesearch-python==1.2.3
+baidusearch==1.0.3
+duckduckgo_search==3.9.6
+tomli==2.0.1
+httpx==0.25.2
+beautifulsoup4==4.12.2
 
-# OCR（Tesseract 后端）
-# - Python 端库：pytesseract
-# - 还需在系统上安装 Tesseract 可执行文件（Windows 可通过 winget/choco 或官网安装），
-#   并可通过环境变量 TESSERACT_CMD 指定其路径；默认识别语言可通过 TESSERACT_LANG 设置（例如：chi_sim+eng）。
-pytesseract>=0.3.10
+# OCR
+pytesseract==0.3.10
 

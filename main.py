@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import QApplication
 
 # Apply ctranslate2 DLL patch before modules that may import faster_whisper.
 import modules._patch_ctranslate2  # noqa: F401, E402
-from modules.config import load_config
+from modules.config import get_cached_config
 from modules.logging_config import get_logger
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
@@ -40,7 +40,7 @@ def main() -> None:
 
     quit_event: Optional[asyncio.Event] = None
 
-    app_config = load_config()
+    app_config = get_cached_config()
 
     # Required by QtWebEngine: set before QApplication is created.
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)

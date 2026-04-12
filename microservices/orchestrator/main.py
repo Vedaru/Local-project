@@ -143,9 +143,9 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
         request_id = http_request.headers.get("x-request-id", "")
         pending_store_content = core.dequeue_pending_memory_write(request.user_id)
 
-        from modules.config import load_config
+        from modules.config import get_cached_config
 
-        app_cfg = load_config()
+        app_cfg = get_cached_config()
         system_prompt = app_cfg.system_prompt or ""
         model_name = app_cfg.model_name or ""
 
@@ -154,6 +154,9 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
         # ══════════════════════════════════════════════════════════
         routed_to_agent = bool(request.route_to_agent)
         route_reason = "forced_by_request" if routed_to_agent else ""
+        memory_text = ""
+        memory_retrieve_status = "ok"
+        memory_store_flush_status = "skipped"
 
         async def _fetch_memory():
             """Memory 检索+存储任务。"""
@@ -215,10 +218,6 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
                 logger.warning("semantic routing failed, fallback chat: %s", exc)
                 routed_to_agent = False
                 route_reason = "routing-error-fallback"
-
-        memory_text = ""
-        memory_retrieve_status = "ok"
-        memory_store_flush_status = "skipped"
 
         # 并行执行 Phase 1 的两个独立任务
         await asyncio.gather(_fetch_memory(), _decide_routing())

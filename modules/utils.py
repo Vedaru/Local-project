@@ -1,11 +1,12 @@
 # utils.py - 工具模块
 
+import json
 import os
 import re
 import shutil
 import subprocess
 import time
-from typing import Optional
+from typing import Any, Optional, Union
 
 import jieba.posseg as pseg
 import requests
@@ -68,14 +69,14 @@ _EMOTION_MARKER_KEYWORDS = (
 )
 
 
-def clean_text(text):
+def clean_text(text: str) -> str:
     """清除表情符号和多余特殊字符"""
     text = re.sub(r"[^\u4e00-\u9fa5a-zA-Z0-9\s" + "".join(PUNCTUATION) + r"]", "", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
-def extract_entities(text):
+def extract_entities(text: str) -> set[str]:
     """从文本中自动提取可能的实体"""
     entities = set()
     words = pseg.cut(text)
@@ -97,7 +98,7 @@ def extract_entities(text):
     return entities
 
 
-def start_gpt_sovits_api(gpt_sovits_path):
+def start_gpt_sovits_api(gpt_sovits_path: Optional[str]):
     """启动 GPT-SoVITS API 服务"""
     if not gpt_sovits_path or not os.path.exists(gpt_sovits_path):
         logger.error("GPT-SoVITS 路径未设置或不存在，请检查 modules/gpt_sovits 目录")
@@ -131,7 +132,7 @@ def start_gpt_sovits_api(gpt_sovits_path):
         # 避免 pydantic 在扫描环境插件时因损坏的 dist-info 元数据导致启动失败。
         env.setdefault("PYDANTIC_DISABLE_PLUGINS", "__all__")
         with open(log_path, "w", encoding="utf-8") as logfile:
-            popen_kwargs = {
+            popen_kwargs: dict[str, Any] = {
                 "cwd": gpt_sovits_path,
                 "stdout": logfile,
                 "stderr": logfile,
@@ -166,7 +167,7 @@ def start_gpt_sovits_api(gpt_sovits_path):
         return None
 
 
-def filter_emotion_tags(text):
+def filter_emotion_tags(text: str) -> str:
     """过滤掉 Avatar 控制标签和情绪旁白，避免在语音中读出。"""
     return sanitize_dialogue_text(text)
 
@@ -254,7 +255,45 @@ def sanitize_dialogue_text(text: str) -> str:
     return cleaned.strip()
 
 
-def check_sovits_service(url="http://127.0.0.1:9880/docs"):
+def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
+    """将文本截断到指定长度（长度包含 suffix）。"""
+    if max_length <= 0:
+        return ""
+    if len(text) <= max_length:
+        return text
+    if len(suffix) >= max_length:
+        return suffix[:max_length]
+    return text[: max_length - len(suffix)] + suffix
+
+
+def normalize_whitespace(text: Optional[str]) -> str:
+    """合并连续空白字符并去除首尾空白。"""
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def safe_json_loads(data: Union[str, bytes], default: Any = None) -> Any:
+    """安全解析 JSON，失败时返回 default。"""
+    try:
+        return json.loads(data)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return default
+
+
+def clamp_value(value: float, min_val: float, max_val: float) -> float:
+    """将数值限制在闭区间 [min_val, max_val] 内。"""
+    if min_val > max_val:
+        min_val, max_val = max_val, min_val
+    return max(min_val, min(max_val, value))
+
+
+def is_valid_identifier(name: str) -> bool:
+    """检查名称是否仅包含字母、数字、下划线和短横线。"""
+    return bool(re.fullmatch(r"[a-zA-Z0-9_-]+", name or ""))
+
+
+def check_sovits_service(url: str = "http://127.0.0.1:9880/docs") -> bool:
     """检查 GPT-SoVITS 服务是否可用"""
     try:
         response = requests.get(url, timeout=5)

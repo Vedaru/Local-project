@@ -35,7 +35,6 @@ from modules.resilience import (
     safe_call,
 )
 
-
 # ============================================================
 # Tests for custom exception hierarchy
 # ============================================================

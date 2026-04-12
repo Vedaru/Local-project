@@ -11,12 +11,11 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional
 
-from .core_enums import MemoryTier
-from .text_search import tokenize_for_search
 from ..logging_config import get_logger
+from .text_search import tokenize_for_search
 
 logger = get_logger("Memory.Episodic")
 

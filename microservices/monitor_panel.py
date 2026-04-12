@@ -5,7 +5,7 @@ import time
 import tkinter as tk
 from datetime import datetime
 from tkinter import ttk
-from urllib import error, request
+from urllib import request
 
 
 def _resolve_default_ports() -> dict[str, str]:
@@ -224,7 +224,10 @@ class ServiceMonitorApp:
         req = request.Request(url=url, method="GET")
         with request.urlopen(req, timeout=timeout) as response:
             text = response.read().decode("utf-8", errors="replace")
-            return json.loads(text)
+            data = json.loads(text)
+            if isinstance(data, dict):
+                return dict(data)
+            return {"data": data}
 
     def _render_rows(self, rows: list[dict], elapsed_ms: float) -> None:
         updated_at = datetime.now().strftime("%H:%M:%S")

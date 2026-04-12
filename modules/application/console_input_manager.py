@@ -8,7 +8,7 @@ ConsoleInputManager — 控制台输入循环
 """
 
 import threading
-from typing import Callable, Optional
+from typing import Callable
 
 from modules.logging_config import get_logger
 

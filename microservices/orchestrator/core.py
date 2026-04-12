@@ -20,12 +20,11 @@ from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
-from modules.config import load_tuning
 from microservices.shared import http_client
 from microservices.shared.types import ErrorResult
-
+from modules.config import load_tuning
 
 # ============================================================
 # 配置常量（从环境变量读取，创建时固定）
@@ -35,6 +34,11 @@ from microservices.shared.types import ErrorResult
 @dataclass(frozen=True)
 class OrchestratorConfig:
     """Immutable configuration for the orchestrator."""
+
+    DEFAULT_CIRCUIT_FAIL_THRESHOLD: ClassVar[int] = 5
+    DEFAULT_CIRCUIT_COOLDOWN_SEC: ClassVar[float] = 30.0
+    DEFAULT_TOKEN_BUCKET_CAPACITY: ClassVar[int] = 10
+    DEFAULT_MAX_REQUESTS_PER_SECOND: ClassVar[float] = 10.0
 
     memory_service_url: str
     agent_service_url: str
@@ -185,14 +189,22 @@ class OrchestratorCore:
 
     def __init__(self, config: Optional[OrchestratorConfig] = None):
         self.cfg = config or OrchestratorConfig.from_env()
+        self._init_circuit_breakers()
+        self._init_token_bucket()
+        self._init_executors()
+        self._init_memory_queue()
+        self._init_voice_batch()
+        self._init_streaming_helpers()
 
-        # --- Circuit breaker state ---
+    def _init_circuit_breakers(self) -> None:
+        """Initialize per-service circuit breaker states."""
         self._circuits: dict[str, CircuitState] = {
             "agent": CircuitState(),
             "voice": CircuitState(),
         }
 
-        # --- Adaptive token bucket limiter ---
+    def _init_token_bucket(self) -> None:
+        """Initialize adaptive token-bucket rate limiter state."""
         self._base_refill_rate = max(0.1, float(self.cfg.max_requests_per_second))
         self._token_bucket = TokenBucket(
             capacity=max(1, int(self.cfg.burst_size)),
@@ -202,7 +214,8 @@ class OrchestratorCore:
         self._llm_queue_pressure_threshold = max(2, int(self.cfg.llm_executor_workers * 2))
         self._backpressure_min_refill_rate = max(0.05, self._base_refill_rate * 0.2)
 
-        # --- LLM executor (thread pool) ---
+    def _init_executors(self) -> None:
+        """Initialize thread-pool executors and pending counters."""
         self._llm_executor = ThreadPoolExecutor(
             max_workers=self.cfg.llm_executor_workers,
             thread_name_prefix="orchestrator-llm",
@@ -210,18 +223,19 @@ class OrchestratorCore:
         self._llm_pending_jobs = 0
         self._llm_pending_lock = threading.Lock()
 
-        # --- Pending memory write queue ---
+    def _init_memory_queue(self) -> None:
+        """Initialize in-memory pending write queue for memory service."""
         self._pending_memory_queue_size = self.cfg.pending_memory_queue_size
         self._pending_memory_lock = threading.Lock()
         self._pending_memory_writes: dict[str, deque[str]] = defaultdict(deque)
 
-        # --- Voice batch queue ---
+    def _init_voice_batch(self) -> None:
+        """Initialize voice batch queue, worker handles and batch statistics."""
         self._voice_batch_queue: deque[VoiceBatchJob] = deque()
         self._voice_batch_queue_lock = threading.Lock()
         self._voice_batch_queue_event = asyncio.Event()
         self._voice_batch_worker_task: Optional[asyncio.Task] = None
 
-        # Voice batch statistics
         self._voice_batch_stats_lock = threading.Lock()
         self._voice_batch_stats: dict[str, int] = {
             "enqueued": 0,
@@ -233,7 +247,8 @@ class OrchestratorCore:
             "completed_within_wait": 0,
         }
 
-        # --- Streaming TTS helpers ---
+    def _init_streaming_helpers(self) -> None:
+        """Initialize text opener stats and prewarm cache for streaming TTS."""
         self._prewarm_cache_lock = threading.Lock()
         self._prewarm_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._opener_stats_lock = threading.Lock()
@@ -425,7 +440,7 @@ class OrchestratorCore:
 
         result_by_text: dict[str, dict] = {}
         for job, result in zip(unique_jobs, results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 result_by_text[job.text] = ErrorResult.voice_fallback(
                     mode="fallback-no-voice",
                     reason="voice batch dispatch failed",

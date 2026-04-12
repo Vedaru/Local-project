@@ -1,9 +1,9 @@
-import importlib
 import asyncio
+import importlib
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 
 def _reload_gateway_module(monkeypatch, gateway_timeout=None, memory_timeout=None, agent_timeout=None, voice_timeout=None):

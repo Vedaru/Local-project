@@ -1,7 +1,7 @@
 """Unit tests for memory retrieval formatting and Chinese lexical matching."""
 
-from pathlib import Path
 import time
+from pathlib import Path
 
 import pytest
 

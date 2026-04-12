@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 import threading
 from array import array
 from pathlib import Path
@@ -173,7 +174,7 @@ def _candidate_library_paths(explicit_library: str = "") -> list[Path]:
 
     if os.name == "nt":
         library_names = ["memory_cpp_engine.dll"]
-    elif os.name == "posix" and "darwin" in os.sys.platform:
+    elif os.name == "posix" and "darwin" in sys.platform:
         library_names = ["memory_cpp_engine.dylib", "libmemory_cpp_engine.dylib"]
     else:
         library_names = ["memory_cpp_engine.so", "libmemory_cpp_engine.so"]

@@ -12,11 +12,13 @@
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 import dotenv
 import yaml
+from pydantic import SecretStr
 
 from .config_base import (
     CONFIG_PATH,
@@ -26,7 +28,6 @@ from .config_base import (
     _clean_env_value,
     _to_float,
     _to_int,
-    get_yaml_config,
 )
 
 
@@ -39,6 +40,7 @@ class AppConfig:
 
     # ---- API / LLM ----
     ark_api_key: Optional[str] = None
+    ark_api_key_secret: Optional[SecretStr] = field(default=None, init=False, repr=False)
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
     model_name: Optional[str] = None
     embedding_model_name: Optional[str] = None
@@ -78,6 +80,70 @@ class AppConfig:
     # ---- 听觉模块 ----
     ear_enabled: bool = True
     ear_model_size: str = "base"
+
+    def __post_init__(self) -> None:
+        """Derive secret wrapper for sensitive fields after initialization."""
+        key = (self.ark_api_key or "").strip()
+        self.ark_api_key_secret = SecretStr(key) if key else None
+
+    def get_api_key(self) -> str:
+        """Safely read API key value for runtime API calls."""
+        if self.ark_api_key_secret is not None:
+            return str(self.ark_api_key_secret.get_secret_value())
+        return (self.ark_api_key or "").strip()
+
+    def __repr__(self) -> str:
+        key = "***" if self.get_api_key() else ""
+        return (
+            "AppConfig("
+            f"project_root={self.project_root!r}, "
+            f"ark_api_key={key!r}, "
+            f"ark_base_url={self.ark_base_url!r}, "
+            f"model_name={self.model_name!r}, "
+            f"embedding_model_name={self.embedding_model_name!r}"
+            ")"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+def sanitize_for_logging(obj: Any) -> Any:
+    """Mask sensitive values recursively before logging."""
+    sensitive_keys = {"api_key", "password", "token", "secret", "auth"}
+
+    if isinstance(obj, dict):
+        masked = deepcopy(obj)
+        for key, value in list(masked.items()):
+            if any(marker in key.lower() for marker in sensitive_keys):
+                masked[key] = "***"
+            elif isinstance(value, (dict, list, tuple, set)):
+                masked[key] = sanitize_for_logging(value)
+        return masked
+
+    if isinstance(obj, list):
+        return [sanitize_for_logging(item) for item in obj]
+
+    if isinstance(obj, tuple):
+        return tuple(sanitize_for_logging(item) for item in obj)
+
+    if isinstance(obj, set):
+        return {sanitize_for_logging(item) for item in obj}
+
+    if isinstance(obj, AppConfig):
+        return {
+            "project_root": obj.project_root,
+            "ark_api_key": "***" if obj.get_api_key() else "",
+            "ark_base_url": obj.ark_base_url,
+            "model_name": obj.model_name,
+            "embedding_model_name": obj.embedding_model_name,
+            "sovits_url": obj.sovits_url,
+            "memory_collection_name": obj.memory_collection_name,
+            "controller_enabled": obj.controller_enabled,
+            "ear_enabled": obj.ear_enabled,
+        }
+
+    return obj
 
 
 def load_config(config_path: Optional[str] = None, env_path: Optional[str] = None) -> AppConfig:

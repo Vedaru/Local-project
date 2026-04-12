@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 import queue
 import threading
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 
 import httpx
 
@@ -16,6 +17,47 @@ class ServiceCallbacks:
     on_status_update: Optional[Callable[[str], None]] = None
     on_speak_request: Optional[Callable[[dict[str, Any]], None]] = None
     on_shutdown: Optional[Callable[[], None]] = None
+
+
+@asynccontextmanager
+async def get_http_session() -> AsyncIterator[httpx.AsyncClient]:
+    """Provide a managed async HTTP session for one-shot workflows."""
+    session = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=5.0),
+        limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        trust_env=False,
+    )
+    try:
+        yield session
+    finally:
+        await session.aclose()
+
+
+class ResourceManager:
+    """Track closeable resources and clean them up in reverse order."""
+
+    def __init__(self) -> None:
+        self._resources: list[Any] = []
+        self._lock = threading.Lock()
+
+    def register(self, resource: Any) -> Any:
+        with self._lock:
+            self._resources.append(resource)
+        return resource
+
+    def cleanup(self) -> None:
+        with self._lock:
+            resources = list(reversed(self._resources))
+            self._resources.clear()
+
+        for resource in resources:
+            try:
+                if hasattr(resource, "close"):
+                    resource.close()
+                elif hasattr(resource, "cleanup"):
+                    resource.cleanup()
+            except Exception:
+                continue
 
 
 def _resolve_default_gateway_port() -> str:
@@ -40,14 +82,14 @@ class MicroserviceAIService:
         self._input_queue: queue.Queue[Optional[str]] = queue.Queue(maxsize=200)
         self._stop_event = threading.Event()
         self._worker_thread: Optional[threading.Thread] = None
+        self._resource_manager = ResourceManager()
 
         # 持久化 HTTP 客户端（连接复用，消除每次请求的 TCP 握手开销）
-        import httpx as _httpx
-        self._http_session: _httpx.Client = _httpx.Client(
-            timeout=_httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=5.0),
+        self._http_session: httpx.Client = self._resource_manager.register(httpx.Client(
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=5.0),
             trust_env=False,
-            limits=_httpx.Limits(max_connections=10, max_keepalive_connections=5, keepalive_expiry=30.0),
-        )
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5, keepalive_expiry=30.0),
+        ))
 
     def start_background(self) -> None:
         if self._worker_thread and self._worker_thread.is_alive():
@@ -70,11 +112,7 @@ class MicroserviceAIService:
             self._input_queue.put_nowait(None)
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=2.0)
-        # 关闭持久化连接池
-        try:
-            self._http_session.close()
-        except Exception:
-            pass
+        self._resource_manager.cleanup()
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -133,7 +171,7 @@ class MicroserviceAIService:
             self._emit_response(f"微服务请求失败: {exc}")
             self._emit_status("异常")
 
-    def _request(self, method: str, path: str, payload: Optional[dict], timeout: float) -> dict:
+    def _request(self, method: str, path: str, payload: Optional[dict], timeout: float) -> dict[str, Any]:
         url = f"{self.gateway_url}{path}"
         headers = {"x-request-id": f"gui-{threading.get_ident()}"}
         if self.api_key:
@@ -144,7 +182,10 @@ class MicroserviceAIService:
         else:
             response = self._http_session.get(url, headers=headers, timeout=timeout)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        if isinstance(data, dict):
+            return dict(data)
+        return {"data": data}
 
     class _suppress_queue_full:
         def __enter__(self):

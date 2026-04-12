@@ -22,7 +22,6 @@ from .config_base import (
     get_yaml_config,
 )
 
-
 # ---- API 配置（延迟创建 OpenAI client） ----
 _api_key = _clean_env_value(_env_vars.get("ARK_API_KEY"))
 _client = None  # 延迟初始化
@@ -74,9 +73,9 @@ if _prompt_file:
         with open(_prompt_path, encoding="utf-8") as _f:
             SYSTEM_PROMPT: str = _f.read()
     else:
-        SYSTEM_PROMPT = _clean_env_value(_env_vars.get("SYSTEM_PROMPT"))
+        SYSTEM_PROMPT = _clean_env_value(_env_vars.get("SYSTEM_PROMPT")) or ""
 else:
-    SYSTEM_PROMPT = _clean_env_value(_env_vars.get("SYSTEM_PROMPT"))
+    SYSTEM_PROMPT = _clean_env_value(_env_vars.get("SYSTEM_PROMPT")) or ""
 
 # ---- 电脑控制配置 ----
 _controller_cfg = get_yaml_config().get("controller", {})

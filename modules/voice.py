@@ -7,7 +7,7 @@ import threading
 import unicodedata
 import wave
 from collections import deque
-from typing import Iterator, Optional, Union
+from typing import Any, Iterator, Optional, Union
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -79,6 +79,7 @@ class VoiceManager:
 
         self._tts_stats_lock = threading.Lock()
         self._tts_stats = self._initial_tts_stats()
+        self._voice_cpp_backend: object | None = None
         try:
             self._voice_cpp_backend = load_voice_cpp_backend(explicit_library=self.cpp_accel_lib)
         except Exception as exc:
@@ -105,8 +106,8 @@ class VoiceManager:
         self.chunk_size = 256
 
         # 延迟初始化状态标记
-        self.p = None
-        self.stream = None
+        self.p: Any = None
+        self.stream: Any = None
 
         # 播放状态控制
         self.is_playing = False

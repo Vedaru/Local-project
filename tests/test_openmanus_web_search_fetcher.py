@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 if "loguru" not in sys.modules:
     loguru_stub = types.ModuleType("loguru")
 
