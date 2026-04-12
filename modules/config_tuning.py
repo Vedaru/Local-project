@@ -1,7 +1,7 @@
 """
 行为调优配置层 — TuningConfig 及其子数据类 + load_tuning() / get_tuning()
 
-从 tuning.yaml 加载所有微服务的行为参数（超时、阈值、批处理等），
+从统一 project_config.yaml 的 tuning 段加载微服务行为参数（超时、阈值、批处理等），
 每个字段均可通过同名环境变量覆盖。
 
 环境变量命名规则: 与 YAML key 对应，大写下划线风格。
@@ -136,7 +136,7 @@ class TuningConfig:
     """
     行为调优配置的唯一真相来源。
 
-    从 tuning.yaml 加载，每个字段都可以被同名环境变量覆盖。
+    从统一 YAML 配置加载，每个字段都可以被同名环境变量覆盖。
     """
 
     services: ServicesTuning = field(default_factory=ServicesTuning)
@@ -148,7 +148,7 @@ class TuningConfig:
 
     @classmethod
     def from_yaml(cls, path: Optional[str] = None) -> "TuningConfig":
-        """从 tuning.yaml 加载配置，环境变量覆盖同名项。"""
+        """从统一 YAML 配置加载 tuning 段，环境变量覆盖同名项。"""
         t_path = path or TUNING_PATH
 
         # 加载 YAML 默认值
@@ -249,7 +249,7 @@ def load_tuning(path: Optional[str] = None) -> TuningConfig:
     """加载行为调优配置。
 
     Args:
-        path: tuning.yaml 路径（默认为项目根目录的 tuning.yaml）
+        path: 配置文件路径（默认为项目根目录的 project_config.yaml）
 
     Returns:
         填充好的 TuningConfig 实例

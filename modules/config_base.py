@@ -3,7 +3,7 @@
 
 本模块提供:
 - PROJECT_ROOT 等路径常量（所有子模块的根基）
-- .env / config.yaml 的统一加载
+- .env / project_config.yaml 的统一加载
 - 类型安全的辅助函数: _clean_env_value, _to_int, _to_float, _read_bool, _env_str, _env_int
 
 被 config_app.py 和 config_tuning.py 共同依赖，不应直接被业务代码 import。
@@ -25,9 +25,8 @@ if TYPE_CHECKING:
 # ---- 路径常量（全局唯一真相来源） ----
 PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 _ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
-_DEFAULT_DEV_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
-_DEFAULT_PROD_CONFIG_PATH = "/etc/local-project/config.yaml"
-_TUNING_PATH = os.path.join(PROJECT_ROOT, "tuning.yaml")
+_DEFAULT_DEV_CONFIG_PATH = os.path.join(PROJECT_ROOT, "project_config.yaml")
+_DEFAULT_PROD_CONFIG_PATH = "/etc/local-project/project_config.yaml"
 GPT_SOVITS_ROOT = os.path.join(os.path.dirname(__file__), "gpt_sovits")
 
 
@@ -50,7 +49,8 @@ class EnvironmentAwareConfig:
 CONFIG_PATH: str = EnvironmentAwareConfig().get_config_path()
 # 向后兼容: 暴露 ENV_PATH / TUNING_PATH（config_app.py / config_tuning.py 使用）
 ENV_PATH: str = _ENV_PATH
-TUNING_PATH: str = _TUNING_PATH
+# 单一配置源: tuning 也来自同一个 YAML 文件
+TUNING_PATH: str = CONFIG_PATH
 
 # 统一加载 .env（只调一次）
 _env_vars: dict[str, Optional[str]] = dotenv.dotenv_values(dotenv_path=_ENV_PATH)

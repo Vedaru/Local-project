@@ -38,11 +38,46 @@ def _normalize_user_id(user_id: str) -> str:
     return key or "local-user"
 
 
+def _default_memory_data_dir() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "memoripy")
+
+
+def _load_memory_runtime_settings() -> dict[str, object]:
+    defaults: dict[str, object] = {
+        "data_dir": _default_memory_data_dir(),
+        "wal_path": "",
+        "batch_disable_fact_extraction": True,
+        "batch_deferred_persist": True,
+    }
+
+    try:
+        from modules.config import get_cached_config, get_yaml_config
+
+        cfg = get_cached_config()
+        defaults["data_dir"] = cfg.memory_data_dir
+
+        yaml_cfg = get_yaml_config()
+        ms_cfg = yaml_cfg.get("memory_service", {}) if isinstance(yaml_cfg, dict) else {}
+        if isinstance(ms_cfg, dict):
+            defaults["wal_path"] = str(ms_cfg.get("wal_path", "") or "").strip()
+            defaults["batch_disable_fact_extraction"] = bool(ms_cfg.get("batch_disable_fact_extraction", True))
+            defaults["batch_deferred_persist"] = bool(ms_cfg.get("batch_deferred_persist", True))
+    except Exception:
+        pass
+
+    return {
+        "data_dir": os.environ.get("MEMORY_DATA_DIR", str(defaults["data_dir"])),
+        "wal_path": (os.environ.get("MEMORY_WAL_PATH", str(defaults["wal_path"])) or "").strip(),
+        "batch_disable_fact_extraction": defaults["batch_disable_fact_extraction"],
+        "batch_deferred_persist": defaults["batch_deferred_persist"],
+    }
+
+
+_MEMORY_RUNTIME_SETTINGS = _load_memory_runtime_settings()
+
+
 def _resolve_memory_data_dir() -> str:
-    return os.environ.get(
-        "MEMORY_DATA_DIR",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "memoripy"),
-    )
+    return str(_MEMORY_RUNTIME_SETTINGS.get("data_dir") or _default_memory_data_dir())
 
 
 class MemoryWAL:
@@ -186,10 +221,8 @@ def _get_wal() -> MemoryWAL:
     global _wal
     with _wal_lock:
         if _wal is None:
-            wal_path = os.environ.get(
-                "MEMORY_WAL_PATH",
-                os.path.join(_resolve_memory_data_dir(), "memory_service_wal.jsonl"),
-            )
+            configured_wal_path = str(_MEMORY_RUNTIME_SETTINGS.get("wal_path") or "").strip()
+            wal_path = configured_wal_path or os.path.join(_resolve_memory_data_dir(), "memory_service_wal.jsonl")
             _wal = MemoryWAL(wal_path)
         return _wal
 
@@ -201,8 +234,14 @@ def _read_bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-_BATCH_DISABLE_FACT_EXTRACTION = _read_bool_env("MEMORY_BATCH_DISABLE_FACT_EXTRACTION", True)
-_BATCH_DEFERRED_PERSIST = _read_bool_env("MEMORY_BATCH_DEFERRED_PERSIST", True)
+_BATCH_DISABLE_FACT_EXTRACTION = _read_bool_env(
+    "MEMORY_BATCH_DISABLE_FACT_EXTRACTION",
+    bool(_MEMORY_RUNTIME_SETTINGS.get("batch_disable_fact_extraction", True)),
+)
+_BATCH_DEFERRED_PERSIST = _read_bool_env(
+    "MEMORY_BATCH_DEFERRED_PERSIST",
+    bool(_MEMORY_RUNTIME_SETTINGS.get("batch_deferred_persist", True)),
+)
 
 
 def _get_cached_engine() -> HumanMemoryEngine | None:

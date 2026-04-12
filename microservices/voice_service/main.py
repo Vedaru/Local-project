@@ -16,15 +16,77 @@ app = FastAPI(title="project-local-voice-service", version="0.1.0")
 
 logger = get_logger("VoiceService")
 
-VOICE_WAV_OUTPUT_DIR = os.getenv("VOICE_WAV_OUTPUT_DIR", os.path.join(os.getcwd(), "data", "temp"))
-VOICE_WAV_CLEANUP_ENABLED = (os.getenv("VOICE_WAV_CLEANUP_ENABLED", "1") or "1").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-VOICE_WAV_CLEANUP_INTERVAL_SEC = max(5.0, float(os.getenv("VOICE_WAV_CLEANUP_INTERVAL_SEC", "120") or "120"))
-VOICE_WAV_TTL_SEC = max(30.0, float(os.getenv("VOICE_WAV_TTL_SEC", "1800") or "1800"))
+
+def _read_bool(raw: str | None, default: bool) -> bool:
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _load_voice_runtime_settings() -> dict[str, Any]:
+    defaults: dict[str, Any] = {
+        "wav_output_dir": os.path.join(os.getcwd(), "data", "temp"),
+        "wav_cleanup_enabled": True,
+        "wav_cleanup_interval_sec": 120.0,
+        "wav_ttl_sec": 1800.0,
+        "sovits_url": "http://127.0.0.1:9880",
+    }
+
+    try:
+        from modules.config import get_cached_config, load_tuning
+
+        cfg = get_cached_config()
+        vt = load_tuning().voice
+        defaults.update(
+            {
+                "wav_output_dir": vt.wav_output_dir,
+                "wav_cleanup_enabled": bool(vt.wav_cleanup_enabled),
+                "wav_cleanup_interval_sec": float(vt.wav_cleanup_interval_sec),
+                "wav_ttl_sec": float(vt.wav_ttl_sec),
+                "sovits_url": cfg.sovits_url,
+            }
+        )
+    except Exception:
+        pass
+
+    wav_output_dir = (
+        (os.getenv("VOICE_WAV_OUTPUT_DIR", str(defaults["wav_output_dir"])) or str(defaults["wav_output_dir"]))
+        .strip()
+    )
+    wav_cleanup_enabled = _read_bool(
+        os.getenv("VOICE_WAV_CLEANUP_ENABLED"),
+        bool(defaults["wav_cleanup_enabled"]),
+    )
+    wav_cleanup_interval_sec = max(
+        5.0,
+        float(
+            (os.getenv("VOICE_WAV_CLEANUP_INTERVAL_SEC", str(defaults["wav_cleanup_interval_sec"])) or defaults["wav_cleanup_interval_sec"])
+        ),
+    )
+    wav_ttl_sec = max(
+        30.0,
+        float((os.getenv("VOICE_WAV_TTL_SEC", str(defaults["wav_ttl_sec"])) or defaults["wav_ttl_sec"])),
+    )
+    sovits_url = (
+        (os.getenv("SOVITS_URL", str(defaults["sovits_url"])) or str(defaults["sovits_url"]))
+        .strip()
+    )
+
+    return {
+        "wav_output_dir": wav_output_dir,
+        "wav_cleanup_enabled": wav_cleanup_enabled,
+        "wav_cleanup_interval_sec": wav_cleanup_interval_sec,
+        "wav_ttl_sec": wav_ttl_sec,
+        "sovits_url": sovits_url,
+    }
+
+
+_VOICE_RUNTIME = _load_voice_runtime_settings()
+VOICE_WAV_OUTPUT_DIR = str(_VOICE_RUNTIME["wav_output_dir"])
+VOICE_WAV_CLEANUP_ENABLED = bool(_VOICE_RUNTIME["wav_cleanup_enabled"])
+VOICE_WAV_CLEANUP_INTERVAL_SEC = float(_VOICE_RUNTIME["wav_cleanup_interval_sec"])
+VOICE_WAV_TTL_SEC = float(_VOICE_RUNTIME["wav_ttl_sec"])
+VOICE_SOVITS_URL = str(_VOICE_RUNTIME["sovits_url"])
 
 _VOICE_INIT_ERROR = ""
 _CLEANUP_TASK: asyncio.Task[None] | None = None
@@ -105,7 +167,7 @@ def _try_init_voice() -> None:
 
         cfg = get_cached_config()
         _VOICE_MANAGER = VoiceManager(
-            sovits_url=os.getenv("SOVITS_URL", cfg.sovits_url),
+            sovits_url=VOICE_SOVITS_URL or cfg.sovits_url,
             ref_audio=cfg.ref_audio,
             prompt_text=cfg.prompt_text,
         )

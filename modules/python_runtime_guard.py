@@ -1,9 +1,14 @@
 """Python runtime compatibility guard for app and microservices.
 
+Configuration source priority:
+    1) Environment variables (override)
+    2) project_config.yaml runtime.python
+    3) Built-in defaults
+
 Environment variables:
-  PROJECT_MIN_PYTHON=3.10
-  PROJECT_MAX_PYTHON_EXCLUSIVE=3.12
-  PROJECT_STRICT_PYTHON_VERSION=0|1
+    PROJECT_MIN_PYTHON=3.10
+    PROJECT_MAX_PYTHON_EXCLUSIVE=3.12
+    PROJECT_STRICT_PYTHON_VERSION=0|1
 """
 
 from __future__ import annotations
@@ -91,9 +96,29 @@ def evaluate_python_runtime_from_env(
     *,
     current_version: Optional[tuple[int, ...]] = None,
 ) -> PythonRuntimeStatus:
-    min_inclusive = _parse_major_minor(os.getenv("PROJECT_MIN_PYTHON"), (3, 10))
-    max_exclusive = _parse_major_minor(os.getenv("PROJECT_MAX_PYTHON_EXCLUSIVE"), (3, 12))
-    strict = _is_truthy(os.getenv("PROJECT_STRICT_PYTHON_VERSION"))
+    runtime_cfg: dict[str, Any] = {}
+    try:
+        from .config_base import get_yaml_config
+
+        yaml_cfg = get_yaml_config()
+        runtime_section = yaml_cfg.get("runtime", {}) if isinstance(yaml_cfg, dict) else {}
+        runtime_python = runtime_section.get("python", {}) if isinstance(runtime_section, dict) else {}
+        if isinstance(runtime_python, dict):
+            runtime_cfg = runtime_python
+    except Exception:
+        runtime_cfg = {}
+
+    min_raw = os.getenv("PROJECT_MIN_PYTHON") or str(runtime_cfg.get("min_version", "3.10"))
+    max_raw = os.getenv("PROJECT_MAX_PYTHON_EXCLUSIVE") or str(runtime_cfg.get("max_version_exclusive", "3.12"))
+
+    strict_env = os.getenv("PROJECT_STRICT_PYTHON_VERSION")
+    if strict_env is None or str(strict_env).strip() == "":
+        strict = bool(runtime_cfg.get("strict", False))
+    else:
+        strict = _is_truthy(strict_env)
+
+    min_inclusive = _parse_major_minor(min_raw, (3, 10))
+    max_exclusive = _parse_major_minor(max_raw, (3, 12))
 
     return evaluate_python_runtime(
         current_version=current_version,

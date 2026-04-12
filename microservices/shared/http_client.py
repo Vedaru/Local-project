@@ -21,8 +21,24 @@ import httpx
 _client: Optional[httpx.AsyncClient] = None
 
 # 连接池参数：参考生产级微服务最佳实践
-_POOL_MAX_CONNECTIONS = int(os.getenv("HTTP_CLIENT_POOL_MAX", "100"))
-_POOL_MAX_KEEPALIVE = int(os.getenv("HTTP_CLIENT_KEEPALIVE", "20"))
+_pool_defaults = {
+    "max_connections": 100,
+    "max_keepalive": 20,
+}
+try:
+    from modules.config import get_yaml_config
+
+    yaml_cfg = get_yaml_config()
+    network_cfg = yaml_cfg.get("network", {}) if isinstance(yaml_cfg, dict) else {}
+    http_cfg = network_cfg.get("http_client", {}) if isinstance(network_cfg, dict) else {}
+    if isinstance(http_cfg, dict):
+        _pool_defaults["max_connections"] = int(http_cfg.get("pool_max_connections", _pool_defaults["max_connections"]))
+        _pool_defaults["max_keepalive"] = int(http_cfg.get("pool_max_keepalive", _pool_defaults["max_keepalive"]))
+except Exception:
+    pass
+
+_POOL_MAX_CONNECTIONS = int(os.getenv("HTTP_CLIENT_POOL_MAX", str(_pool_defaults["max_connections"])))
+_POOL_MAX_KEEPALIVE = int(os.getenv("HTTP_CLIENT_KEEPALIVE", str(_pool_defaults["max_keepalive"])))
 
 
 def _as_json_object(data: Any) -> dict[str, Any]:

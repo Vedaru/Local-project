@@ -3,7 +3,7 @@ Gateway 微服务 — API 入口、认证、请求转发
 
 配置来源优先级:
   1. 环境变量（显式设置，用于容器化部署覆盖）
-  2. tuning.yaml（通过 modules.config_tuning.load_tuning()）
+    2. project_config.yaml（通过 modules.config_tuning.load_tuning()）
   3. 内置默认值
 
 超时推导:
@@ -54,7 +54,7 @@ def _load_tuning_or_defaults():
             "voice_service_url": svc.voice_service_url,
             "gateway_port": str(svc.gateway_port),
             "api_key": gw.api_key,
-            # 超时：如果 tuning.yaml 中已显式设置 chat_timeout_sec 则直接用
+            # 超时：如果 unified yaml 中已显式设置 chat_timeout_sec 则直接用
             # 否则自动推导 = memory + max(agent, voice) + 余量
             "chat_timeout_sec": gw.chat_timeout_sec if gw.chat_timeout_sec > 0
             else round(orch.memory_timeout_sec + max(orch.agent_timeout_sec, orch.voice_timeout_sec), 1),

@@ -147,10 +147,10 @@ def sanitize_for_logging(obj: Any) -> Any:
 
 
 def load_config(config_path: Optional[str] = None, env_path: Optional[str] = None) -> AppConfig:
-    """从 config.yaml 和 .env 加载配置, 返回 AppConfig 实例。
+    """从统一 project_config.yaml（及 .env）加载配置，返回 AppConfig 实例。
 
     Args:
-        config_path: YAML 配置文件路径（默认为项目根目录的 config.yaml）
+        config_path: YAML 配置文件路径（默认为项目根目录的 project_config.yaml）
         env_path: .env 文件路径（默认为项目根目录的 .env）
 
     Returns:
@@ -182,22 +182,59 @@ def load_config(config_path: Optional[str] = None, env_path: Optional[str] = Non
         system_prompt = _clean_env_value(env.get("SYSTEM_PROMPT"))
 
     # 各子配置段
-    audio_cfg = yaml_cfg.get("audio", {})
-    memory_cfg = yaml_cfg.get("memory", {})
-    logging_cfg = yaml_cfg.get("logging", {})
-    controller_cfg = yaml_cfg.get("controller", {})
-    ear_cfg = yaml_cfg.get("ear", {})
-    agent_cfg = yaml_cfg.get("agent", {})
+    api_cfg = yaml_cfg.get("api", {}) or {}
+    audio_cfg = yaml_cfg.get("audio", {}) or {}
+    memory_cfg = yaml_cfg.get("memory", {}) or {}
+    logging_cfg = yaml_cfg.get("logging", {}) or {}
+    controller_cfg = yaml_cfg.get("controller", {}) or {}
+    avatar_cfg = yaml_cfg.get("avatar", {}) or {}
+    ear_cfg = yaml_cfg.get("ear", {}) or {}
+    agent_cfg = yaml_cfg.get("agent", {}) or {}
+
+    def _pick_non_empty(*candidates: object) -> Optional[str]:
+        for candidate in candidates:
+            cleaned = _clean_env_value(candidate)
+            if cleaned is not None and cleaned != "":
+                return cleaned
+        return None
+
+    ark_api_key = _pick_non_empty(
+        env.get("ARK_API_KEY"),
+        os.getenv("ARK_API_KEY"),
+        api_cfg.get("ark_api_key"),
+    )
+    ark_base_url = (
+        _pick_non_empty(
+            env.get("ARK_BASE_URL"),
+            os.getenv("ARK_BASE_URL"),
+            api_cfg.get("ark_base_url"),
+        )
+        or "https://ark.cn-beijing.volces.com/api/v3"
+    )
+    model_name = _pick_non_empty(
+        env.get("MODEL_NAME"),
+        os.getenv("MODEL_NAME"),
+        api_cfg.get("model_name"),
+    )
+    embedding_model_name = _pick_non_empty(
+        env.get("EMBEDDING_MODEL_NAME"),
+        os.getenv("EMBEDDING_MODEL_NAME"),
+        api_cfg.get("embedding_model_name"),
+    )
+    sovits_url = (
+        _pick_non_empty(env.get("SOVITS_URL"), os.getenv("SOVITS_URL"), api_cfg.get("sovits_url"))
+        or "http://127.0.0.1:9880"
+    )
 
     return AppConfig(
         project_root=PROJECT_ROOT,
         # API
-        ark_api_key=_clean_env_value(env.get("ARK_API_KEY")),
-        ark_base_url=os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
-        model_name=_clean_env_value(env.get("MODEL_NAME")),
-        embedding_model_name=_clean_env_value(env.get("EMBEDDING_MODEL_NAME")),
+        ark_api_key=ark_api_key,
+        ark_base_url=ark_base_url,
+        model_name=model_name,
+        embedding_model_name=embedding_model_name,
         # TTS
-        sovits_url=yaml_cfg.get("api", {}).get("sovits_url", "http://127.0.0.1:9880"),
+        sovits_url=sovits_url,
         ref_audio=os.path.join(
             PROJECT_ROOT,
             audio_cfg.get("ref_audio_path", "assets/audio_ref/大家好，我是虚拟歌手洛天依.wav"),
@@ -216,6 +253,11 @@ def load_config(config_path: Optional[str] = None, env_path: Optional[str] = Non
         controller_enabled=controller_cfg.get("enabled", False),
         controller_failsafe=controller_cfg.get("failsafe", True),
         controller_app_whitelist=controller_cfg.get("app_whitelist", {}),
+        # Avatar
+        avatar_width=_to_int(avatar_cfg.get("width", 400), 400),
+        avatar_height=_to_int(avatar_cfg.get("height", 600), 600),
+        avatar_x=_to_int(avatar_cfg.get("x", 100), 100),
+        avatar_y=_to_int(avatar_cfg.get("y", 100), 100),
         # Agent
         agent_max_steps=_to_int(agent_cfg.get("max_steps", 100), 100),
         agent_task_timeout_seconds=_to_float(agent_cfg.get("task_timeout_seconds", 300), 300.0),

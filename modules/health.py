@@ -151,7 +151,19 @@ def check_llm_api_health(
     start_time = time.time()
 
     if not api_key:
-        # 尝试从环境变量获取
+        # 优先从统一配置获取
+        try:
+            from .config import get_cached_config
+
+            cfg = get_cached_config()
+            api_key = cfg.get_api_key() or ""
+            if base_url == "https://ark.cn-beijing.volces.com/api/v3" and (cfg.ark_base_url or "").strip():
+                base_url = cfg.ark_base_url
+        except Exception:
+            pass
+
+    if not api_key:
+        # 回退环境变量
         api_key = os.environ.get("ARK_API_KEY")
 
     if not api_key:

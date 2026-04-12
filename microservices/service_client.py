@@ -70,14 +70,36 @@ def _resolve_default_gateway_port() -> str:
         return "18080"
 
 
+def _resolve_client_defaults() -> dict[str, str]:
+    defaults = {
+        "gateway_url": f"http://127.0.0.1:{_resolve_default_gateway_port()}",
+        "user_id": "local-gui",
+        "api_key": "",
+    }
+    try:
+        from modules.config_tuning import load_tuning
+
+        tuning = load_tuning()
+        defaults["gateway_url"] = f"http://127.0.0.1:{tuning.services.gateway_port}"
+        defaults["user_id"] = str(tuning.client.user_id or "local-gui")
+        defaults["api_key"] = str(tuning.gateway.api_key or "")
+    except Exception:
+        pass
+    return defaults
+
+
 class MicroserviceAIService:
     def __init__(self, callbacks: ServiceCallbacks):
         self.callbacks = callbacks
-        gateway_port = (os.getenv("GATEWAY_PORT", "") or "").strip() or _resolve_default_gateway_port()
-        default_gateway = f"http://127.0.0.1:{gateway_port}"
+        defaults = _resolve_client_defaults()
+        gateway_port = (os.getenv("GATEWAY_PORT", "") or "").strip()
+        if gateway_port:
+            default_gateway = f"http://127.0.0.1:{gateway_port}"
+        else:
+            default_gateway = defaults["gateway_url"]
         self.gateway_url = (os.getenv("MICROSERVICES_GATEWAY_URL", default_gateway) or default_gateway).rstrip("/")
-        self.user_id = (os.getenv("LOCAL_GUI_USER_ID", "local-gui") or "local-gui").strip()
-        self.api_key = (os.getenv("GATEWAY_API_KEY", "") or "").strip()
+        self.user_id = (os.getenv("LOCAL_GUI_USER_ID", defaults["user_id"]) or "local-gui").strip()
+        self.api_key = (os.getenv("GATEWAY_API_KEY", defaults["api_key"]) or "").strip()
 
         self._input_queue: queue.Queue[Optional[str]] = queue.Queue(maxsize=200)
         self._stop_event = threading.Event()

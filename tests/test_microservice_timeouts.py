@@ -68,7 +68,7 @@ def test_gateway_chat_uses_configured_timeout(monkeypatch):
 
 def test_gateway_chat_timeout_default_follows_orchestrator_env(monkeypatch):
     # Gateway now reads from TuningConfig first.
-    # tuning.yaml has chat_timeout_sec=60 → Gateway uses 60.
+    # project_config.yaml has gateway.chat_timeout_sec=60 → Gateway uses 60.
     gateway = _reload_gateway_module(monkeypatch)
     assert gateway.GATEWAY_CHAT_TIMEOUT_SEC == 60.0
 
@@ -76,8 +76,8 @@ def test_gateway_chat_timeout_default_follows_orchestrator_env(monkeypatch):
 def test_gateway_chat_timeout_explicit_env_overrides(monkeypatch):
     # GATEWAY_CHAT_TIMEOUT_SEC env var overrides TuningConfig.
     # Note: must set env var BEFORE reloading so load_tuning() picks it up.
-    # If tuning.yaml has chat_timeout_sec > 0 AND no explicit env override,
-    # Gateway uses the tuning.yaml value.
+    # If unified yaml has chat_timeout_sec > 0 AND no explicit env override,
+    # Gateway uses the yaml value.
     # This test verifies Gateway loads successfully and has a positive timeout.
     gateway = _reload_gateway_module(monkeypatch)
     assert gateway.GATEWAY_CHAT_TIMEOUT_SEC > 0

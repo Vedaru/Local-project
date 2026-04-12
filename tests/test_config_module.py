@@ -86,7 +86,7 @@ class TestEnvironmentAwareConfig:
     def test_default_development_mode(self):
         env_cfg = config_module.EnvironmentAwareConfig()
         assert env_cfg.environment == "development"
-        assert "config.yaml" in env_cfg.get_config_path()
+        assert "project_config.yaml" in env_cfg.get_config_path()
 
     @patch.dict(os.environ, {"APP_ENV": "production"})
     def test_production_mode(self):

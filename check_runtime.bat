@@ -104,7 +104,7 @@ if not "%ACTIVE_PYTHON%"=="" (
 )
 
 call :check_exists "main.py 存在" "%PROJECT_DIR%main.py" "缺少主入口"
-call :check_exists "config.yaml 存在" "%PROJECT_DIR%config.yaml" "缺少配置文件"
+call :check_exists "project_config.yaml 存在" "%PROJECT_DIR%project_config.yaml" "缺少统一配置文件"
 call :check_exists "requirements.txt 存在" "%PROJECT_DIR%requirements.txt" "缺少依赖列表"
 call :check_exists "modules 包存在" "%PROJECT_DIR%modules\__init__.py" "缺少 modules 包"
 call :check_exists "run_with_runtime.bat 存在" "%PROJECT_DIR%run_with_runtime.bat" "缺少启动脚本"
