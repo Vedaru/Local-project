@@ -53,6 +53,8 @@ def frozen_config():
         memory_batch_timeout_sec=6.0,
         agent_timeout_sec=30.0,
         voice_timeout_sec=10.0,
+        max_requests_per_second=8.0,
+        burst_size=16,
         voice_async_batch_enabled=True,
         voice_batch_max_size=4,
         voice_batch_collect_window_ms=5,
@@ -85,6 +87,8 @@ class TestOrchestratorConfig:
         assert cfg.circuit_fail_threshold > 0
         assert cfg.voice_batch_max_size >= 1
         assert cfg.llm_executor_workers >= 1
+        assert cfg.max_requests_per_second > 0
+        assert cfg.burst_size >= 1
 
     def test_custom_config_values(self, frozen_config):
         cfg = frozen_config
@@ -162,6 +166,10 @@ class TestCircuitBreakerOperations:
             assert "open" in info
             assert "failures" in info
             assert "open_remaining_sec" in info
+
+    def test_try_acquire_token_returns_bool(self, core):
+        result = core.try_acquire_token()
+        assert isinstance(result, bool)
 
 
 # ============================================================

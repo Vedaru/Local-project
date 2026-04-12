@@ -38,6 +38,8 @@ orchestrator:
   memory_batch_timeout_sec: 10.0          # 自动计算: max(retrieve + 0.8)
   agent_timeout_sec: 180.0
   voice_timeout_sec: 60.0
+  max_requests_per_second: 8.0         # 令牌桶填充速率（每秒）
+  burst_size: 16                        # 突发桶容量
 
   # TTS 批处理调度
   voice_async_batch_enabled: true

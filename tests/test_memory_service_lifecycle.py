@@ -96,8 +96,10 @@ def test_batch_sync_passes_user_id_to_store_and_retrieve(monkeypatch) -> None:
 
     assert result["store_status"] == "stored"
     assert result["context"] == "ctx-alice"
+    assert isinstance(result.get("context_version"), int)
     assert capture.store_calls
     assert capture.store_calls[0]["metadata"]["user_id"] == "alice"
+    assert isinstance(capture.store_calls[0]["metadata"].get("version_stamp"), int)
     assert capture.retrieve_calls
     assert capture.retrieve_calls[0]["user_id"] == "alice"
 
@@ -111,5 +113,33 @@ def test_store_sync_passes_user_id(monkeypatch) -> None:
     result = memory_service._store_sync("用户: 我喜欢香蕉\nAI: 好的", "bob")
 
     assert result["status"] == "stored"
+    assert isinstance(result.get("version"), int)
+    assert result.get("wal_id")
     assert capture.store_calls
     assert capture.store_calls[0]["metadata"]["user_id"] == "bob"
+    assert isinstance(capture.store_calls[0]["metadata"].get("version_stamp"), int)
+
+
+def test_replay_pending_wal_records_replays_uncommitted_entries(monkeypatch, tmp_path) -> None:
+    memory_service = _reload_memory_service_module()
+    capture = _CaptureEngine()
+
+    wal_path = tmp_path / "memory_service_wal.jsonl"
+    monkeypatch.setenv("MEMORY_WAL_PATH", str(wal_path))
+
+    memory_service._wal = None
+    memory_service._wal_replay_done = False
+
+    monkeypatch.setattr(memory_service, "_get_engine", lambda: capture)
+
+    wal = memory_service._get_wal()
+    wal_id, version = wal.prepare_store("alice", "用户: 你好\nAI: 你好")
+    assert wal_id
+    assert version >= 1
+
+    replay = memory_service._replay_pending_wal_records()
+
+    assert replay["replayed"] >= 1
+    assert capture.store_calls
+    assert capture.store_calls[0]["metadata"]["user_id"] == "alice"
+    assert capture.store_calls[0]["metadata"]["version_stamp"] == version

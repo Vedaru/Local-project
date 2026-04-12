@@ -132,6 +132,13 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
     """
     try:
         core = get_core()
+        if not core.try_acquire_token():
+            raise HTTPException(
+                status_code=429,
+                detail="Too Many Requests",
+                headers={"Retry-After": f"{core.estimate_retry_after_sec():.2f}"},
+            )
+
         cfg = core.cfg
         request_id = http_request.headers.get("x-request-id", "")
         pending_store_content = core.dequeue_pending_memory_write(request.user_id)
@@ -219,6 +226,59 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
         # ══════════════════════════════════════════════════════════
         # Phase 2 — 串行（依赖 Phase 1 结果）: Agent / LLM 生成
         # ══════════════════════════════════════════════════════════
+        streamed_tts_payloads: list[dict] = []
+
+        async def _run_llm_with_streaming_tts(query: str, memory_ctx: str) -> tuple[str, list[dict]]:
+            """在 LLM 生成首句时立即触发 TTS 分片任务。"""
+            loop = asyncio.get_running_loop()
+            streaming_futures = []
+            streaming_futures_lock = threading.Lock()
+
+            def _on_sentence_ready(sentence: str) -> None:
+                normalized = str(sentence or "").strip()
+                if not normalized:
+                    return
+                fut = asyncio.run_coroutine_threadsafe(
+                    core.submit_voice_with_batch_scheduler(normalized, request_id),
+                    loop,
+                )
+                with streaming_futures_lock:
+                    streaming_futures.append(fut)
+
+            try:
+                from modules.llm import call_llm_with_sentence_callback
+
+                answer_text = await core.run_llm_job(
+                    call_llm_with_sentence_callback,
+                    system_prompt,
+                    model_name,
+                    query,
+                    memory_ctx,
+                    _on_sentence_ready,
+                )
+                with streaming_futures_lock:
+                    futures_snapshot = list(streaming_futures)
+                if not futures_snapshot:
+                    return answer_text, []
+                wrapped = [asyncio.wrap_future(item) for item in futures_snapshot]
+                results = await asyncio.gather(*wrapped, return_exceptions=True)
+                payloads = [item for item in results if isinstance(item, dict)]
+                return answer_text, payloads
+            except Exception as exc:
+                logger.debug("streamed llm path unavailable, fallback normal llm: %s", exc)
+                from modules.llm import call_llm
+
+                answer_text = await core.run_llm_job(
+                    call_llm,
+                    system_prompt,
+                    model_name,
+                    query,
+                    memory_ctx,
+                )
+                return answer_text, []
+
+        prewarm_task = asyncio.create_task(core.prewarm_voice_openers(request_id))
+
         agent_mode = "skipped"
         if routed_to_agent:
             if core.is_circuit_open("agent"):
@@ -243,19 +303,20 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
                 except Exception:
                     core.record_circuit_failure("agent")
                     routed_to_agent = False
-                    from modules.llm import call_llm
-
-                    answer = await core.run_llm_job(
-                        call_llm, system_prompt, model_name, request.query, memory_text
+                    answer, streamed_tts_payloads = await _run_llm_with_streaming_tts(
+                        request.query,
+                        memory_text,
                     )
                     route_reason = f"{route_reason}|agent-failed-fallback-chat"
                     agent_mode = "fallback-chat"
         else:
-            from modules.llm import call_llm
-
-            answer = await core.run_llm_job(
-                call_llm, system_prompt, model_name, request.query, memory_text
+            answer, streamed_tts_payloads = await _run_llm_with_streaming_tts(
+                request.query,
+                memory_text,
             )
+
+        with contextlib.suppress(Exception):
+            await prewarm_task
 
         # ══════════════════════════════════════════════════════════
         # Phase 3 — 并行: TTS语音合成 + Memory 延迟写入入队
@@ -265,13 +326,28 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
             f"用户: {request.query}\nAI: {answer}",
         )
 
-        # TTS 和返回响应并行：TTS 不阻塞用户看到文字回复
-        tts_future = asyncio.ensure_future(core.submit_voice_with_batch_scheduler(answer, request_id))
+        if streamed_tts_payloads:
+            flattened_segments: list[dict] = []
+            for payload in streamed_tts_payloads:
+                nested = payload.get("segments")
+                if isinstance(nested, list) and nested:
+                    for segment in nested:
+                        if isinstance(segment, dict):
+                            flattened_segments.append(dict(segment))
+                else:
+                    flattened_segments.append(dict(payload))
+
+            if flattened_segments:
+                tts_payload = core.merge_voice_segments(answer, flattened_segments, request_id)
+            else:
+                tts_payload = await core.submit_voice_with_batch_scheduler(answer, request_id)
+        else:
+            tts_payload = await core.submit_voice_with_batch_scheduler(answer, request_id)
 
         return {
             "answer": answer,
             "memory_context": memory_text,
-            "tts": await tts_future,
+            "tts": tts_payload,
             "routed_to_agent": routed_to_agent,
             "route_reason": route_reason,
             "model_name": model_name,
@@ -281,6 +357,8 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
             "memory_store_flush_status": memory_store_flush_status,
             "request_id": request_id,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"downstream service failure: {e}")
 

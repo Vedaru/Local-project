@@ -54,6 +54,10 @@ class OrchestratorTuning:
     agent_timeout_sec: float = 180.0
     voice_timeout_sec: float = 60.0
 
+    # 全局入口限流（令牌桶）
+    max_requests_per_second: float = 8.0
+    burst_size: int = 16
+
     voice_async_batch_enabled: bool = True
     voice_batch_max_size: int = 8
     voice_batch_collect_window_ms: int = 8
@@ -187,6 +191,8 @@ class TuningConfig:
                 memory_batch_timeout_sec=float(_env_str("ORCH_MEMORY_BATCH_TIMEOUT_SEC", _get(orch_raw, "memory_batch_timeout_sec", 10.0))),
                 agent_timeout_sec=float(_env_str("ORCH_AGENT_TIMEOUT_SEC", _get(orch_raw, "agent_timeout_sec", 180.0))),
                 voice_timeout_sec=float(_env_str("ORCH_VOICE_TIMEOUT_SEC", _get(orch_raw, "voice_timeout_sec", 60.0))),
+                max_requests_per_second=max(0.1, float(_env_str("ORCH_MAX_REQUESTS_PER_SECOND", _get(orch_raw, "max_requests_per_second", 8.0)))),
+                burst_size=max(1, _env_int("ORCH_BURST_SIZE", _get(orch_raw, "burst_size", 16))),
                 voice_async_batch_enabled=_read_bool(os.getenv("ORCH_VOICE_ASYNC_BATCH_ENABLED"), _get(orch_raw, "voice_async_batch_enabled", True)),
                 voice_batch_max_size=max(1, _env_int("ORCH_VOICE_BATCH_MAX_SIZE", _get(orch_raw, "voice_batch_max_size", 8))),
                 voice_batch_collect_window_ms=max(1, _env_int("ORCH_VOICE_BATCH_COLLECT_WINDOW_MS", _get(orch_raw, "voice_batch_collect_window_ms", 8))),

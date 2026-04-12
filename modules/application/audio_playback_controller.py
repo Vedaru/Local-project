@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from modules.avatar import LipSyncManager
 from modules.logging_config import get_logger
@@ -95,6 +95,16 @@ class AudioPlaybackController:
                 expression_orchestrator.on_expression_change("")
 
         # 优先：wav 音频驱动嘴型
+        if isinstance(payload, dict):
+            playlist = self._extract_wav_playlist(payload)
+            if len(playlist) >= 2:
+                try:
+                    self._play_audio_segments_with_lipsync(playlist)
+                    logger.info(f"[LipSync] 启动分片无缝播放: segments={len(playlist)}")
+                    return
+                except Exception as exc:
+                    logger.warning(f"[LipSync] 分片无缝播放失败，回退单wav: {exc}")
+
         if wav_path:
             wav_file = Path(wav_path)
             if wav_file.exists():
@@ -120,6 +130,140 @@ class AudioPlaybackController:
             )
         except Exception as exc:
             logger.warning(f"[LipSync] 文本驱动失败: {exc}")
+
+    @staticmethod
+    def _extract_wav_playlist(payload: dict[str, Any]) -> list[str]:
+        segments = payload.get("segments")
+        if not isinstance(segments, list):
+            return []
+
+        wavs: list[str] = []
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            wav_path = str(segment.get("wav_path") or "").strip()
+            if not wav_path:
+                continue
+            if Path(wav_path).exists():
+                wavs.append(wav_path)
+        return wavs
+
+    @staticmethod
+    def _apply_edge_fade_pcm16(
+        pcm_data: bytes,
+        channels: int,
+        sample_rate: int,
+        *,
+        fade_ms: int = 8,
+        fade_in: bool,
+        fade_out: bool,
+    ) -> bytes:
+        if not pcm_data or channels <= 0 or sample_rate <= 0:
+            return pcm_data
+        if len(pcm_data) % 2 != 0:
+            return pcm_data
+
+        import struct
+
+        samples = list(struct.unpack(f"<{len(pcm_data) // 2}h", pcm_data))
+        if not samples:
+            return pcm_data
+
+        frame_count = len(samples) // channels
+        if frame_count <= 0:
+            return pcm_data
+
+        fade_frames = int(sample_rate * max(1, fade_ms) / 1000)
+        fade_frames = max(1, min(fade_frames, frame_count // 2))
+
+        if fade_in:
+            for i in range(fade_frames):
+                gain = float(i + 1) / float(fade_frames)
+                frame_base = i * channels
+                for ch in range(channels):
+                    idx = frame_base + ch
+                    samples[idx] = int(samples[idx] * gain)
+
+        if fade_out:
+            for i in range(fade_frames):
+                gain = float(fade_frames - i) / float(fade_frames)
+                frame_base = (frame_count - fade_frames + i) * channels
+                for ch in range(channels):
+                    idx = frame_base + ch
+                    samples[idx] = int(samples[idx] * gain)
+
+        return struct.pack(f"<{len(samples)}h", *samples)
+
+    def _play_audio_segments_with_lipsync(self, wav_paths: list[str]) -> None:
+        """Play multiple wav files on one output stream to reduce gaps/clicks."""
+        if not self._lip_sync_manager or not wav_paths:
+            return
+
+        import wave as _wave
+
+        def _worker():
+            pa = None
+            stream = None
+            try:
+                import pyaudio
+                import struct
+                import math
+
+                frames_per_buffer = 512
+                total_segments = len(wav_paths)
+
+                for idx, wav_path in enumerate(wav_paths):
+                    with _wave.open(wav_path, "rb") as wf:
+                        n_channels = int(wf.getnchannels() or 1)
+                        sampwidth = int(wf.getsampwidth() or 2)
+                        framerate = int(wf.getframerate() or 32000)
+
+                        if stream is None:
+                            pa = pyaudio.PyAudio()
+                            stream = pa.open(
+                                format=pa.get_format_from_width(sampwidth),
+                                channels=n_channels,
+                                rate=framerate,
+                                output=True,
+                                frames_per_buffer=frames_per_buffer,
+                            )
+
+                        raw_data = wf.readframes(int(wf.getnframes() or 0))
+                        if sampwidth == 2 and raw_data:
+                            raw_data = self._apply_edge_fade_pcm16(
+                                raw_data,
+                                channels=n_channels,
+                                sample_rate=framerate,
+                                fade_ms=8,
+                                fade_in=(idx > 0),
+                                fade_out=(idx < total_segments - 1),
+                            )
+
+                        chunk_size = max(2, frames_per_buffer * max(1, sampwidth) * max(1, n_channels))
+                        update_counter = 0
+                        for offset in range(0, len(raw_data), chunk_size):
+                            chunk = raw_data[offset: offset + chunk_size]
+                            if not chunk:
+                                continue
+                            stream.write(chunk)
+                            update_counter += 1
+                            if sampwidth == 2 and update_counter % 2 == 0:
+                                fmt = f"<{len(chunk) // 2}h"
+                                samples = struct.unpack(fmt, chunk)
+                                rms = math.sqrt(sum(s * s for s in samples) / max(1, len(samples)))
+                                volume = min((rms / 8000.0) ** 0.8, 1.0) if rms > 500 else 0.0
+                                self._lip_sync_manager._player._callback(volume)
+
+                self._lip_sync_manager._player._callback(0.0)
+                if stream is not None:
+                    stream.stop_stream()
+                    stream.close()
+                if pa is not None:
+                    pa.terminate()
+            except Exception:
+                self._lip_sync_manager._player._callback(0.0)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _play_audio_with_lipsync(self, wav_path: str) -> None:
         """Python 端 pyaudio 播放 + LipSyncManager 驱动嘴型（纯本地方案）。"""

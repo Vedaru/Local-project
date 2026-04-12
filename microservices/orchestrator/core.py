@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -44,6 +45,8 @@ class OrchestratorConfig:
     memory_batch_timeout_sec: float
     agent_timeout_sec: float
     voice_timeout_sec: float
+    max_requests_per_second: float
+    burst_size: int
     voice_async_batch_enabled: bool
     voice_batch_max_size: int
     voice_batch_collect_window_ms: int
@@ -77,6 +80,8 @@ class OrchestratorConfig:
             memory_batch_timeout_sec=computed_batch_timeout,
             agent_timeout_sec=o.agent_timeout_sec,
             voice_timeout_sec=o.voice_timeout_sec,
+            max_requests_per_second=o.max_requests_per_second,
+            burst_size=o.burst_size,
             voice_async_batch_enabled=o.voice_async_batch_enabled,
             voice_batch_max_size=o.voice_batch_max_size,
             voice_batch_collect_window_ms=o.voice_batch_collect_window_ms,
@@ -115,6 +120,56 @@ class VoiceBatchJob:
     future: asyncio.Future
 
 
+class TokenBucket:
+    """Thread-safe token bucket for request shaping."""
+
+    def __init__(self, capacity: float, refill_rate: float):
+        self._capacity = max(1.0, float(capacity))
+        self._refill_rate = max(0.05, float(refill_rate))
+        self._tokens = self._capacity
+        self._last_refill = time.monotonic()
+        self._lock = threading.Lock()
+
+    @property
+    def refill_rate(self) -> float:
+        return self._refill_rate
+
+    @property
+    def capacity(self) -> float:
+        return self._capacity
+
+    def _refill(self, now: float) -> None:
+        elapsed = max(0.0, now - self._last_refill)
+        if elapsed <= 0.0:
+            return
+        self._tokens = min(self._capacity, self._tokens + elapsed * self._refill_rate)
+        self._last_refill = now
+
+    def try_acquire(self, tokens: float = 1.0) -> bool:
+        required = max(0.01, float(tokens))
+        with self._lock:
+            self._refill(time.monotonic())
+            if self._tokens >= required:
+                self._tokens -= required
+                return True
+            return False
+
+    def set_refill_rate(self, refill_rate: float) -> None:
+        rate = max(0.05, float(refill_rate))
+        with self._lock:
+            self._refill(time.monotonic())
+            self._refill_rate = rate
+
+    def snapshot(self) -> dict[str, float]:
+        with self._lock:
+            self._refill(time.monotonic())
+            return {
+                "tokens": float(self._tokens),
+                "capacity": float(self._capacity),
+                "refill_rate": float(self._refill_rate),
+            }
+
+
 # ============================================================
 # OrchestratorCore — 所有状态的唯一持有者
 # ============================================================
@@ -137,11 +192,23 @@ class OrchestratorCore:
             "voice": CircuitState(),
         }
 
+        # --- Adaptive token bucket limiter ---
+        self._base_refill_rate = max(0.1, float(self.cfg.max_requests_per_second))
+        self._token_bucket = TokenBucket(
+            capacity=max(1, int(self.cfg.burst_size)),
+            refill_rate=self._base_refill_rate,
+        )
+        self._current_refill_rate = self._base_refill_rate
+        self._llm_queue_pressure_threshold = max(2, int(self.cfg.llm_executor_workers * 2))
+        self._backpressure_min_refill_rate = max(0.05, self._base_refill_rate * 0.2)
+
         # --- LLM executor (thread pool) ---
         self._llm_executor = ThreadPoolExecutor(
             max_workers=self.cfg.llm_executor_workers,
             thread_name_prefix="orchestrator-llm",
         )
+        self._llm_pending_jobs = 0
+        self._llm_pending_lock = threading.Lock()
 
         # --- Pending memory write queue ---
         self._pending_memory_queue_size = self.cfg.pending_memory_queue_size
@@ -165,6 +232,13 @@ class OrchestratorCore:
             "queued_timeouts": 0,
             "completed_within_wait": 0,
         }
+
+        # --- Streaming TTS helpers ---
+        self._prewarm_cache_lock = threading.Lock()
+        self._prewarm_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._opener_stats_lock = threading.Lock()
+        self._opener_stats: dict[str, int] = defaultdict(int)
+        self._default_openers = ("好的", "我明白了", "明白", "没问题", "可以")
 
     # ---- Circuit Breaker operations ----
 
@@ -251,6 +325,46 @@ class OrchestratorCore:
     def voice_stats_snapshot(self) -> dict[str, int]:
         with self._voice_batch_stats_lock:
             return {k: int(v) for k, v in self._voice_batch_stats.items()}
+
+    def llm_executor_queue_length(self) -> int:
+        queued = 0
+        work_queue = getattr(self._llm_executor, "_work_queue", None)
+        if work_queue is not None and hasattr(work_queue, "qsize"):
+            with contextlib.suppress(Exception):
+                queued = max(0, int(work_queue.qsize()))
+        with self._llm_pending_lock:
+            pending = max(0, int(self._llm_pending_jobs) - int(self.cfg.llm_executor_workers))
+        return max(queued, pending)
+
+    def _calculate_backpressure_refill_rate(self) -> float:
+        voice_queue = self.voice_queue_length()
+        voice_threshold = max(1, int(self.cfg.voice_batch_congested_queue_size))
+        voice_pressure = float(voice_queue) / float(voice_threshold)
+
+        llm_queue = self.llm_executor_queue_length()
+        llm_pressure = float(llm_queue) / float(max(1, self._llm_queue_pressure_threshold))
+        pressure = max(voice_pressure, llm_pressure)
+
+        if pressure <= 1.0:
+            target = self._base_refill_rate
+        elif pressure <= 1.5:
+            target = self._base_refill_rate * 0.75
+        elif pressure <= 2.0:
+            target = self._base_refill_rate * 0.55
+        else:
+            target = self._base_refill_rate * 0.35
+
+        return max(self._backpressure_min_refill_rate, float(target))
+
+    def try_acquire_token(self) -> bool:
+        """Acquire one request token with adaptive refill-rate backpressure."""
+        self._current_refill_rate = self._calculate_backpressure_refill_rate()
+        self._token_bucket.set_refill_rate(self._current_refill_rate)
+        return self._token_bucket.try_acquire(1.0)
+
+    def estimate_retry_after_sec(self) -> float:
+        rate = max(0.05, float(self._current_refill_rate))
+        return min(2.0, 1.0 / rate)
 
     # ---- Voice service invocation ----
 
@@ -385,18 +499,152 @@ class OrchestratorCore:
 
     # ---- Voice submission with batch scheduling ----
 
-    async def submit_voice_with_batch_scheduler(self, answer: str, request_id: str) -> dict:
+    def _normalize_voice_text(self, text: str) -> str:
+        return re.sub(r"\s+", " ", str(text or "")).strip()
+
+    def split_text_for_voice_streaming(self, text: str) -> list[str]:
+        """Split long answer into speech-friendly chunks by punctuation and length."""
+        normalized = self._normalize_voice_text(text)
+        if not normalized:
+            return []
+
+        hard_breaks = set("。！？!?；;…\n")
+        soft_breaks = set("，,、：:")
+        max_segment_chars = 42
+        min_segment_chars = 6
+
+        segments: list[str] = []
+        buffer: list[str] = []
+
+        for ch in normalized:
+            buffer.append(ch)
+            current = "".join(buffer).strip()
+            if not current:
+                continue
+            should_flush = (
+                ch in hard_breaks
+                or (ch in soft_breaks and len(current) >= min_segment_chars)
+                or len(current) >= max_segment_chars
+            )
+            if should_flush:
+                segments.append(current)
+                buffer.clear()
+
+        if buffer:
+            segments.append("".join(buffer).strip())
+
+        merged: list[str] = []
+        for seg in segments:
+            if not seg:
+                continue
+            if merged and len(seg) < min_segment_chars:
+                merged[-1] = (merged[-1] + seg).strip()
+                continue
+            merged.append(seg)
+
+        return merged or [normalized]
+
+    def _extract_opening_phrase(self, answer: str) -> str:
+        normalized = self._normalize_voice_text(answer)
+        if not normalized:
+            return ""
+        match = re.match(r"^(.{1,8}?)([，,。！？!?；;]|\s|$)", normalized)
+        phrase = (match.group(1) if match else normalized[:8]).strip()
+        return phrase
+
+    def note_answer_opening(self, answer: str) -> None:
+        opener = self._extract_opening_phrase(answer)
+        if not opener:
+            return
+        with self._opener_stats_lock:
+            self._opener_stats[opener] = int(self._opener_stats.get(opener, 0)) + 1
+
+    def _predict_opening_phrases(self, limit: int = 2) -> list[str]:
+        cap = max(1, int(limit))
+        with self._opener_stats_lock:
+            ranked = sorted(self._opener_stats.items(), key=lambda item: item[1], reverse=True)
+        predicted = [text for text, _ in ranked[:cap] if text]
+        for default_phrase in self._default_openers:
+            if len(predicted) >= cap:
+                break
+            if default_phrase not in predicted:
+                predicted.append(default_phrase)
+        return predicted[:cap]
+
+    def _get_prewarmed_voice(self, text: str) -> Optional[dict[str, Any]]:
+        key = self._normalize_voice_text(text)
+        if not key:
+            return None
+        now = time.monotonic()
+        with self._prewarm_cache_lock:
+            cached = self._prewarm_cache.get(key)
+            if not cached:
+                return None
+            created_at, payload = cached
+            if now - float(created_at) > 180.0:
+                self._prewarm_cache.pop(key, None)
+                return None
+            result = dict(payload)
+            result["prewarmed"] = True
+            return result
+
+    def _store_prewarmed_voice(self, text: str, payload: dict[str, Any]) -> None:
+        key = self._normalize_voice_text(text)
+        wav_path = str(payload.get("wav_path") or "").strip()
+        if not key or not wav_path:
+            return
+        with self._prewarm_cache_lock:
+            self._prewarm_cache[key] = (time.monotonic(), dict(payload))
+
+    async def prewarm_voice_openers(self, request_id: str) -> None:
+        """Preload likely opening phrases to reduce first-chunk TTS latency."""
+        phrases = self._predict_opening_phrases(limit=2)
+        if not phrases:
+            return
+
+        pending_phrases: list[str] = []
+        jobs = []
+        for phrase in phrases:
+            if self._get_prewarmed_voice(phrase) is not None:
+                continue
+            pending_phrases.append(phrase)
+            jobs.append(self.invoke_voice_service(phrase, request_id))
+
+        if not jobs:
+            return
+
+        results = await asyncio.gather(*jobs, return_exceptions=True)
+        for phrase, result in zip(pending_phrases, results):
+            if isinstance(result, dict):
+                self._store_prewarmed_voice(phrase, result)
+
+    async def _submit_single_voice_with_batch_scheduler(self, text: str, request_id: str) -> dict:
         cfg = self.cfg
+        answer = self._normalize_voice_text(text)
+        if not answer:
+            return ErrorResult.voice_fallback(
+                mode="fallback-no-voice",
+                reason="empty voice text",
+                request_id=request_id,
+            ).to_dict()
+
+        prewarmed = self._get_prewarmed_voice(answer)
+        if prewarmed is not None:
+            return prewarmed
 
         if not cfg.voice_async_batch_enabled:
-            return await self.invoke_voice_service(answer, request_id)
+            result = await self.invoke_voice_service(answer, request_id)
+            self._store_prewarmed_voice(answer, result)
+            return result
 
         if cfg.voice_hit_priority_direct_enabled and self.voice_queue_length() == 0:
-            return await self.invoke_voice_service(
+            result = await self.invoke_voice_service(
                 answer,
                 request_id,
                 timeout_override=min(cfg.voice_timeout_sec, cfg.voice_hit_priority_direct_timeout_sec),
             )
+            self._store_prewarmed_voice(answer, result)
+            return result
 
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
@@ -426,6 +674,7 @@ class OrchestratorCore:
         try:
             result = await asyncio.wait_for(asyncio.shield(future), timeout=wait_timeout)
             self._voice_stats_add("completed_within_wait", 1)
+            self._store_prewarmed_voice(answer, result)
             return result
         except asyncio.TimeoutError:
             self._voice_stats_add("queued_timeouts", 1)
@@ -440,6 +689,75 @@ class OrchestratorCore:
                 reason="voice batch scheduler error",
                 request_id=request_id,
             ).to_dict()
+
+    def merge_voice_segments(self, answer: str, segment_payloads: list[dict[str, Any]], request_id: str) -> dict:
+        if not segment_payloads:
+            return ErrorResult.voice_fallback(
+                mode="fallback-no-voice",
+                reason="no voice segment generated",
+                request_id=request_id,
+            ).to_dict()
+
+        primary = dict(segment_payloads[0])
+        merged = {
+            **primary,
+            "text": self._normalize_voice_text(answer),
+            "segments": segment_payloads,
+            "segment_count": len(segment_payloads),
+            "seamless_concat": len(segment_payloads) > 1,
+        }
+        return merged
+
+    async def submit_voice_with_batch_scheduler(self, answer: str, request_id: str) -> dict:
+        normalized = self._normalize_voice_text(answer)
+        if not normalized:
+            return ErrorResult.voice_fallback(
+                mode="fallback-no-voice",
+                reason="empty answer",
+                request_id=request_id,
+            ).to_dict()
+
+        self.note_answer_opening(normalized)
+        segments = self.split_text_for_voice_streaming(normalized)
+        if not segments:
+            segments = [normalized]
+
+        # 先发送第一段，满足首句优先触发。
+        first_segment = segments[0]
+        first_payload = await self._submit_single_voice_with_batch_scheduler(first_segment, request_id)
+        segment_payloads: list[dict[str, Any]] = [{
+            "index": 0,
+            "text": first_segment,
+            **first_payload,
+        }]
+
+        if len(segments) > 1:
+            tail_results = await asyncio.gather(
+                *[
+                    self._submit_single_voice_with_batch_scheduler(segment_text, request_id)
+                    for segment_text in segments[1:]
+                ],
+                return_exceptions=True,
+            )
+            for idx, (segment_text, result) in enumerate(zip(segments[1:], tail_results), start=1):
+                if isinstance(result, dict):
+                    segment_payloads.append({
+                        "index": idx,
+                        "text": segment_text,
+                        **result,
+                    })
+                else:
+                    segment_payloads.append({
+                        "index": idx,
+                        "text": segment_text,
+                        **ErrorResult.voice_fallback(
+                            mode="fallback-no-voice",
+                            reason="voice segment dispatch failed",
+                            request_id=request_id,
+                        ).to_dict(),
+                    })
+
+        return self.merge_voice_segments(normalized, segment_payloads, request_id)
 
     # ---- Memory flush on shutdown ----
 
@@ -469,15 +787,31 @@ class OrchestratorCore:
 
     async def run_llm_job(self, func, *args, **kwargs):
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._llm_executor, partial(func, *args, **kwargs))
+        with self._llm_pending_lock:
+            self._llm_pending_jobs += 1
+        try:
+            return await loop.run_in_executor(self._llm_executor, partial(func, *args, **kwargs))
+        finally:
+            with self._llm_pending_lock:
+                self._llm_pending_jobs = max(0, self._llm_pending_jobs - 1)
 
     # ---- Health snapshot ----
 
     def health_snapshot(self) -> dict[str, Any]:
         circuits = self.get_circuit_health()
         cfg = self.cfg
+        limiter_snapshot = self._token_bucket.snapshot()
         return {
             "circuits": circuits,
+            "rate_limiter": {
+                "max_requests_per_second": cfg.max_requests_per_second,
+                "burst_size": cfg.burst_size,
+                "adaptive_refill_rate": self._current_refill_rate,
+                "tokens": limiter_snapshot.get("tokens", 0.0),
+                "capacity": limiter_snapshot.get("capacity", float(cfg.burst_size)),
+                "llm_queue_size": self.llm_executor_queue_length(),
+                "voice_queue_size": self.voice_queue_length(),
+            },
             "voice_batch": {
                 "enabled": cfg.voice_async_batch_enabled,
                 "hit_priority_direct_enabled": cfg.voice_hit_priority_direct_enabled,
