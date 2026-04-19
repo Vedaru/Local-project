@@ -9,6 +9,10 @@ from typing import Any, AsyncIterator, Callable, Optional
 
 import httpx
 
+from modules.logging_config import get_logger
+
+_logger = get_logger("MicroserviceClient")
+
 
 @dataclass
 class ServiceCallbacks:
@@ -57,22 +61,13 @@ class ResourceManager:
                 elif hasattr(resource, "cleanup"):
                     resource.cleanup()
             except Exception:
-                continue
-
-
-def _resolve_default_gateway_port() -> str:
-    """Resolve a single source of truth for gateway default port."""
-    try:
-        from modules.config_tuning import load_tuning
-
-        return str(load_tuning().services.gateway_port)
-    except Exception:
-        return "18080"
+                _logger.warning("resource cleanup failed", exc_info=True)
 
 
 def _resolve_client_defaults() -> dict[str, str]:
-    defaults = {
-        "gateway_url": f"http://127.0.0.1:{_resolve_default_gateway_port()}",
+    """Load gateway URL / user / API key from tuning; on failure use safe built-ins."""
+    defaults: dict[str, str] = {
+        "gateway_url": "http://127.0.0.1:18080",
         "user_id": "local-gui",
         "api_key": "",
     }
@@ -83,8 +78,11 @@ def _resolve_client_defaults() -> dict[str, str]:
         defaults["gateway_url"] = f"http://127.0.0.1:{tuning.services.gateway_port}"
         defaults["user_id"] = str(tuning.client.user_id or "local-gui")
         defaults["api_key"] = str(tuning.gateway.api_key or "")
-    except Exception:
-        pass
+    except Exception as exc:
+        if isinstance(exc, (ImportError, OSError, ValueError)):
+            _logger.debug("client defaults using built-in fallbacks (config unavailable): %s", exc)
+        else:
+            _logger.warning("client defaults using built-in fallbacks after unexpected error", exc_info=True)
     return defaults
 
 
@@ -107,11 +105,13 @@ class MicroserviceAIService:
         self._resource_manager = ResourceManager()
 
         # 持久化 HTTP 客户端（连接复用，消除每次请求的 TCP 握手开销）
-        self._http_session: httpx.Client = self._resource_manager.register(httpx.Client(
-            timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=5.0),
-            trust_env=False,
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5, keepalive_expiry=30.0),
-        ))
+        self._http_session: httpx.Client = self._resource_manager.register(
+            httpx.Client(
+                timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=5.0),
+                trust_env=False,
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5, keepalive_expiry=30.0),
+            )
+        )
 
     def start_background(self) -> None:
         if self._worker_thread and self._worker_thread.is_alive():

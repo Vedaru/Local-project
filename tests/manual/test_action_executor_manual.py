@@ -3,7 +3,7 @@ import os
 import sys
 
 # ensure workspace root is on path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 # manual demo of the new AgentTools helpers; previously this
 # file exercised ActionExecutor directly.

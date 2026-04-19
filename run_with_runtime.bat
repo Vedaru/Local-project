@@ -146,7 +146,7 @@ start "memory-service" cmd /k "cd /d %PROJECT_DIR% && set PYTHONPATH=%PYTHONPATH
 start "agent-service" cmd /k "cd /d %PROJECT_DIR% && set PYTHONPATH=%PYTHONPATH% && %PYTHON_EXE% -m uvicorn microservices.agent_service.main:app --host 127.0.0.1 --port %AGENT_SERVICE_PORT%"
 start "voice-service" cmd /k "cd /d %PROJECT_DIR% && set PYTHONPATH=%PYTHONPATH% && %PYTHON_EXE% -m uvicorn microservices.voice_service.main:app --host 127.0.0.1 --port %VOICE_SERVICE_PORT%"
 start "orchestrator" cmd /k "cd /d %PROJECT_DIR% && set PYTHONPATH=%PYTHONPATH% && set MEMORY_SERVICE_URL=%MEMORY_SERVICE_URL% && set AGENT_SERVICE_URL=%AGENT_SERVICE_URL% && set VOICE_SERVICE_URL=%VOICE_SERVICE_URL% && %PYTHON_EXE% -m uvicorn microservices.orchestrator.main:app --host 127.0.0.1 --port %ORCHESTRATOR_PORT%"
-start "gateway" cmd /k "cd /d %PROJECT_DIR% && set PYTHONPATH=%PYTHONPATH% && set GATEWAY_PORT=%GATEWAY_PORT% && set ORCHESTRATOR_URL=%ORCHESTRATOR_URL% && set MEMORY_SERVICE_URL=%MEMORY_SERVICE_URL% && set AGENT_SERVICE_URL=%AGENT_SERVICE_URL% && set VOICE_SERVICE_URL=%VOICE_SERVICE_URL% && %PYTHON_EXE% -m uvicorn microservices.gateway.main:app --host 127.0.0.1 --port %GATEWAY_PORT%"
+start "gateway" cmd /k "cd /d %PROJECT_DIR% && set PYTHONPATH=%PYTHONPATH% && set GATEWAY_BIND_HOST=127.0.0.1 && set GATEWAY_PORT=%GATEWAY_PORT% && set ORCHESTRATOR_URL=%ORCHESTRATOR_URL% && set MEMORY_SERVICE_URL=%MEMORY_SERVICE_URL% && set AGENT_SERVICE_URL=%AGENT_SERVICE_URL% && set VOICE_SERVICE_URL=%VOICE_SERVICE_URL% && %PYTHON_EXE% -m uvicorn microservices.gateway.main:app --host 127.0.0.1 --port %GATEWAY_PORT%"
 
 timeout /t 2 >nul
 

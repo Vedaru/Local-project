@@ -383,9 +383,7 @@ class OrchestratorCore:
 
     # ---- Voice service invocation ----
 
-    async def invoke_voice_service(
-        self, text: str, request_id: str, timeout_override: Optional[float] = None
-    ) -> dict:
+    async def invoke_voice_service(self, text: str, request_id: str, timeout_override: Optional[float] = None) -> dict:
         if self.is_circuit_open("voice"):
             return ErrorResult.voice_fallback(
                 mode="circuit-open",
@@ -394,11 +392,7 @@ class OrchestratorCore:
             ).to_dict()
 
         try:
-            timeout_sec = (
-                float(timeout_override)
-                if timeout_override is not None
-                else self.cfg.voice_timeout_sec
-            )
+            timeout_sec = float(timeout_override) if timeout_override is not None else self.cfg.voice_timeout_sec
             tts = await http_client.post_json(
                 f"{self.cfg.voice_service_url}/speak",
                 payload={"text": text, "voice": "default"},
@@ -450,10 +444,13 @@ class OrchestratorCore:
                 result_by_text[job.text] = result
 
         for text, grouped_jobs in grouped.items():
-            payload = result_by_text.get(text, ErrorResult.voice_fallback(
-                mode="fallback-no-voice",
-                reason="voice batch dispatch failed",
-            ).to_dict())
+            payload = result_by_text.get(
+                text,
+                ErrorResult.voice_fallback(
+                    mode="fallback-no-voice",
+                    reason="voice batch dispatch failed",
+                ).to_dict(),
+            )
             for job in grouped_jobs:
                 if not job.future.done():
                     job.future.set_result(payload)
@@ -665,9 +662,7 @@ class OrchestratorCore:
         future: asyncio.Future = loop.create_future()
 
         with self._voice_batch_queue_lock:
-            self._voice_batch_queue.append(
-                VoiceBatchJob(text=answer, request_id=request_id, future=future)
-            )
+            self._voice_batch_queue.append(VoiceBatchJob(text=answer, request_id=request_id, future=future))
             queued_size = len(self._voice_batch_queue)
             self._voice_batch_queue_event.set()
 
@@ -680,11 +675,14 @@ class OrchestratorCore:
 
         if wait_timeout <= 1e-6:
             self._voice_stats_add("queued_timeouts", 1)
-            return {**ErrorResult.voice_fallback(
-                mode="async-voice-batch",
-                reason="voice generation queued",
-                request_id=request_id,
-            ).to_dict(), "status": "queued"}
+            return {
+                **ErrorResult.voice_fallback(
+                    mode="async-voice-batch",
+                    reason="voice generation queued",
+                    request_id=request_id,
+                ).to_dict(),
+                "status": "queued",
+            }
 
         try:
             result = await asyncio.wait_for(asyncio.shield(future), timeout=wait_timeout)
@@ -693,11 +691,14 @@ class OrchestratorCore:
             return result
         except asyncio.TimeoutError:
             self._voice_stats_add("queued_timeouts", 1)
-            return {**ErrorResult.voice_fallback(
-                mode="async-voice-batch",
-                reason="voice generation queued",
-                request_id=request_id,
-            ).to_dict(), "status": "queued"}
+            return {
+                **ErrorResult.voice_fallback(
+                    mode="async-voice-batch",
+                    reason="voice generation queued",
+                    request_id=request_id,
+                ).to_dict(),
+                "status": "queued",
+            }
         except Exception:
             return ErrorResult.voice_fallback(
                 mode="fallback-no-voice",
@@ -740,11 +741,13 @@ class OrchestratorCore:
         # 先发送第一段，满足首句优先触发。
         first_segment = segments[0]
         first_payload = await self._submit_single_voice_with_batch_scheduler(first_segment, request_id)
-        segment_payloads: list[dict[str, Any]] = [{
-            "index": 0,
-            "text": first_segment,
-            **first_payload,
-        }]
+        segment_payloads: list[dict[str, Any]] = [
+            {
+                "index": 0,
+                "text": first_segment,
+                **first_payload,
+            }
+        ]
 
         if len(segments) > 1:
             tail_results = await asyncio.gather(
@@ -756,21 +759,25 @@ class OrchestratorCore:
             )
             for idx, (segment_text, result) in enumerate(zip(segments[1:], tail_results), start=1):
                 if isinstance(result, dict):
-                    segment_payloads.append({
-                        "index": idx,
-                        "text": segment_text,
-                        **result,
-                    })
+                    segment_payloads.append(
+                        {
+                            "index": idx,
+                            "text": segment_text,
+                            **result,
+                        }
+                    )
                 else:
-                    segment_payloads.append({
-                        "index": idx,
-                        "text": segment_text,
-                        **ErrorResult.voice_fallback(
-                            mode="fallback-no-voice",
-                            reason="voice segment dispatch failed",
-                            request_id=request_id,
-                        ).to_dict(),
-                    })
+                    segment_payloads.append(
+                        {
+                            "index": idx,
+                            "text": segment_text,
+                            **ErrorResult.voice_fallback(
+                                mode="fallback-no-voice",
+                                reason="voice segment dispatch failed",
+                                request_id=request_id,
+                            ).to_dict(),
+                        }
+                    )
 
         return self.merge_voice_segments(normalized, segment_payloads, request_id)
 
@@ -834,9 +841,7 @@ class OrchestratorCore:
                 "wait_timeout_sec": cfg.voice_batch_result_wait_sec,
                 "wait_timeout_sec_congested": cfg.voice_batch_result_wait_sec_congested,
                 "queue_size": self.voice_queue_length(),
-                "worker_running": bool(
-                    self._voice_batch_worker_task and not self._voice_batch_worker_task.done()
-                ),
+                "worker_running": bool(self._voice_batch_worker_task and not self._voice_batch_worker_task.done()),
                 "stats": self.voice_stats_snapshot(),
             },
         }

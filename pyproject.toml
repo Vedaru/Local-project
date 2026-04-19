@@ -22,8 +22,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/local-project"
-Repository = "https://github.com/your-org/local-project"
+Homepage = "https://github.com/local-project/local-project"
+Repository = "https://github.com/local-project/local-project"
 
 [tool.poetry]
 name = "local-project"
@@ -33,82 +33,63 @@ authors = ["Local Project Team"]
 packages = [{include = "modules"}]
 
 [tool.poetry.dependencies]
+# 版本与 requirements.txt 保持一致（见 docs/DEPENDENCIES.md）
 python = ">=3.10,<3.12"
-# Core dependencies
-openai = ">=1.0.0"
-python-dotenv = ">=1.0.0"
-jieba = ">=0.42.1"
-pyaudio = ">=0.2.13"
-requests = ">=2.31.0"
-pyyaml = ">=6.0"
-python-pptx = ">=1.0.2"
-python-docx = ">=1.1.2"
-reportlab = ">=4.2.0"
-
-# Memory system (memoripy)
-faiss-cpu = ">=1.7.0"
-scikit-learn = ">=1.2.0"
-networkx = ">=3.0"
-sentence-transformers = ">=2.2.0"
-pydantic = ">=2.0.0"
-
-# Avatar module (PyQt6)
-PyQt6 = ">=6.4.0"
-PyQt6-WebEngine = ">=6.4.0"
-qasync = ">=0.27.1"
-
-# Voice recognition & audio
-openai-whisper = ">=20250101"
-faster-whisper = ">=0.5.0"
-ctranslate2 = ">=4.0"
-numpy = ">=1.22.0,<2.3.0"
-
-# Computer control
-pyautogui = ">=0.9.53"
-pygetwindow = ">=0.0.9"
-
-# Agent / Browser capabilities (OpenManus)
-browser-use = ">=0.1.40"
-playwright = ">=1.51.0"
-tenacity = ">=9.0.0"
-structlog = ">=24.0.0"
-loguru = ">=0.7.3"
-tiktoken = ">=0.9.0"
-aiofiles = ">=24.1.0"
-colorama = ">=0.4.6"
-html2text = ">=2024.2.26"
-googlesearch-python = ">=1.3.0"
-baidusearch = ">=1.0.3"
-duckduckgo_search = ">=7.5.3"
-tomli = ">=2.0.0"
-httpx = ">=0.27.0"
-beautifulsoup4 = ">=4.12.0"
-fastapi = ">=0.115.0"
-uvicorn = ">=0.30.6"
-
-# OCR
-pytesseract = ">=0.3.10"
+openai = "1.35.0"
+python-dotenv = "1.0.0"
+jieba = "0.42.1"
+pyaudio = "0.2.13"
+requests = "2.31.0"
+pyyaml = "6.0"
+python-pptx = "1.0.2"
+python-docx = "1.1.2"
+reportlab = "4.2.0"
+faiss-cpu = "1.7.4"
+scikit-learn = "1.3.2"
+networkx = "3.2.1"
+sentence-transformers = "2.2.2"
+pydantic = "2.5.0"
+PyQt6 = "6.6.1"
+PyQt6-WebEngine = "6.6.0"
+qasync = "0.27.1"
+openai-whisper = "20231117"
+faster-whisper = "0.10.0"
+ctranslate2 = "3.24.0"
+numpy = "1.24.3"
+pyautogui = "0.9.54"
+pygetwindow = "0.0.9"
+browser-use = "0.1.40"
+playwright = "1.40.0"
+tenacity = "8.2.3"
+structlog = "23.2.0"
+loguru = "0.7.2"
+tiktoken = "0.5.1"
+aiofiles = "23.2.1"
+colorama = "0.4.6"
+fastapi = "0.104.1"
+uvicorn = "0.24.0"
+html2text = "2020.1.16"
+googlesearch-python = "1.2.3"
+baidusearch = "1.0.3"
+duckduckgo_search = "3.9.6"
+tomli = "2.0.1"
+httpx = "0.25.2"
+beautifulsoup4 = "4.12.2"
+pytesseract = "0.3.10"
 
 [tool.poetry.group.dev.dependencies]
-# Testing
-pytest = ">=7.4.0"
-pytest-cov = ">=4.1.0"
-pytest-asyncio = ">=0.21.0"
-pytest-mock = ">=3.12.0"
-pytest-xdist = ">=3.5.0"
-
-# Code quality
-black = ">=23.0.0"
-isort = ">=5.12.0"
-ruff = ">=0.1.0"
-mypy = ">=1.5.0"
-
-# Pre-commit hooks
-pre-commit = ">=3.5.0"
-
-# Type stubs
-types-requests = ">=2.31.0"
-types-pyyaml = ">=6.0.0"
+pytest = "7.4.3"
+pytest-cov = "4.1.0"
+pytest-asyncio = "0.21.1"
+pytest-mock = "3.12.0"
+pytest-xdist = "3.5.0"
+black = "23.11.0"
+isort = "5.12.0"
+ruff = "0.1.6"
+mypy = "1.7.1"
+pre-commit = "3.6.0"
+types-requests = "2.31.0.10"
+types-pyyaml = "6.0.12.12"
 
 [tool.poetry.scripts]
 local-project = "main:main"
@@ -214,6 +195,37 @@ exclude = [
     "tests",
 ]
 
+[[tool.mypy.overrides]]
+module = "microservices.shared.bind_policy"
+disallow_untyped_defs = true
+follow_imports = "normal"
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = "microservices.shared.http_client"
+disallow_untyped_defs = true
+follow_imports = "normal"
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = "microservices.shared.types"
+disallow_untyped_defs = true
+follow_imports = "normal"
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = "microservices.gateway.main"
+disallow_untyped_defs = true
+follow_imports = "normal"
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = "microservices.orchestrator.main"
+disallow_untyped_defs = true
+follow_imports = "skip"
+ignore_missing_imports = true
+
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = [
@@ -221,13 +233,7 @@ addopts = [
     "-q",
     "--strict-markers",
     "--strict-config",
-    "--ignore=tests/temp_click_test.py",
-    "--ignore=tests/temp_test_script.py",
-    "--ignore=tests/temp_test_script2.py",
-    "--ignore=tests/simulate_name_write.py",
-    "--ignore=tests/tmp_list.py",
-    "--ignore=tests/test_action_executor_manual.py",
-    "--ignore=tests/test_open_notebook.py",
+    "--ignore=tests/manual",
 ]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
@@ -240,8 +246,8 @@ markers = [
 ]
 asyncio_mode = "auto"
 filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning",
+    "ignore::DeprecationWarning:httpx.*",
+    "ignore::DeprecationWarning:pydantic.*",
 ]
 
 [tool.coverage.run]
@@ -264,7 +270,7 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "if typing.TYPE_CHECKING:",
 ]
-fail_under = 30
+fail_under = 45
 show_missing = true
 
 [tool.coverage.html]

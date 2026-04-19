@@ -58,6 +58,7 @@ from .config_tuning import (  # noqa: F401
     ExpressionTuning,
     GatewayTuning,
     OrchestratorTuning,
+    SecurityToolsTuning,
     ServicesTuning,
     TuningConfig,
     VoiceTuning,
@@ -96,6 +97,7 @@ __all__ = [
     "VoiceTuning",
     "ExpressionTuning",
     "GatewayTuning",
+    "SecurityToolsTuning",
     "ClientTuning",
     # legacy
     "client",

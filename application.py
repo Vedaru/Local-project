@@ -9,22 +9,17 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
-from microservices.service_client import ServiceCallbacks, create_ai_service
-from modules.avatar import (
-    AvatarWidget,
-    Emotion,
-    ExpressionManager,
-    LipSyncManager,
-)
-from modules.avatar.logger import log_info as avatar_log_info
+from microservices.service_client import MicroserviceAIService, ServiceCallbacks, create_ai_service
 from modules.application.audio_playback_controller import AudioPlaybackController
 from modules.application.console_input_manager import ConsoleInputManager
 from modules.application.expression_orchestrator import ExpressionOrchestrator
+from modules.avatar import AvatarWidget, ExpressionManager, LipSyncManager
+from modules.avatar.logger import log_info as avatar_log_info
 from modules.config import AppConfig
 from modules.logging_config import get_logger
 from modules.utils import sanitize_dialogue_text
@@ -48,11 +43,11 @@ class _GUISignals(QObject):
 class _EarWorker(threading.Thread):  # type: ignore[name-defined]
     """Background worker: microphone -> speech recognition -> submit to service."""
 
-    def __init__(self, core_service, model_size: str = "base"):
+    def __init__(self, core_service: MicroserviceAIService, model_size: str = "base"):
         super().__init__(daemon=True)
         self.core_service = core_service
         self.model_size = model_size
-        self.ear = None
+        self.ear: Any = None
         self._running = True
 
     def run(self):
@@ -61,14 +56,15 @@ class _EarWorker(threading.Thread):  # type: ignore[name-defined]
             from modules.ear import Ear
 
             ear_logger.info(f"初始化听觉模块，模型大小: {self.model_size}")
-            self.ear = Ear(model_size=self.model_size)
+            ear = Ear(model_size=self.model_size)
+            self.ear = ear
 
             def on_text(text: str):
                 if self._running and text.strip():
                     ear_logger.info(f"识别结果: {text}")
                     self.core_service.submit(text)
 
-            self.ear.listen(callback=on_text)
+            ear.listen(callback=on_text)
         except Exception as e:
             ear_logger.error(f"听觉模块错误: {e}", exc_info=True)
         finally:
@@ -97,7 +93,7 @@ class LocalProjectApplication:
 
         # Core components
         self.avatar: Optional[AvatarWidget] = None
-        self.core_service = None
+        self.core_service: Optional[MicroserviceAIService] = None
         self.ear_worker: Optional[_EarWorker] = None
 
         # Sub-controllers (extracted from god class)
@@ -116,13 +112,15 @@ class LocalProjectApplication:
     def setup(self):
         self._connect_signals()
         self._init_backend_components()
-        self._init_avatar_components()
         self._init_core_service()
+        self._init_avatar_components()
 
     def _init_backend_components(self):
         logger.info("后端运行模式: microservices-only")
 
     def _init_avatar_components(self):
+        core_service = self.core_service
+        assert core_service is not None
         self.avatar = AvatarWidget(
             width=self.config.avatar_width,
             height=self.config.avatar_height,
@@ -130,9 +128,7 @@ class LocalProjectApplication:
             y=self.config.avatar_y,
         )
 
-        self.lip_sync_manager = LipSyncManager(
-            update_callback=lambda v: self._signals.lip_sync_update.emit(v)
-        )
+        self.lip_sync_manager = LipSyncManager(update_callback=lambda v: self._signals.lip_sync_update.emit(v))
         self.expression_manager = ExpressionManager(
             expression_callback=self._change_expression,
             motion_callback=self._play_motion,
@@ -147,7 +143,7 @@ class LocalProjectApplication:
             lip_sync_manager=self.lip_sync_manager,
         )
         self._console_manager = ConsoleInputManager(
-            submit_fn=lambda text: self.core_service.submit(text),
+            submit_fn=lambda text: core_service.submit(text),
         )
 
     def _init_core_service(self):
@@ -161,6 +157,8 @@ class LocalProjectApplication:
         self.core_service = create_ai_service(self.config, callbacks)
 
     def show_and_start(self):
+        if self.avatar is None or self.core_service is None:
+            raise RuntimeError("setup() did not initialize avatar or core service")
         self.avatar.show()
         QTimer = self.__import_qtimer()  # noqa: N806
         QTimer.singleShot(1500, self._load_default_model)
@@ -183,6 +181,7 @@ class LocalProjectApplication:
     @staticmethod
     def __import_qtimer():
         from PyQt6.QtCore import QTimer
+
         return QTimer
 
     def _connect_signals(self):
@@ -212,7 +211,7 @@ class LocalProjectApplication:
 
     def _on_lip_sync_update(self, value: object):
         if self.avatar:
-            self.avatar.update_lip_sync(value)
+            self.avatar.update_lip_sync(cast(Any, value))
 
     def _on_expression_change(self, expression):
         if self._expression_orchestrator:

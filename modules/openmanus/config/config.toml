@@ -6,7 +6,7 @@
 [llm]
 model = "deepseek-v3-250324"
 base_url = "https://ark.cn-beijing.volces.com/api/v3"
-api_key = ""
+api_key = "e0d19dea-e6c7-4530-965b-66562569d2da"
 max_tokens = 8192
 temperature = 0.0
 api_type = ""

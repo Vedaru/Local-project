@@ -75,7 +75,7 @@ Project Local 以本地优先为原则，整合 LLM 对话、语音链路、记�
 ### 方式一：Windows 独立 Runtime（推荐）
 
 ```batch
-git clone https://github.com/your-org/local-project.git
+git clone https://github.com/CHANGE_ME/local-project.git
 cd local-project
 
 install_dependencies.bat
@@ -91,7 +91,7 @@ check_runtime.bat
 ### 方式二：系统 Python / 虚拟环境
 
 ```powershell
-git clone https://github.com/your-org/local-project.git
+git clone https://github.com/CHANGE_ME/local-project.git
 cd local-project
 
 python -m venv .venv
@@ -146,7 +146,11 @@ Local-project/
 - 中文开发指南：`CONTRIBUTING.md`
 - English Developer Guide: `CONTRIBUTING_EN.md`
 - 日本語開発ガイド：`CONTRIBUTING_JA.md`
+- 依赖与可复现构建：[DEPENDENCIES.md](DEPENDENCIES.md)
+- 安全与威胁面：[SECURITY.md](SECURITY.md)
+- 健康检查与运维：[OPS_HEALTH.md](OPS_HEALTH.md)
+- 仓库元数据（发布前替换占位 URL）：[METADATA.md](METADATA.md)
 
 ## 许可证
 
-MIT，详见 `../LICENSE`。
+MIT，详见 [LICENSE](../LICENSE)。

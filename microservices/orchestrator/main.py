@@ -8,17 +8,36 @@ This file retains only FastAPI routes and wiring.
 import asyncio
 import contextlib
 import threading
+import uuid
+from collections.abc import Awaitable, Callable
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.responses import Response
 
 from microservices.orchestrator.core import OrchestratorConfig, OrchestratorCore
-from modules.logging_config import get_logger
+from modules.logging_config import clear_context, get_logger, set_context
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
 app = FastAPI(title="project-local-orchestrator", version="0.2.0")
 logger = get_logger("Orchestrator")
+
+
+@app.middleware("http")
+async def request_context_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
+    set_context(request_id=rid)
+    try:
+        response = await call_next(request)
+        response.headers.setdefault("x-request-id", rid)
+        return response
+    finally:
+        clear_context()
+
 
 # Singleton core instance (legacy compat with tests)
 _core: Optional[OrchestratorCore] = None

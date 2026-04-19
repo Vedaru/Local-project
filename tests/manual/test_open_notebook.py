@@ -5,7 +5,7 @@ a sequence of JSON tool calls. It then checks that the expected side effects
 occur (a file written with the specified content).
 
 To run:
-    python tests/test_open_notebook.py
+    python tests/manual/test_open_notebook.py
 """
 
 import json
@@ -13,7 +13,7 @@ import os
 import sys
 
 # make sure workspace root is on path so 'modules' package can be resolved
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 import contextlib
 

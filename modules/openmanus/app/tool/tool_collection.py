@@ -93,6 +93,17 @@ class ToolCollection:
             self._stats["execute_errors"] = int(self._stats["execute_errors"]) + 1
             return ToolFailure(error=f"Tool {name} is invalid")
 
+        try:
+            from modules.security_tools import is_tool_allowed
+        except ImportError:
+
+            def is_tool_allowed(_tool: str) -> bool:  # type: ignore[misc]
+                return True
+
+        if not is_tool_allowed(name):
+            self._stats["execute_errors"] = int(self._stats["execute_errors"]) + 1
+            return ToolFailure(error=f"Tool {name} is disabled by security policy")
+
         input_payload = tool_input or {}
         try:
             result = await tool(**input_payload)

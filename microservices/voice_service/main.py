@@ -3,18 +3,35 @@ import os
 import time
 import uuid
 import wave
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
+from starlette.responses import Response
 
-from modules.logging_config import get_logger
+from modules.logging_config import clear_context, get_logger, set_context
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
 app = FastAPI(title="project-local-voice-service", version="0.1.0")
 
 logger = get_logger("VoiceService")
+
+
+@app.middleware("http")
+async def request_context_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
+    set_context(request_id=rid)
+    try:
+        response = await call_next(request)
+        response.headers.setdefault("x-request-id", rid)
+        return response
+    finally:
+        clear_context()
 
 
 def _read_bool(raw: str | None, default: bool) -> bool:
@@ -50,9 +67,8 @@ def _load_voice_runtime_settings() -> dict[str, Any]:
         pass
 
     wav_output_dir = (
-        (os.getenv("VOICE_WAV_OUTPUT_DIR", str(defaults["wav_output_dir"])) or str(defaults["wav_output_dir"]))
-        .strip()
-    )
+        os.getenv("VOICE_WAV_OUTPUT_DIR", str(defaults["wav_output_dir"])) or str(defaults["wav_output_dir"])
+    ).strip()
     wav_cleanup_enabled = _read_bool(
         os.getenv("VOICE_WAV_CLEANUP_ENABLED"),
         bool(defaults["wav_cleanup_enabled"]),
@@ -60,17 +76,17 @@ def _load_voice_runtime_settings() -> dict[str, Any]:
     wav_cleanup_interval_sec = max(
         5.0,
         float(
-            (os.getenv("VOICE_WAV_CLEANUP_INTERVAL_SEC", str(defaults["wav_cleanup_interval_sec"])) or defaults["wav_cleanup_interval_sec"])
+            (
+                os.getenv("VOICE_WAV_CLEANUP_INTERVAL_SEC", str(defaults["wav_cleanup_interval_sec"]))
+                or defaults["wav_cleanup_interval_sec"]
+            )
         ),
     )
     wav_ttl_sec = max(
         30.0,
         float((os.getenv("VOICE_WAV_TTL_SEC", str(defaults["wav_ttl_sec"])) or defaults["wav_ttl_sec"])),
     )
-    sovits_url = (
-        (os.getenv("SOVITS_URL", str(defaults["sovits_url"])) or str(defaults["sovits_url"]))
-        .strip()
-    )
+    sovits_url = (os.getenv("SOVITS_URL", str(defaults["sovits_url"])) or str(defaults["sovits_url"])).strip()
 
     return {
         "wav_output_dir": wav_output_dir,
@@ -93,10 +109,17 @@ _CLEANUP_TASK: asyncio.Task[None] | None = None
 
 
 class VoiceRuntime(Protocol):
-    def close(self) -> None: ...
-    def get_tts_stats(self) -> dict[str, Any]: ...
-    def get_provider_status(self) -> dict[str, Any]: ...
-    def speak_and_save(self, text: str, output_path: str) -> bool: ...
+    def close(self) -> None:
+        ...
+
+    def get_tts_stats(self) -> dict[str, Any]:
+        ...
+
+    def get_provider_status(self) -> dict[str, Any]:
+        ...
+
+    def speak_and_save(self, text: str, output_path: str) -> bool:
+        ...
 
 
 _VOICE_MANAGER: VoiceRuntime | None = None

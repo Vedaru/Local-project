@@ -75,7 +75,7 @@ The following tools stay serial by default for safety:
 ### Option 1: Embedded Runtime on Windows (Recommended)
 
 ```batch
-git clone https://github.com/your-org/local-project.git
+git clone https://github.com/CHANGE_ME/local-project.git
 cd local-project
 
 install_dependencies.bat
@@ -91,7 +91,7 @@ check_runtime.bat
 ### Option 2: System Python / Virtual Environment
 
 ```powershell
-git clone https://github.com/your-org/local-project.git
+git clone https://github.com/CHANGE_ME/local-project.git
 cd local-project
 
 python -m venv .venv

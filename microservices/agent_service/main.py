@@ -1,24 +1,47 @@
 import asyncio
 import os
 import re
+import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
+from starlette.responses import Response
 
-from modules.logging_config import get_logger
+from modules.logging_config import clear_context, get_logger, set_context
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
 app = FastAPI(title="project-local-agent-service", version="0.1.0")
 logger = get_logger("AgentService")
 
 
+@app.middleware("http")
+async def request_context_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
+    set_context(request_id=rid)
+    try:
+        response = await call_next(request)
+        response.headers.setdefault("x-request-id", rid)
+        return response
+    finally:
+        clear_context()
+
+
 class AgentRuntime(Protocol):
-    def cleanup(self) -> None: ...
-    def run_task(self, task_description: str) -> str: ...
-    def request_cancel(self) -> bool: ...
+    def cleanup(self) -> None:
+        ...
+
+    def run_task(self, task_description: str) -> str:
+        ...
+
+    def request_cancel(self) -> bool:
+        ...
 
 
 _REAL_AGENT: AgentRuntime | None = None

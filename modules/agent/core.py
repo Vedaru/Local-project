@@ -180,13 +180,13 @@ def _sync_openmanus_config():
 
         def _safe_int(value: object, default: int) -> int:
             try:
-                return int(value)
+                return int(str(value).strip())
             except Exception:
                 return default
 
         def _safe_float(value: object, default: float) -> float:
             try:
-                return float(value)
+                return float(str(value).strip())
             except Exception:
                 return default
 

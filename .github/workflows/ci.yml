@@ -49,23 +49,25 @@ jobs:
       - name: Install linting tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install black isort ruff mypy types-requests types-PyYAML
+          python -m pip install \
+            black==23.11.0 isort==5.12.0 ruff==0.1.6 mypy==1.7.1 \
+            types-requests==2.31.0.10 types-pyyaml==6.0.12.12
 
       - name: Check code formatting with Black
         run: |
-          black --check --diff modules/ tests/ main.py
+          black --check --diff modules/ tests/ main.py application.py microservices/
 
       - name: Check import sorting with isort
         run: |
-          isort --check-only --diff modules/ tests/ main.py
+          isort --check-only --diff modules/ tests/ main.py application.py microservices/
 
       - name: Lint with Ruff
         run: |
-          ruff check modules/ tests/ main.py
+          ruff check modules/ tests/ main.py application.py microservices/
 
       - name: Type check with mypy
         run: |
-          python -m mypy modules/
+          python -m mypy modules/ microservices/ main.py application.py
 
       - name: Syntax check integration modules
         run: |
@@ -108,18 +110,21 @@ jobs:
             requirements.txt
             pyproject.toml
 
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install wheel
-          # Always install test framework first
-          python -m pip install pytest pytest-cov pytest-asyncio pytest-mock
-          # Install minimal required deps for tests (must succeed)
-          python -m pip install pyyaml python-dotenv requests jieba pydantic networkx openai sentence-transformers scikit-learn faiss-cpu numpy tenacity tomli structlog beautifulsoup4 baidusearch googlesearch-python duckduckgo_search html2text httpx colorama aiofiles loguru tiktoken fastapi uvicorn
+          python -m pip install -r requirements.txt
 
       - name: Run tests
         run: |
-          python -m pytest tests/ -v --tb=short -x --maxfail=1
+          python -m pytest tests/ -v --tb=short
         env:
           ARK_API_KEY: "test-key"
           MODEL_NAME: "test-model"
@@ -177,11 +182,15 @@ jobs:
             requirements.txt
             pyproject.toml
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest pytest-cov pytest-asyncio pytest-mock
-          python -m pip install pyyaml python-dotenv requests jieba pydantic networkx openai sentence-transformers scikit-learn faiss-cpu numpy tenacity tomli structlog beautifulsoup4 baidusearch googlesearch-python duckduckgo_search html2text httpx colorama aiofiles loguru tiktoken fastapi uvicorn
+          python -m pip install -r requirements.txt
 
       - name: Run tests with coverage
         run: |
@@ -228,11 +237,15 @@ jobs:
             requirements.txt
             pyproject.toml
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest coverage pytest-asyncio pytest-mock
-          python -m pip install pyyaml python-dotenv requests jieba pydantic networkx openai sentence-transformers scikit-learn faiss-cpu numpy tenacity tomli structlog beautifulsoup4 baidusearch googlesearch-python duckduckgo_search html2text httpx colorama aiofiles loguru tiktoken fastapi uvicorn
+          python -m pip install -r requirements.txt
 
       - name: Run focused integration coverage
         run: |

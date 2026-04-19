@@ -47,9 +47,7 @@ class ServiceMonitorApp:
         self.root.title("Project Local - Microservices Monitor")
         self.root.geometry("1080x560")
 
-        self.gateway_base = os.getenv(
-            "MONITOR_GATEWAY_URL", f"http://127.0.0.1:{DEFAULT_GATEWAY_PORT}"
-        ).rstrip("/")
+        self.gateway_base = os.getenv("MONITOR_GATEWAY_URL", f"http://127.0.0.1:{DEFAULT_GATEWAY_PORT}").rstrip("/")
 
         self.services = [
             ("gateway", f"http://127.0.0.1:{DEFAULT_GATEWAY_PORT}/health"),
@@ -103,9 +101,7 @@ class ServiceMonitorApp:
         controls = ttk.Frame(self.root)
         controls.pack(fill="x", padx=12, pady=(0, 8))
 
-        ttk.Button(controls, text="Refresh Now", command=self.trigger_refresh).pack(
-            side="left"
-        )
+        ttk.Button(controls, text="Refresh Now", command=self.trigger_refresh).pack(side="left")
 
         ttk.Checkbutton(
             controls,
@@ -191,8 +187,7 @@ class ServiceMonitorApp:
                     "url": str(item.get("url", "")),
                     "ok": bool(item.get("ok", False)),
                     "latency_ms": item.get("latency_ms", "-"),
-                    "message": item.get("error", "")
-                    or json.dumps(item.get("payload", {}), ensure_ascii=False),
+                    "message": item.get("error", "") or json.dumps(item.get("payload", {}), ensure_ascii=False),
                 }
             )
         return rows
@@ -275,9 +270,7 @@ class ServiceMonitorApp:
                     tags=(tag,),
                 )
 
-        self.status_var.set(
-            f"Last refresh {updated_at} | healthy {up_count}/{len(rows)} | probe {elapsed_ms} ms"
-        )
+        self.status_var.set(f"Last refresh {updated_at} | healthy {up_count}/{len(rows)} | probe {elapsed_ms} ms")
         self._refresh_in_progress = False
 
 

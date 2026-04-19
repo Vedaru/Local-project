@@ -75,7 +75,7 @@ Project Local は、LLM 対話、音声パイプライン、記憶管理、PC �
 ### 方法 1: Windows 組み込み Runtime（推奨）
 
 ```batch
-git clone https://github.com/your-org/local-project.git
+git clone https://github.com/CHANGE_ME/local-project.git
 cd local-project
 
 install_dependencies.bat
@@ -91,7 +91,7 @@ check_runtime.bat
 ### 方法 2: システム Python / 仮想環境
 
 ```powershell
-git clone https://github.com/your-org/local-project.git
+git clone https://github.com/CHANGE_ME/local-project.git
 cd local-project
 
 python -m venv .venv

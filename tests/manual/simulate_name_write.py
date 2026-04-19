@@ -2,7 +2,7 @@ import json
 import os
 import sys
 
-sys.path.append(r"d:\Personal_Files\Projects\Github\Local-project")
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from modules.agent import agent_tools, core
 
 responses = []

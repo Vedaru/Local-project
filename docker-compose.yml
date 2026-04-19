@@ -1,0 +1,79 @@
+# Reference stack for backend microservices (GUI / PyQt still runs on the host).
+# Prerequisites: copy or export .env with at least GATEWAY_API_KEY when binding beyond loopback.
+#
+#   docker compose build
+#   docker compose up
+#
+# Services use GATEWAY_BIND_HOST=0.0.0.0 inside containers; Gateway refuses to start
+# without GATEWAY_API_KEY in that mode (see microservices/shared/bind_policy.py).
+
+services:
+  memory-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.microservices
+    command: >
+      python -m uvicorn microservices.memory_service.main:app --host 0.0.0.0 --port 18082
+    ports:
+      - "18082:18082"
+    environment:
+      PYTHONPATH: /app
+
+  agent-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.microservices
+    command: >
+      python -m uvicorn microservices.agent_service.main:app --host 0.0.0.0 --port 18083
+    ports:
+      - "18083:18083"
+    environment:
+      PYTHONPATH: /app
+
+  voice-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.microservices
+    command: >
+      python -m uvicorn microservices.voice_service.main:app --host 0.0.0.0 --port 18084
+    ports:
+      - "18084:18084"
+    environment:
+      PYTHONPATH: /app
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.microservices
+    command: >
+      python -m uvicorn microservices.orchestrator.main:app --host 0.0.0.0 --port 18081
+    ports:
+      - "18081:18081"
+    environment:
+      PYTHONPATH: /app
+      MEMORY_SERVICE_URL: http://memory-service:18082
+      AGENT_SERVICE_URL: http://agent-service:18083
+      VOICE_SERVICE_URL: http://voice-service:18084
+    depends_on:
+      - memory-service
+      - agent-service
+      - voice-service
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.microservices
+    command: >
+      python -m uvicorn microservices.gateway.main:app --host 0.0.0.0 --port 18080
+    ports:
+      - "18080:18080"
+    environment:
+      PYTHONPATH: /app
+      GATEWAY_BIND_HOST: "0.0.0.0"
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:?Set GATEWAY_API_KEY in environment or .env}
+      ORCHESTRATOR_URL: http://orchestrator:18081
+      MEMORY_SERVICE_URL: http://memory-service:18082
+      AGENT_SERVICE_URL: http://agent-service:18083
+      VOICE_SERVICE_URL: http://voice-service:18084
+    depends_on:
+      - orchestrator

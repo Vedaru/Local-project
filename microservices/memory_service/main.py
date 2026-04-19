@@ -9,22 +9,24 @@ HTTP API:
 
 import asyncio
 import json
-import logging
 import os
 import threading
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from typing import Any, Optional
 
 import uvicorn
-from fastapi import Body, FastAPI
+from fastapi import Body, FastAPI, Request
 from pydantic import BaseModel, Field
+from starlette.responses import Response
 
+from modules.logging_config import clear_context, get_logger, set_context
 from modules.memory import HumanMemoryEngine
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
-logger = logging.getLogger("MemoryService")
+logger = get_logger("MemoryService")
 
 # ---------------------------------------------------------------------------
 # Global singleton
@@ -290,6 +292,7 @@ def _create_llm_extract_fn():
         _model_name = ""
         try:
             from modules.config import get_cached_config
+
             cfg = get_cached_config()
             _model_name = cfg.model_name or ""
         except Exception:
@@ -322,8 +325,8 @@ def _create_llm_extract_fn():
 
             text = str(response).strip()
             # 移除可能的 markdown 代码块标记
-            text = re.sub(r'^```json\s*', '', text)
-            text = re.sub(r'```\s*$', '', text)
+            text = re.sub(r"^```json\s*", "", text)
+            text = re.sub(r"```\s*$", "", text)
 
             result = json.loads(text)
             if isinstance(result, dict):
@@ -449,6 +452,21 @@ def _replay_pending_wal_records() -> dict[str, int]:
 
 
 app = FastAPI(title="Memory Service (MemPalace)", version="3.0.0")
+
+
+@app.middleware("http")
+async def request_context_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
+    set_context(request_id=rid)
+    try:
+        response = await call_next(request)
+        response.headers.setdefault("x-request-id", rid)
+        return response
+    finally:
+        clear_context()
 
 
 class BatchRequest(BaseModel):

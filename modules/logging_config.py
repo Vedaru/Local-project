@@ -11,6 +11,13 @@ Features:
 This module is the single source of truth for logging in the application; other modules
 should call `from modules.logging_config import get_logger` and use
 `get_logger('MyModule')` to obtain a logger that writes to the centralized handlers.
+
+Embedded OpenManus code may still use `structlog` / `loguru` internally; new project code
+should prefer `get_logger` here for consistent rotation and JSON file output.
+
+Microservices set `request_id` via `set_context(request_id=...)` in HTTP middleware (from the
+`x-request-id` header) so structured JSON logs include correlation across Gateway → Orchestrator
+→ downstream services.
 """
 
 import contextlib

@@ -206,6 +206,8 @@ class TestConfigTuning:
         assert t.voice.streaming_mode == 3
         assert t.expression.auto_reset_sec == 2.4
         assert t.client.user_id == "local-gui"
+        assert t.gateway.bind_host == "127.0.0.1"
+        assert t.security_tools.browser_automation_enabled is True
 
     def test_load_tuning_from_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         from modules.config_tuning import load_tuning

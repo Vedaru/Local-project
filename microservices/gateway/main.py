@@ -31,18 +31,21 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from microservices.shared.bind_policy import bind_requires_gateway_api_key, validate_gateway_bind_and_api_key
 from microservices.shared.http_client import get_json, post_json
-from modules.logging_config import get_logger
+from modules.logging_config import clear_context, get_logger, set_context
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
 app = FastAPI(title="project-local-gateway", version="0.1.0")
 logger = get_logger("Gateway")
+
 
 # ---- 从 TuningConfig 读取服务地址与超时（统一配置源） ----
 def _load_tuning_or_defaults():
     """尝试从 TuningConfig 加载；失败则回退到环境变量 + 默认值。"""
     try:
         from modules.config_tuning import load_tuning
+
         t = load_tuning()
         svc = t.services
         orch = t.orchestrator
@@ -56,10 +59,15 @@ def _load_tuning_or_defaults():
             "api_key": gw.api_key,
             # 超时：如果 unified yaml 中已显式设置 chat_timeout_sec 则直接用
             # 否则自动推导 = memory + max(agent, voice) + 余量
-            "chat_timeout_sec": gw.chat_timeout_sec if gw.chat_timeout_sec > 0
+            "chat_timeout_sec": gw.chat_timeout_sec
+            if gw.chat_timeout_sec > 0
             else round(orch.memory_timeout_sec + max(orch.agent_timeout_sec, orch.voice_timeout_sec), 1),
         }
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, (ImportError, OSError, ValueError)):
+            logger.debug("Gateway: load_tuning unavailable, using env/derived defaults (%s)", exc)
+        else:
+            logger.warning("Gateway: load_tuning failed, using env/derived defaults", exc_info=True)
         # 回退：纯环境变量 + 推导逻辑（向后兼容旧部署方式）
         _mem = float(os.getenv("ORCH_MEMORY_TIMEOUT_SEC", "8") or "8")
         _agent = float(os.getenv("ORCH_AGENT_TIMEOUT_SEC", "180") or "180")
@@ -72,8 +80,7 @@ def _load_tuning_or_defaults():
             "voice_service_url": os.getenv("VOICE_SERVICE_URL", "http://localhost:18084"),
             "gateway_port": os.getenv("GATEWAY_PORT", "18080"),
             "api_key": (os.getenv("GATEWAY_API_KEY", "") or "").strip(),
-            "chat_timeout_sec": float(_explicit_timeout) if _explicit_timeout
-            else round(_mem + max(_agent, _voice), 1),
+            "chat_timeout_sec": float(_explicit_timeout) if _explicit_timeout else round(_mem + max(_agent, _voice), 1),
         }
 
 
@@ -88,6 +95,23 @@ GATEWAY_PORT: str = _cfg["gateway_port"]
 GATEWAY_CHAT_TIMEOUT_SEC: float = _cfg["chat_timeout_sec"]
 
 
+def _resolve_gateway_bind_host() -> str:
+    """Must match the host passed to uvicorn --host (set GATEWAY_BIND_HOST when not loopback)."""
+    raw = (os.getenv("GATEWAY_BIND_HOST") or "").strip()
+    if raw:
+        return raw
+    try:
+        from modules.config_tuning import load_tuning
+
+        return str(load_tuning().gateway.bind_host or "127.0.0.1").strip() or "127.0.0.1"
+    except Exception as exc:
+        if isinstance(exc, (ImportError, OSError, ValueError)):
+            logger.debug("Gateway bind_host: load_tuning unavailable, using 127.0.0.1 (%s)", exc)
+        else:
+            logger.warning("Gateway bind_host: load_tuning failed, using 127.0.0.1", exc_info=True)
+        return "127.0.0.1"
+
+
 @app.middleware("http")
 async def tracing_and_auth_middleware(
     request: Request,
@@ -95,28 +119,32 @@ async def tracing_and_auth_middleware(
 ) -> Response:
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     request.state.request_id = request_id
+    set_context(request_id=request_id)
+    try:
+        if GATEWAY_API_KEY and request.url.path.startswith("/v1/"):
+            header_key = (request.headers.get("x-api-key") or "").strip()
+            bearer = (request.headers.get("authorization") or "").strip()
+            bearer_key = bearer[7:].strip() if bearer.lower().startswith("bearer ") else ""
+            if header_key != GATEWAY_API_KEY and bearer_key != GATEWAY_API_KEY:
+                from microservices.shared.types import ErrorResult
 
-    if GATEWAY_API_KEY and request.url.path.startswith("/v1/"):
-        header_key = (request.headers.get("x-api-key") or "").strip()
-        bearer = (request.headers.get("authorization") or "").strip()
-        bearer_key = bearer[7:].strip() if bearer.lower().startswith("bearer ") else ""
-        if header_key != GATEWAY_API_KEY and bearer_key != GATEWAY_API_KEY:
-            from microservices.shared.types import ErrorResult
-            err = ErrorResult(
-                status="error",
-                code="unauthorized",
-                message="missing or invalid API key",
-                request_id=request_id,
-            ).to_dict()
-            return JSONResponse(
-                status_code=401,
-                content=err,
-                headers={"x-request-id": request_id},
-            )
+                err = ErrorResult(
+                    status="error",
+                    code="unauthorized",
+                    message="missing or invalid API key",
+                    request_id=request_id,
+                ).to_dict()
+                return JSONResponse(
+                    status_code=401,
+                    content=err,
+                    headers={"x-request-id": request_id},
+                )
 
-    response = await call_next(request)
-    response.headers["x-request-id"] = request_id
-    return response
+        response = await call_next(request)
+        response.headers["x-request-id"] = request_id
+        return response
+    finally:
+        clear_context()
 
 
 async def _probe_service(service_name: str, base_url: str) -> dict[str, Any]:
@@ -154,6 +182,14 @@ class ChatRequest(BaseModel):
 @app.on_event("startup")
 async def startup_event() -> None:
     ensure_supported_python_runtime(logger=logger)
+    bind_host = _resolve_gateway_bind_host()
+    validate_gateway_bind_and_api_key(bind_host=bind_host, api_key=GATEWAY_API_KEY)
+    logger.info(
+        "Gateway bind policy ok: host=%s bind_requires_api_key=%s api_key_configured=%s",
+        bind_host,
+        bind_requires_gateway_api_key(bind_host),
+        bool(GATEWAY_API_KEY),
+    )
 
 
 @app.get("/health")
@@ -163,6 +199,7 @@ async def health(request: Request) -> dict:
         "service": "gateway",
         "request_id": getattr(request.state, "request_id", ""),
         "auth_enabled": bool(GATEWAY_API_KEY),
+        "bind_host_effective": _resolve_gateway_bind_host(),
     }
 
 
@@ -181,14 +218,16 @@ async def service_status(request: Request) -> dict:
     normalized: list[dict[str, object]] = []
     for c in checks:
         if isinstance(c, BaseException):
-            normalized.append({
-                "service": "unknown",
-                "url": "",
-                "ok": False,
-                "latency_ms": 0,
-                "payload": {},
-                "error": str(c),
-            })
+            normalized.append(
+                {
+                    "service": "unknown",
+                    "url": "",
+                    "ok": False,
+                    "latency_ms": 0,
+                    "payload": {},
+                    "error": str(c),
+                }
+            )
         else:
             normalized.append(c)
     healthy_count = sum(1 for item in normalized if item["ok"])

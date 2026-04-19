@@ -20,7 +20,7 @@ This guide explains the recommended development, testing, and contribution workf
 ### Setup
 
 ```powershell
-git clone https://github.com/your-org/local-project.git
+git clone https://github.com/CHANGE_ME/local-project.git
 cd local-project
 
 python -m venv .venv

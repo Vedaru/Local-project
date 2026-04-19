@@ -113,11 +113,24 @@ class ExpressionTuning:
 
 
 @dataclass
+class SecurityToolsTuning:
+    """高危工具类能力的显式开关（与 docs/SECURITY.md 一致）。"""
+
+    browser_automation_enabled: bool = True
+    python_execution_enabled: bool = True
+    shell_execution_enabled: bool = True
+    file_editor_enabled: bool = True
+    mcp_enabled: bool = True
+
+
+@dataclass
 class GatewayTuning:
     """网关调优参数。"""
 
     chat_timeout_sec: float = 60.0
     api_key: str = ""
+    # 与 uvicorn --host 保持一致；非回环地址且未配置 api_key 时 Gateway 启动将失败
+    bind_host: str = "127.0.0.1"
 
 
 @dataclass
@@ -145,6 +158,7 @@ class TuningConfig:
     expression: ExpressionTuning = field(default_factory=ExpressionTuning)
     gateway: GatewayTuning = field(default_factory=GatewayTuning)
     client: ClientTuning = field(default_factory=ClientTuning)
+    security_tools: SecurityToolsTuning = field(default_factory=SecurityToolsTuning)
 
     @classmethod
     def from_yaml(cls, path: Optional[str] = None) -> "TuningConfig":
@@ -169,6 +183,8 @@ class TuningConfig:
         expr_raw = defaults.get("expression", {}) or {}
         gw_raw = defaults.get("gateway", {}) or {}
         cli_raw = defaults.get("client", {}) or {}
+        sec_raw = defaults.get("security", {}) or {}
+        sec_tools_raw = sec_raw.get("tools", {}) or {}
 
         return cls(
             services=ServicesTuning(
@@ -234,10 +250,33 @@ class TuningConfig:
             gateway=GatewayTuning(
                 chat_timeout_sec=float(_env_str("GATEWAY_CHAT_TIMEOUT_SEC", _get(gw_raw, "chat_timeout_sec", 60.0))),
                 api_key=(os.getenv("GATEWAY_API_KEY", _get(gw_raw, "api_key", "")) or "").strip(),
+                bind_host=_env_str("GATEWAY_BIND_HOST", _get(gw_raw, "bind_host", "127.0.0.1")),
             ),
             client=ClientTuning(
                 user_id=(os.getenv("LOCAL_GUI_USER_ID", _get(cli_raw, "user_id", "local-gui")) or "local-gui").strip(),
                 request_timeout_sec=_env_int("CLIENT_REQUEST_TIMEOUT_SEC", _get(cli_raw, "request_timeout_sec", 30)),
+            ),
+            security_tools=SecurityToolsTuning(
+                browser_automation_enabled=_read_bool(
+                    os.getenv("SECURITY_TOOL_BROWSER_AUTOMATION_ENABLED"),
+                    _get(sec_tools_raw, "browser_automation_enabled", True),
+                ),
+                python_execution_enabled=_read_bool(
+                    os.getenv("SECURITY_TOOL_PYTHON_EXECUTION_ENABLED"),
+                    _get(sec_tools_raw, "python_execution_enabled", True),
+                ),
+                shell_execution_enabled=_read_bool(
+                    os.getenv("SECURITY_TOOL_SHELL_EXECUTION_ENABLED"),
+                    _get(sec_tools_raw, "shell_execution_enabled", True),
+                ),
+                file_editor_enabled=_read_bool(
+                    os.getenv("SECURITY_TOOL_FILE_EDITOR_ENABLED"),
+                    _get(sec_tools_raw, "file_editor_enabled", True),
+                ),
+                mcp_enabled=_read_bool(
+                    os.getenv("SECURITY_TOOL_MCP_ENABLED"),
+                    _get(sec_tools_raw, "mcp_enabled", True),
+                ),
             ),
         )
 

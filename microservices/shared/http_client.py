@@ -17,6 +17,10 @@ from typing import Any, Mapping, Optional
 
 import httpx
 
+from modules.logging_config import get_logger
+
+_logger = get_logger("HttpClient")
+
 # ── 全局单例 + 连接池配置 ──────────────────────────────────────────────
 _client: Optional[httpx.AsyncClient] = None
 
@@ -34,8 +38,11 @@ try:
     if isinstance(http_cfg, dict):
         _pool_defaults["max_connections"] = int(http_cfg.get("pool_max_connections", _pool_defaults["max_connections"]))
         _pool_defaults["max_keepalive"] = int(http_cfg.get("pool_max_keepalive", _pool_defaults["max_keepalive"]))
-except Exception:
-    pass
+except Exception as exc:
+    if isinstance(exc, (ImportError, OSError, ValueError, TypeError)):
+        _logger.debug("http_client pool sizes: YAML network.http_client unavailable (%s)", exc)
+    else:
+        _logger.warning("http_client pool sizes: unexpected error reading YAML, using defaults", exc_info=True)
 
 _POOL_MAX_CONNECTIONS = int(os.getenv("HTTP_CLIENT_POOL_MAX", str(_pool_defaults["max_connections"])))
 _POOL_MAX_KEEPALIVE = int(os.getenv("HTTP_CLIENT_KEEPALIVE", str(_pool_defaults["max_keepalive"])))

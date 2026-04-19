@@ -14,7 +14,7 @@ def test_voice_service_default_wav_output_uses_data_temp(monkeypatch: pytest.Mon
     module = importlib.reload(voice_service_main)
 
     normalized = Path(module.VOICE_WAV_OUTPUT_DIR).as_posix().lower()
-    assert normalized.endswith("/data/temp")
+    assert normalized.rstrip("/").endswith("data/temp")
 
 
 @pytest.mark.unit
