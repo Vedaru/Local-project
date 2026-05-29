@@ -5,11 +5,16 @@ repos:
     hooks:
       - id: end-of-file-fixer
       - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
   - repo: https://github.com/psf/black
     rev: "23.11.0"
     hooks:
       - id: black
-        language_version: python3.10
+        language_version: python3
         files: ^(modules/|tests/|microservices/|main\.py|application\.py)
   - repo: https://github.com/pycqa/isort
     rev: "5.12.0"
