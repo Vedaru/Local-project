@@ -29,6 +29,18 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+推荐脚本入口（Windows）：`scripts\install.bat`、`scripts\start.bat`、`scripts\check.bat`。根目录同名 `.bat` 为兼容包装。
+
+Docker 后端栈：`docker compose -f docker/docker-compose.yml up -d` 或 `make docker-up`。
+
+配置分层见 `config/` 目录与 [`DEPENDENCIES.md`](DEPENDENCIES.md)。
+
+## 代码组织约定
+
+- 新增业务模块优先保持 **300–500 行** 量级，职责单一；已有大文件（如 `modules/voice.py`、`modules/memory/core.py`、`microservices/orchestrator/core.py`）仅在明确拆分时重构，不强制为凑行数而拆分。
+- 文件名统一使用 **snake_case**（Python 模块）或与现有目录一致的小写命名。
+- Vendor 目录（`modules/gpt_sovits`、`modules/openmanus`）以同步上游为主，避免大规模格式化。
+
 ## 2. 本地运行与测试
 
 ```powershell

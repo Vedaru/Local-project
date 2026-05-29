@@ -4,7 +4,7 @@
 
 ## 监听端口与暴露面
 
-默认微服务端口见 [`project_config.yaml`](../project_config.yaml) 中 `services` 段（常见为 18080–18084）。在**可信局域网**以外监听 `0.0.0.0` 时，等同将本机 AI 与控制能力暴露给网络，**务必**仅在内网或本机使用，或通过防火墙限制来源 IP。
+默认微服务端口见 [`config/default.yaml`](../config/default.yaml) 中 `services` 段（常见为 18080–18084）。在**可信局域网**以外监听 `0.0.0.0` 时，等同将本机 AI 与控制能力暴露给网络，**务必**仅在内网或本机使用，或通过防火墙限制来源 IP。
 
 ### 启动策略（可执行）
 
@@ -27,7 +27,7 @@
 - **浏览器自动化**（如 Playwright / browser-use）：可访问网页、执行脚本，需配合白名单与人工确认策略。
 - **Python / Shell / 文件编辑**：仅在受信任环境下使用。
 
-在 [`project_config.yaml`](../project_config.yaml) 的 **`security.tools`** 段可为下列类别设置默认开关（也可用环境变量 **`SECURITY_TOOL_*_ENABLED`** 覆盖，见文件内注释）：
+在 [`config/default.yaml`](../config/default.yaml) 的 **`security.tools`** 段（或本地 `project_config.yaml` 覆盖）可为下列类别设置默认开关（也可用环境变量 **`SECURITY_TOOL_*_ENABLED`** 覆盖，见文件内注释）：
 
 | 类别 | 典型工具名 | 配置键 |
 |------|------------|--------|
@@ -46,7 +46,7 @@ OpenManus 工具集中部分工具默认**串行**以降低风险（见主文档
 
 ### 容器 / Compose
 
-若使用 [`docker-compose.yml`](../docker-compose.yml) 将 Gateway 暴露到非回环地址，**必须**在环境中提供 **`GATEWAY_API_KEY`**（参见 compose 文件中的约束）。详见 [`Dockerfile.microservices`](../Dockerfile.microservices)。
+若使用 [`docker/docker-compose.yml`](../docker/docker-compose.yml) 或根目录 [`docker-compose.yml`](../docker-compose.yml) 将 Gateway 暴露到非回环地址，**必须**在 `docker/.env` 或环境中提供 **`GATEWAY_API_KEY`**。镜像定义见 [`docker/Dockerfile.services`](../docker/Dockerfile.services)。
 
 ## 日志与隐私
 

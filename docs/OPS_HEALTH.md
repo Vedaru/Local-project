@@ -1,6 +1,35 @@
 # 运维与健康检查
 
-在默认端口（见 [`project_config.yaml`](../project_config.yaml) 中 `services`）下，各服务提供 `GET /health`。以下为在本机（bash）快速探测示例（请按实际端口调整）。
+在默认端口（见 [`config/default.yaml`](../config/default.yaml) 中 `services`）下，各服务提供 `GET /health`。以下为在本机（bash）快速探测示例（请按实际端口调整）。
+
+```bash
+curl -sS "http://127.0.0.1:18080/health" | jq .
+curl -sS "http://127.0.0.1:18081/health" | jq .
+curl -sS "http://127.0.0.1:18082/health" | jq .
+curl -sS "http://127.0.0.1:18083/health" | jq .
+curl -sS "http://127.0.0.1:18084/health" | jq .
+```
+
+## Docker 栈
+
+```bash
+copy docker\.env.example docker\.env   # Windows
+# 编辑 GATEWAY_API_KEY 后：
+docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml ps
+docker compose -f docker/docker-compose.yml logs -f gateway
+```
+
+容器内已配置 `HEALTHCHECK`；也可在宿主机执行上述 `curl` 命令。
+
+## 本地脚本
+
+| 脚本 | 说明 |
+|------|------|
+| `scripts/start.bat` / `scripts/start.sh` | 启动微服务 + GUI |
+| `scripts/start.bat --start-services-only` | 仅启动微服务 |
+| `scripts/check.bat` | Windows 运行时健康检查 |
+| `make docker-up` | 启动 Docker 后端栈 |
 
 ```bash
 curl -sS "http://127.0.0.1:18080/health" | jq .
