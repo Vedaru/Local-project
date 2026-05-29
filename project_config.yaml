@@ -10,9 +10,9 @@ meta:
 
 # --------------------- 应用核心配置 ---------------------
 api:
-  ark_api_key: ""
-  ark_base_url: "https://ark.cn-beijing.volces.com/api/v3"
-  model_name: "deepseek-v3-250324"
+  ark_api_key: "sk-330189069eaf41f989fef22f330627d5"
+  ark_base_url: "https://api.deepseek.com"
+  model_name: "deepseek-v4-pro"
   embedding_model_name: ""
   sovits_url: "http://127.0.0.1:9880"
 
@@ -24,6 +24,7 @@ audio:
 memory:
   data_dir: "data/memoripy"
   collection_name: "seeka_memory"
+  n_results: 8
 
 logging:
   log_dir: "data/logs"
@@ -106,7 +107,7 @@ voice:
   wav_ttl_sec: 1800
 
 expression:
-  auto_reset_sec: 2.4
+  auto_reset_sec: 8.0  # 表情保持时间（秒），FACS 模式下需要更长
   min_timer_gap_ms: 120
   timeline_play_motion: false
   min_segment_sec: 0.30
@@ -157,9 +158,9 @@ memory_service:
 #      该 toml 仅作为运行时派生文件，不再作为手动维护源。
 openmanus:
   llm:
-    model: "deepseek-v3-250324"
-    base_url: "https://ark.cn-beijing.volces.com/api/v3"
-    api_key: ""
+    model: "deepseek-v4-pro"
+    base_url: "https://api.deepseek.com"
+    api_key: "sk-330189069eaf41f989fef22f330627d5"
     max_tokens: 8192
     temperature: 0.0
     api_type: ""
