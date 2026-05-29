@@ -24,10 +24,44 @@ if TYPE_CHECKING:
 
 # ---- 路径常量（全局唯一真相来源） ----
 PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+_CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 _ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
+_DEFAULT_LAYERED_DEFAULT = os.path.join(_CONFIG_DIR, "default.yaml")
 _DEFAULT_DEV_CONFIG_PATH = os.path.join(PROJECT_ROOT, "project_config.yaml")
 _DEFAULT_PROD_CONFIG_PATH = "/etc/local-project/project_config.yaml"
 GPT_SOVITS_ROOT = os.path.join(os.path.dirname(__file__), "gpt_sovits")
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """递归合并 YAML 字典，override 优先。"""
+    merged: dict[str, Any] = dict(base)
+    for key, value in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_yaml_file(path: str) -> dict[str, Any]:
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def _load_layered_yaml_config(environment: str) -> dict[str, Any]:
+    """按 default → {env} → 本地 project_config 顺序合并配置。"""
+    merged = _load_yaml_file(_DEFAULT_LAYERED_DEFAULT)
+    env_file = os.path.join(_CONFIG_DIR, f"{environment}.yaml")
+    merged = _deep_merge(merged, _load_yaml_file(env_file))
+
+    local_paths = (_DEFAULT_DEV_CONFIG_PATH if environment != "production" else _DEFAULT_PROD_CONFIG_PATH,)
+    for local_path in local_paths:
+        if os.path.exists(local_path):
+            merged = _deep_merge(merged, _load_yaml_file(local_path))
+            break
+    return merged
 
 
 class EnvironmentAwareConfig:
@@ -46,7 +80,8 @@ class EnvironmentAwareConfig:
 
 
 # ---- 模块级单例：配置路径和已加载的值 ----
-CONFIG_PATH: str = EnvironmentAwareConfig().get_config_path()
+_env_config = EnvironmentAwareConfig()
+CONFIG_PATH: str = _env_config.get_config_path()
 # 向后兼容: 暴露 ENV_PATH / TUNING_PATH（config_app.py / config_tuning.py 使用）
 ENV_PATH: str = _ENV_PATH
 # 单一配置源: tuning 也来自同一个 YAML 文件
@@ -58,11 +93,11 @@ _env_vars: dict[str, Optional[str]] = dotenv.dotenv_values(dotenv_path=_ENV_PATH
 dotenv.load_dotenv(dotenv_path=_ENV_PATH)
 
 # 加载 YAML 配置
-if os.path.exists(CONFIG_PATH):
-    with open(CONFIG_PATH, encoding="utf-8") as _f:
-        _yaml_config: dict = yaml.safe_load(_f) or {}
+_explicit_config_path = (os.getenv("APP_CONFIG_PATH") or "").strip()
+if _explicit_config_path:
+    _yaml_config: dict[str, Any] = _load_yaml_file(_explicit_config_path)
 else:
-    _yaml_config = {}
+    _yaml_config = _load_layered_yaml_config(_env_config.environment)
 
 
 def get_yaml_config() -> dict:
