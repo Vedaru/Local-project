@@ -1,0 +1,12 @@
+# 生产环境覆盖项（APP_ENV=production）
+
+logging:
+  log_level: "WARNING"
+
+gateway:
+  bind_host: "0.0.0.0"
+  # api_key 请通过环境变量 GATEWAY_API_KEY 或本地 project_config.yaml 设置
+
+runtime:
+  python:
+    strict: true

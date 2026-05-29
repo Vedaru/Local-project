@@ -1,0 +1,10 @@
+# 开发环境覆盖项（APP_ENV=development，默认）
+
+logging:
+  log_level: "DEBUG"
+
+gateway:
+  bind_host: "127.0.0.1"
+
+ear:
+  enabled: false

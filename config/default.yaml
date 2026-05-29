@@ -1,0 +1,164 @@
+# Project Local — 默认配置（不含密钥）
+# 加载顺序: default.yaml → {APP_ENV}.yaml → project_config.yaml（本地覆盖，见 .gitignore）
+
+meta:
+  config_version: 2
+  unified_config: true
+
+api:
+  ark_api_key: ""
+  ark_base_url: "https://api.deepseek.com"
+  model_name: ""
+  embedding_model_name: ""
+  sovits_url: "http://127.0.0.1:9880"
+
+audio:
+  ref_audio_path: "assets/audio_ref/大家好，我是虚拟歌手洛天依.wav"
+  prompt_text: "大家好，我是虚拟歌手洛天依，欢迎来到我的十周年生日会直播。"
+  sample_rate: 32000
+
+memory:
+  data_dir: "data/memoripy"
+  collection_name: "seeka_memory"
+
+logging:
+  log_dir: "data/logs"
+  log_level: "INFO"
+
+thresholds:
+  max_entity_count: 100
+  memory_cleanup_days: 7
+
+controller:
+  enabled: true
+  failsafe: true
+  app_whitelist:
+    notepad: "C:\\Windows\\System32\\notepad.exe"
+    calc: "C:\\Windows\\System32\\calc.exe"
+
+ear:
+  enabled: false
+  model_size: "base"
+
+agent:
+  max_steps: 100
+  task_timeout_seconds: 300.0
+
+avatar:
+  width: 400
+  height: 600
+  x: 100
+  y: 100
+
+services:
+  gateway_port: 18080
+  orchestrator_port: 18081
+  memory_service_port: 18082
+  agent_service_port: 18083
+  voice_service_port: 18084
+  orchestrator_url: "http://localhost:18081"
+  memory_service_url: "http://localhost:18082"
+  agent_service_url: "http://localhost:18083"
+  voice_service_url: "http://localhost:18084"
+
+orchestrator:
+  llm_executor_workers: 4
+  memory_timeout_sec: 8.0
+  memory_retrieve_timeout_sec: 8.0
+  memory_store_timeout_sec: 1.8
+  memory_batch_timeout_sec: 10.0
+  agent_timeout_sec: 180.0
+  voice_timeout_sec: 60.0
+  max_requests_per_second: 8.0
+  burst_size: 16
+  voice_async_batch_enabled: true
+  voice_batch_max_size: 8
+  voice_batch_collect_window_ms: 8
+  voice_batch_result_wait_sec: 1.2
+  voice_batch_congested_queue_size: 12
+  voice_batch_result_wait_sec_congested: 0.4
+  voice_hit_priority_direct_enabled: true
+  voice_hit_priority_direct_timeout_sec: 8.0
+  circuit_fail_threshold: 3
+  circuit_cooldown_sec: 30.0
+  pending_memory_queue_size: 24
+
+voice:
+  connect_timeout_sec: 5
+  read_timeout_sec: 30
+  streaming_mode: 3
+  parallel_infer: false
+  min_chunk_length: 8
+  overlap_length: 1
+  text_split_method: "cut1"
+  buffered_fallback_enabled: true
+  system_tts_fallback_enabled: true
+  cpp_accel_lib: ""
+  wav_output_dir: "data/temp"
+  wav_cleanup_enabled: true
+  wav_cleanup_interval_sec: 120
+  wav_ttl_sec: 1800
+
+expression:
+  auto_reset_sec: 2.4
+  min_timer_gap_ms: 120
+  timeline_play_motion: false
+  min_segment_sec: 0.30
+  min_hold_sec: 0.55
+  switch_margin: 0.10
+  continuity_bias: 0.12
+  smooth_window_sec: 0.55
+  neutral_tail_sec: 0.26
+
+gateway:
+  chat_timeout_sec: 60
+  api_key: ""
+  bind_host: "127.0.0.1"
+
+security:
+  tools:
+    browser_automation_enabled: true
+    python_execution_enabled: true
+    shell_execution_enabled: true
+    file_editor_enabled: true
+    mcp_enabled: true
+
+client:
+  user_id: "local-gui"
+  request_timeout_sec: 30
+
+network:
+  http_client:
+    pool_max_connections: 100
+    pool_max_keepalive: 20
+
+runtime:
+  python:
+    min_version: "3.10"
+    max_version_exclusive: "3.12"
+    strict: false
+
+memory_service:
+  wal_path: ""
+  batch_disable_fact_extraction: true
+  batch_deferred_persist: true
+
+openmanus:
+  llm:
+    model: ""
+    base_url: "https://api.deepseek.com"
+    api_key: ""
+    max_tokens: 8192
+    temperature: 0.0
+    api_type: ""
+    api_version: ""
+  search:
+    engine: "Baidu"
+    fallback_engines: ["DuckDuckGo", "Bing"]
+    lang: "zh"
+    country: "cn"
+  browser:
+    headless: false
+    disable_security: true
+  mcp:
+    server_reference: "app.mcp.server"
