@@ -72,21 +72,39 @@ The following tools stay serial by default for safety:
 
 ## Quick Start
 
-### Option 1: Embedded Runtime on Windows (Recommended)
+### Option 1: Windows Batch Scripts (Recommended)
 
 ```batch
 git clone https://github.com/CHANGE_ME/local-project.git
 cd local-project
 
-install_dependencies.bat
-run_with_runtime.bat
+REM Install core dependencies
+scripts\install.bat
+
+REM Start the project
+scripts\start.bat
 ```
 
-Optional runtime check:
+Optional runtime check: `scripts\check.bat`
 
-```batch
-check_runtime.bat
+### Option 4: Docker (backend stack only)
+
+```powershell
+copy docker\.env.example docker\.env
+docker compose -f docker/docker-compose.yml up -d
+make docker-up
 ```
+
+**Installation Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `-Dev` | Install development/testing dependencies |
+| `-Mirror` | Use Tsinghua mirror for faster downloads |
+| `-Torch` | Install PyTorch (CUDA 12.1) |
+| `-GptSovits` | Install GPT-SoVITS voice synthesis dependencies |
+| `-Optional` | Install optional dependencies (Docker, AWS, crawlers, etc.) |
+| `-All` | Install all dependencies |
 
 ### Option 2: System Python / Virtual Environment
 
@@ -96,8 +114,27 @@ cd local-project
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+
+REM Install core dependencies
 python -m pip install -r requirements.txt
+
+REM Install PyTorch (requires >=2.6.0, choose based on CUDA version)
+python -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" --index-url https://download.pytorch.org/whl/cu121
+
+REM Install GPT-SoVITS dependencies (optional)
+python -m pip install transformers huggingface_hub peft librosa soundfile pypinyin cn2an
+
 python main.py
+```
+
+### Option 3: Poetry
+
+```powershell
+git clone https://github.com/CHANGE_ME/local-project.git
+cd local-project
+
+poetry install
+poetry run python main.py
 ```
 
 ## Optional: Build Rust Fetcher Extension
@@ -130,15 +167,18 @@ python -m pytest tests/test_openmanus_browser_enhancements.py -q
 python -m pytest tests/test_voice_tts_chain.py -q
 ```
 
-## Repository Layout (Excerpt)
+## Repository Layout
 
 ```text
 Local-project/
-├── modules/                     # Main feature modules
-├── microservices/               # Gateway, orchestrator, backend services
-├── rust_modules/web_fetcher_rs/ # Rust web fetch extension
-├── tests/                       # Test suite
-└── docs/                        # Multilingual docs
+├── config/                      # Layered YAML (default / dev / prod)
+├── docker/                      # Docker images and compose
+├── scripts/                     # install / start / check scripts
+├── modules/                     # Core business modules
+├── microservices/               # FastAPI services
+├── assets/                      # Avatar models and audio refs
+├── tests/
+└── docs/
 ```
 
 ## Related Docs

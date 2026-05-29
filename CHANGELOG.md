@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Layered configuration under `config/` (`default.yaml`, `development.yaml`, `production.yaml`) with merge into `modules/config_base.py`.
+- `scripts/` directory for install/start/check (Windows `.bat` + Linux/macOS `.sh`); root batch files kept as thin wrappers.
+- Enhanced Docker stack under `docker/` (multi-stage `Dockerfile.services`, health checks, `docker/Makefile`).
+- Root `Makefile` for lint/test/docker shortcuts; expanded `.pre-commit-config.yaml` hooks.
 - HTTP middleware on Gateway, Orchestrator, Memory/Agent/Voice services sets logging `request_id` context and echoes `x-request-id` on responses.
 - Table-driven tests for Gateway `/v1` API key auth and expanded `security.tools` coverage.
 - [`docs/RELEASE.md`](docs/RELEASE.md) describing versioning and release checklist.

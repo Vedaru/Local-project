@@ -21,7 +21,31 @@
 ## 项目简介
 
 Project Local 以本地优先为原则，整合 LLM 对话、语音链路、记忆系统、电脑控制与 Avatar 展示能力。
-当前默认运行模式为 microservices-only：GUI 通过 gateway 调用 orchestrator 与后端服务。
+当前默认运行模式为 **microservices-only**：PyQt6 GUI 通过 Gateway 调用 Orchestrator 与后端服务。
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    GUI[PyQt6_GUI] --> Gateway
+    Gateway --> Orchestrator
+    Orchestrator --> MemoryService
+    Orchestrator --> AgentService
+    Orchestrator --> VoiceService
+    AgentService --> OpenManus
+    VoiceService --> GPTSoVITS
+    MemoryService --> DataStore[(data/)]
+```
+
+| 组件 | 端口 | 职责 |
+|------|------|------|
+| Gateway | 18080 | API 入口、认证、路由 |
+| Orchestrator | 18081 | 对话编排、LLM 调度 |
+| Memory Service | 18082 | 记忆存储与检索 |
+| Agent Service | 18083 | 工具执行、浏览器自动化 |
+| Voice Service | 18084 | ASR / TTS 链路 |
+
+数据流：`用户输入 → Gateway → Orchestrator → [Memory/Agent/Voice] → 响应 → GUI/Avatar`
 
 ## 核心能力
 
@@ -72,21 +96,39 @@ Project Local 以本地优先为原则，整合 LLM 对话、语音链路、记�
 
 ## 快速开始
 
-### 方式一：Windows 独立 Runtime（推荐）
+### 方式一：Windows 批处理脚本（推荐）
 
 ```batch
 git clone https://github.com/CHANGE_ME/local-project.git
 cd local-project
 
+REM 安装核心依赖（推荐 scripts/ 目录）
+scripts\install.bat
+
+REM 或根目录兼容入口
 install_dependencies.bat
-run_with_runtime.bat
+
+REM 安装完整依赖（含 PyTorch + GPT-SoVITS）
+scripts\install.bat -Torch -GptSovits
+
+REM 启动项目
+scripts\start.bat
 ```
 
-可先执行：
+可先执行环境检查：`scripts\check.bat` 或 `check_runtime.bat`
 
-```batch
-check_runtime.bat
-```
+**配置说明：** 复制 `.env.example` 为 `.env` 并填写 `ARK_API_KEY`；可选创建 `project_config.yaml` 覆盖 `config/` 分层配置。
+
+**安装参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `-Dev` | 安装开发/测试依赖 |
+| `-Mirror` | 使用清华镜像源加速 |
+| `-Torch` | 安装 PyTorch (CUDA 12.1) |
+| `-GptSovits` | 安装 GPT-SoVITS 语音合成依赖 |
+| `-Optional` | 安装可选依赖 (Docker, AWS, 爬虫等) |
+| `-All` | 安装所有依赖 |
 
 ### 方式二：系统 Python / 虚拟环境
 
@@ -96,8 +138,53 @@ cd local-project
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+
+REM 安装核心依赖
 python -m pip install -r requirements.txt
+
+REM 安装 PyTorch（要求 >=2.6.0，根据 CUDA 版本选择）
+python -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" --index-url https://download.pytorch.org/whl/cu121
+
+REM 安装 GPT-SoVITS 依赖（可选）
+python -m pip install transformers huggingface_hub peft librosa soundfile pypinyin cn2an
+
 python main.py
+```
+
+### 方式三：Poetry
+
+```powershell
+git clone https://github.com/CHANGE_ME/local-project.git
+cd local-project
+
+poetry install
+poetry run python main.py
+```
+
+### 方式四：Docker（仅后端微服务栈）
+
+GUI 仍在宿主机运行；容器内启动 Gateway / Orchestrator / 各后端服务。
+
+```powershell
+copy docker\.env.example docker\.env
+# 编辑 docker\.env，设置 GATEWAY_API_KEY
+
+docker compose -f docker/docker-compose.yml build
+docker compose -f docker/docker-compose.yml up -d
+
+# 或使用 Makefile
+make docker-build
+make docker-up
+```
+
+根目录 `docker-compose.yml` 为兼容入口，实际编排见 [`docker/docker-compose.yml`](../docker/docker-compose.yml)。
+
+### Linux / macOS
+
+```bash
+chmod +x scripts/install.sh scripts/start.sh
+./scripts/install.sh
+./scripts/start.sh
 ```
 
 ## 可选：构建 Rust 抓取扩展
@@ -130,16 +217,58 @@ python -m pytest tests/test_openmanus_browser_enhancements.py -q
 python -m pytest tests/test_voice_tts_chain.py -q
 ```
 
-## 项目结构（节选）
+## 项目结构
 
 ```text
 Local-project/
-├── modules/                     # 主功能模块
-├── microservices/               # 网关、编排器、服务
-├── rust_modules/web_fetcher_rs/ # Rust 网页抓取扩展
-├── tests/                       # 测试
-└── docs/                        # 多语言文档
+├── main.py                      # GUI 入口（PyQt6 + qasync）
+├── application.py               # GUI 应用编排
+├── config/                      # 分层配置（default / development / production）
+├── docker/                      # Docker 镜像与 compose 编排
+├── scripts/                     # 安装与启动脚本（install/start/check）
+├── assets/                      # Avatar 模型、参考音频
+├── data/                        # 运行时数据（日志、记忆，gitignore）
+├── modules/                     # 核心业务模块
+│   ├── agent/                   # Agent 桥接
+│   ├── application/             # GUI 子控制器
+│   ├── avatar/                  # 虚拟形象
+│   ├── memory/                  # 记忆系统
+│   ├── openmanus/               # Agent 框架（vendor）
+│   └── gpt_sovits/              # 语音合成（vendor）
+├── microservices/               # FastAPI 微服务
+│   ├── gateway/
+│   ├── orchestrator/
+│   ├── agent_service/
+│   ├── memory_service/
+│   ├── voice_service/
+│   └── shared/
+├── cpp_modules/voice_cpp_engine/  # C++ 语音加速
+├── rust_modules/web_fetcher_rs/   # Rust 网页抓取
+├── tests/
+└── docs/
 ```
+
+## Gateway API 摘要
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/health` | 健康检查 |
+| GET | `/v1/status/services` | 聚合服务状态 |
+| POST | `/v1/chat` | 对话接口（非回环需 `x-api-key`） |
+
+详见 [`OPS_HEALTH.md`](OPS_HEALTH.md) 与 [`SECURITY.md`](SECURITY.md)。
+
+## 故障排除（节选）
+
+| 现象 | 处理 |
+|------|------|
+| `h2 package is not installed` | `pip install "httpx[http2]" h2` |
+| 网关启动失败（非回环） | 设置 `GATEWAY_API_KEY` 或 `gateway.api_key` |
+| PyTorch 版本冲突 | 升级至 `torch>=2.6.0`（见 DEPENDENCIES.md） |
+| Docker Gateway 拒绝启动 | 在 `docker/.env` 中设置 `GATEWAY_API_KEY` |
+| 缺少本地密钥 | 复制 `.env.example` → `.env`，可选 `project_config.yaml` |
+
+更多运维命令见 [`OPS_HEALTH.md`](OPS_HEALTH.md)；依赖问题见 [`DEPENDENCIES.md`](DEPENDENCIES.md)。
 
 ## 相关文档
 
