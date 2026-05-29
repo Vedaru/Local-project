@@ -1,5 +1,9 @@
 # Environment variables
 .env
+microservices/.env
+
+# Project configuration (contains API keys)
+project_config.yaml
 
 # Audio files
 *.wav
@@ -55,7 +59,19 @@ desktop.ini
 *.egg-info/
 dist/
 build/
+cpp_modules/*/build/
 *.egg
+
+# GPT-SoVITS runtime artifacts
+modules/gpt_sovits/*.log
+modules/gpt_sovits/test_output.wav
+
+# Large pretrained models (download separately)
+modules/gpt_sovits/GPT_SoVITS/pretrained_models/
+modules/gpt_sovits/GPT_weights_v2/
+
+# Rust build output
+rust_modules/*/target/
 
 # Test coverage
 .coverage

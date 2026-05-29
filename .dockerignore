@@ -8,7 +8,15 @@ __pycache__
 venv
 htmlcov
 .coverage
-data/logs
+data/
 *.egg-info
 dist
 build
+runtime/
+modules/gpt_sovits/GPT_SoVITS/pretrained_models/
+modules/gpt_sovits/GPT_weights_v2/
+modules/gpt_sovits/*.log
+*.wav
+.env
+project_config.yaml
+modules/openmanus/logs
