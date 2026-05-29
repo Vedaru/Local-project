@@ -1,0 +1,143 @@
+# Reference stack for backend microservices (GUI / PyQt still runs on the host).
+# Prerequisites: copy docker/.env.example to docker/.env and set GATEWAY_API_KEY.
+#
+#   cd docker
+#   docker compose build
+#   docker compose up -d
+#
+# Services bind 0.0.0.0 inside containers; Gateway requires GATEWAY_API_KEY
+# (see microservices/shared/bind_policy.py).
+
+services:
+  memory-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.services
+    command: >
+      python -m uvicorn microservices.memory_service.main:app --host 0.0.0.0 --port 18082
+    ports:
+      - "18082:18082"
+    environment:
+      PYTHONPATH: /app
+      PORT: "18082"
+    volumes:
+      - memory-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  agent-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.services
+    command: >
+      python -m uvicorn microservices.agent_service.main:app --host 0.0.0.0 --port 18083
+    ports:
+      - "18083:18083"
+    environment:
+      PYTHONPATH: /app
+      PORT: "18083"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18083/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  voice-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.services
+    command: >
+      python -m uvicorn microservices.voice_service.main:app --host 0.0.0.0 --port 18084
+    ports:
+      - "18084:18084"
+    environment:
+      PYTHONPATH: /app
+      PORT: "18084"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18084/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.services
+    command: >
+      python -m uvicorn microservices.orchestrator.main:app --host 0.0.0.0 --port 18081
+    ports:
+      - "18081:18081"
+    environment:
+      PYTHONPATH: /app
+      PORT: "18081"
+      MEMORY_SERVICE_URL: http://memory-service:18082
+      AGENT_SERVICE_URL: http://agent-service:18083
+      VOICE_SERVICE_URL: http://voice-service:18084
+    depends_on:
+      memory-service:
+        condition: service_healthy
+      agent-service:
+        condition: service_started
+      voice-service:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 25s
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.services
+    command: >
+      python -m uvicorn microservices.gateway.main:app --host 0.0.0.0 --port 18080
+    ports:
+      - "18080:18080"
+    environment:
+      PYTHONPATH: /app
+      PORT: "18080"
+      GATEWAY_BIND_HOST: "0.0.0.0"
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:?Set GATEWAY_API_KEY in docker/.env}
+      ORCHESTRATOR_URL: http://orchestrator:18081
+      MEMORY_SERVICE_URL: http://memory-service:18082
+      AGENT_SERVICE_URL: http://agent-service:18083
+      VOICE_SERVICE_URL: http://voice-service:18084
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 25s
+    restart: unless-stopped
+
+  monitor:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.services
+    command: python microservices/monitor_panel.py
+    environment:
+      PYTHONPATH: /app
+      GATEWAY_PORT: "18080"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    profiles:
+      - monitoring
+
+volumes:
+  memory-data:

@@ -1,0 +1,25 @@
+# Project Local — 微服务镜像（多阶段构建）
+# Build: docker build -f docker/Dockerfile.services -t local-project-ms .
+FROM python:3.11-slim-bookworm AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    portaudio19-dev \
+    build-essential \
+    curl \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+FROM base AS services
+
+COPY . .
+ENV PYTHONPATH=/app
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${PORT:-18080}/health" || exit 1
+
+EXPOSE 18080 18081 18082 18083 18084
