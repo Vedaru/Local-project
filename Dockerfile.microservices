@@ -1,9 +1,9 @@
-# Optional image for running the FastAPI microservice stack (see docker-compose.yml).
-# Build: docker build -f Dockerfile.microservices -t local-project-ms .
+# Deprecated: use docker/Dockerfile.services
+# Kept for backward compatibility with existing CI/docs references.
 FROM python:3.11-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    portaudio19-dev build-essential \
+    portaudio19-dev build-essential curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -13,5 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 ENV PYTHONPATH=/app
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${PORT:-18080}/health" || exit 1
 
 EXPOSE 18080 18081 18082 18083 18084
