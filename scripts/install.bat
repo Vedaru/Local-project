@@ -150,28 +150,28 @@ REM ============================================================
 echo.
 if "%INSTALL_GPT_SOVITS%"=="1" (
     echo [4/7] 安装 GPT-SoVITS 语音合成依赖...
-    
+
     echo   - 安装 HuggingFace 生态...
     "%PYTHON_EXE%" -m pip install "transformers>=4.38.0" huggingface_hub peft %PIP_INDEX_ARGS%
-    
+
     echo   - 安装深度学习工具...
     "%PYTHON_EXE%" -m pip install pytorch-lightning torchmetrics einops x-transformers %PIP_INDEX_ARGS%
-    
+
     echo   - 安装音频处理...
     "%PYTHON_EXE%" -m pip install librosa soundfile ffmpeg-python %PIP_INDEX_ARGS%
-    
+
     echo   - 安装 ONNX 推理...
     "%PYTHON_EXE%" -m pip install onnxruntime %PIP_INDEX_ARGS%
-    
+
     echo   - 安装中文文本处理...
     "%PYTHON_EXE%" -m pip install pypinyin cn2an %PIP_INDEX_ARGS%
-    
+
     echo   - 安装 NLP 工具...
     "%PYTHON_EXE%" -m pip install nltk matplotlib %PIP_INDEX_ARGS%
-    
+
     echo   - 安装 MCP 协议...
     "%PYTHON_EXE%" -m pip install mcp %PIP_INDEX_ARGS%
-    
+
     echo [OK] GPT-SoVITS 依赖安装完成
 ) else (
     echo [4/7] 跳过 GPT-SoVITS 依赖（使用 -GptSovits 参数安装）
@@ -183,16 +183,16 @@ REM ============================================================
 echo.
 if "%INSTALL_OPTIONAL%"=="1" (
     echo [5/7] 安装可选依赖...
-    
+
     echo   - 安装 Docker SDK...
     "%PYTHON_EXE%" -m pip install docker %PIP_INDEX_ARGS%
-    
+
     echo   - 安装 AWS SDK...
     "%PYTHON_EXE%" -m pip install boto3 %PIP_INDEX_ARGS%
-    
+
     echo   - 安装网页爬取...
     "%PYTHON_EXE%" -m pip install crawl4ai %PIP_INDEX_ARGS%
-    
+
     echo [OK] 可选依赖安装完成
 ) else (
     echo [5/7] 跳过可选依赖（使用 -Optional 参数安装）
