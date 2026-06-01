@@ -1,29 +1,22 @@
+"""
+Memory C++ 加速后端 — FFI 绑定 memory_cpp_engine 库
+
+提供 FNV 哈希嵌入和多线程记忆评分计算能力。
+DLL 搜索路径和候选库发现逻辑委托给 cpp_accel_common。
+"""
+
 from __future__ import annotations
 
 import ctypes
-import os
-import sys
 import threading
 from array import array
 from pathlib import Path
 from typing import Optional, Sequence
 
+from .cpp_accel_common import as_bytes_pointer, load_cpp_backend_common
 from .logging_config import get_logger
 
 logger = get_logger("memory_cpp_accel")
-
-_PY_BYTES_AS_STRING = ctypes.pythonapi.PyBytes_AsString
-_PY_BYTES_AS_STRING.argtypes = [ctypes.py_object]
-_PY_BYTES_AS_STRING.restype = ctypes.c_void_p
-
-
-def _as_bytes_pointer(data: bytes) -> tuple[object, object]:
-    if not data:
-        return ctypes.cast(ctypes.c_void_p(), ctypes.POINTER(ctypes.c_uint8)), data
-
-    address = int(_PY_BYTES_AS_STRING(data))
-    pointer = ctypes.cast(address, ctypes.POINTER(ctypes.c_uint8))
-    return pointer, data
 
 
 class MemoryCppBackend:
@@ -63,7 +56,7 @@ class MemoryCppBackend:
             return []
 
         text_bytes = (text or "").encode("utf-8", errors="ignore")
-        text_ptr, keepalive = _as_bytes_pointer(text_bytes)
+        text_ptr, keepalive = as_bytes_pointer(text_bytes)
         _ = keepalive
 
         out_embedding = (ctypes.c_float * dimension)()
@@ -157,114 +150,6 @@ _backend_lock = threading.Lock()
 _backend_cache: Optional[MemoryCppBackend] = None
 _backend_attempted = False
 _backend_error: Optional[str] = None
-_windows_dll_handles: list[object] = []
-_windows_dll_dirs_seen: set[str] = set()
-
-
-def _candidate_library_paths(explicit_library: str = "") -> list[Path]:
-    root_dir = Path(__file__).resolve().parents[1]
-    explicit_library = (explicit_library or "").strip()
-    env_library = (os.getenv("MEMORY_CPP_ACCEL_LIB", "") or "").strip()
-
-    candidates: list[Path] = []
-    if explicit_library:
-        candidates.append(Path(explicit_library))
-    if env_library:
-        candidates.append(Path(env_library))
-
-    if os.name == "nt":
-        library_names = ["memory_cpp_engine.dll"]
-    elif os.name == "posix" and "darwin" in sys.platform:
-        library_names = ["memory_cpp_engine.dylib", "libmemory_cpp_engine.dylib"]
-    else:
-        library_names = ["memory_cpp_engine.so", "libmemory_cpp_engine.so"]
-
-    search_dirs = [
-        root_dir / "build" / "memory_cpp_engine",
-        root_dir / "build" / "memory_cpp_engine" / "Release",
-        root_dir / "build" / "memory_cpp_engine" / "Debug",
-        root_dir / "cpp_modules" / "memory_cpp_engine" / "build",
-        root_dir / "cpp_modules" / "memory_cpp_engine" / "build" / "Release",
-        root_dir / "cpp_modules" / "memory_cpp_engine" / "build" / "Debug",
-    ]
-
-    for search_dir in search_dirs:
-        for library_name in library_names:
-            candidates.append(search_dir / library_name)
-
-    deduplicated: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = str(candidate.resolve()) if candidate.exists() else str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduplicated.append(candidate)
-
-    return deduplicated
-
-
-def _register_windows_dll_dirs(extra_dirs: list[Path]) -> None:
-    if os.name != "nt":
-        return
-
-    add_dll_directory = getattr(os, "add_dll_directory", None)
-    if add_dll_directory is None:
-        return
-
-    candidate_dirs: list[Path] = []
-    candidate_dirs.extend(extra_dirs)
-
-    path_raw = os.environ.get("PATH", "")
-    if path_raw:
-        for item in path_raw.split(os.pathsep):
-            item = item.strip().strip('"')
-            if item:
-                candidate_dirs.append(Path(item))
-
-    candidate_dirs.extend(
-        [
-            Path("D:/mingw64/bin"),
-            Path("C:/mingw64/bin"),
-            Path.home()
-            / "AppData"
-            / "Local"
-            / "Microsoft"
-            / "WinGet"
-            / "Packages"
-            / "BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe"
-            / "mingw64"
-            / "bin",
-            Path.home()
-            / "AppData"
-            / "Local"
-            / "Microsoft"
-            / "WinGet"
-            / "Packages"
-            / "MartinStorsjo.LLVM-MinGW.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe"
-            / "llvm-mingw-20260324-ucrt-x86_64"
-            / "bin",
-        ]
-    )
-
-    for candidate_dir in candidate_dirs:
-        try:
-            resolved = str(candidate_dir.resolve())
-        except Exception:
-            resolved = str(candidate_dir)
-
-        normalized = resolved.lower().rstrip("\\/")
-        if not normalized or normalized in _windows_dll_dirs_seen:
-            continue
-        if not Path(resolved).exists():
-            continue
-
-        try:
-            handle = add_dll_directory(resolved)
-            _windows_dll_handles.append(handle)
-            _windows_dll_dirs_seen.add(normalized)
-        except Exception:
-            continue
 
 
 def load_memory_cpp_backend(*, explicit_library: str = "", required: bool = False) -> Optional[MemoryCppBackend]:
@@ -282,36 +167,25 @@ def load_memory_cpp_backend(*, explicit_library: str = "", required: bool = Fals
             return None
 
         _backend_attempted = True
-        errors: list[str] = []
-        attempted_paths: list[str] = []
 
-        for candidate in _candidate_library_paths(explicit_library=explicit_library):
-            if not candidate.exists() or not candidate.is_file():
-                continue
-            attempted_paths.append(str(candidate))
-            try:
-                _register_windows_dll_dirs([candidate.parent])
-                library = ctypes.CDLL(str(candidate))
-                _backend_cache = MemoryCppBackend(library=library, library_path=candidate)
-                logger.info("Memory C++ acceleration loaded: %s", candidate)
-                return _backend_cache
-            except OSError as exc:
-                errors.append(f"{candidate}: {exc}")
-            except Exception as exc:
-                errors.append(f"{candidate}: {exc}")
+    # 使用公共加载器（在锁外执行 I/O 和 CDLL 加载）
+    def _factory(library: ctypes.CDLL, library_path: Path) -> MemoryCppBackend:
+        return MemoryCppBackend(library=library, library_path=library_path)
 
-        if attempted_paths:
-            detail = "; ".join(errors) if errors else "no successful candidate"
-            _backend_error = (
-                "Memory C++ acceleration backend failed to load. "
-                f"Tried {len(attempted_paths)} path(s): {', '.join(attempted_paths)}. "
-                f"Details: {detail}"
-            )
+    result = load_cpp_backend_common(
+        library_name="memory_cpp_engine.dll",
+        env_var_name="MEMORY_CPP_ACCEL_LIB",
+        module_name="memory_cpp_engine",
+        backend_factory=_factory,
+        explicit_library=explicit_library,
+        logger_name="memory_cpp_accel",
+        required=required,
+    )
+
+    with _backend_lock:
+        if result is not None:
+            _backend_cache = result  # type: ignore[assignment]
         else:
-            _backend_error = "Memory C++ acceleration backend library file was not found in candidate paths."
+            _backend_error = "Memory C++ acceleration backend failed to load."
 
-        if required:
-            raise RuntimeError(_backend_error)
-
-        logger.warning(_backend_error)
-        return None
+    return result  # type: ignore[return-value]

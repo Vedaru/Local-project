@@ -44,10 +44,6 @@ OpenManus 工具集中部分工具默认**串行**以降低风险（见主文档
 - **API Key**（如 `ARK_API_KEY`）应通过环境变量或本地覆盖文件提供，**不要**将含真实密钥的 `project_config.yaml` 提交到版本库。
 - 依赖漏洞扫描见 CI 中的 `pip-audit`；建议启用 Dependabot（见 [`.github/dependabot.yml`](../.github/dependabot.yml)）。
 
-### 容器 / Compose
-
-若使用 [`docker/docker-compose.yml`](../docker/docker-compose.yml) 或根目录 [`docker-compose.yml`](../docker-compose.yml) 将 Gateway 暴露到非回环地址，**必须**在 `docker/.env` 或环境中提供 **`GATEWAY_API_KEY`**。镜像定义见 [`docker/Dockerfile.services`](../docker/Dockerfile.services)。
-
 ## 日志与隐私
 
 日志目录默认在 `data/logs/`。若包含敏感对话或路径，请避免将日志打包上传至不可信第三方。

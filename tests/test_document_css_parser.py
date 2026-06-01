@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "modules" / "openmanus"))
 
 
 def _parse_css_styles(css: str):
-  parser_module = importlib.import_module("app.tool.document_skills.css_parser")
-  return parser_module.parse_css_styles(css)
+    parser_module = importlib.import_module("app.tool.document_skills.css_parser")
+    return parser_module.parse_css_styles(css)
 
 
 @pytest.mark.unit

@@ -21,6 +21,7 @@ from modules.application.expression_orchestrator import ExpressionOrchestrator
 from modules.avatar import AvatarWidget, ExpressionManager, LipSyncManager
 from modules.avatar.logger import log_info as avatar_log_info
 from modules.config import AppConfig
+from modules.config_tuning import get_tuning
 from modules.logging_config import get_logger
 from modules.utils import sanitize_dialogue_text
 
@@ -139,8 +140,11 @@ class LocalProjectApplication:
             expression_manager=self.expression_manager,
             qt_app=self.app,
         )
+        tuning = get_tuning()
         self._audio_controller = AudioPlaybackController(
             lip_sync_manager=self.lip_sync_manager,
+            avatar_widget=self.avatar,
+            delete_wav_after_playback=tuning.voice.delete_wav_after_playback,
         )
         self._console_manager = ConsoleInputManager(
             submit_fn=lambda text: core_service.submit(text),
@@ -171,6 +175,9 @@ class LocalProjectApplication:
             logger.info("听觉模块已禁用")
 
         self.core_service.start_background()
+
+        if self._audio_controller:
+            self._audio_controller.warmup_audio_output()
 
         logger.info("Project Local 已启动（microservices-only 模式）")
         logger.info("输入 'exit' 或 'quit' 退出，输入 'status' 查看微服务状态。")

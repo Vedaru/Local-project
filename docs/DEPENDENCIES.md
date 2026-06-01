@@ -7,10 +7,10 @@ Project Local 的依赖按功能分为多个层级，便于按需安装：
 | 层级 | 说明 | 安装方式 |
 |------|------|----------|
 | **核心依赖** | LLM、GUI、语音识别、记忆系统等 | `pip install -r requirements.txt` |
-| **PyTorch** | 深度学习框架（GPT-SoVITS 必需） | `install_dependencies.bat -Torch` |
-| **GPT-SoVITS** | 语音合成引擎依赖 | `install_dependencies.bat -GptSovits` |
-| **可选依赖** | Docker、AWS、爬虫等 | `install_dependencies.bat -Optional` |
-| **开发依赖** | 测试、Lint、类型检查 | `install_dependencies.bat -Dev` |
+| **PyTorch** | 深度学习框架（GPT-SoVITS 必需） | `scripts\install.bat`（默认安装） |
+| **GPT-SoVITS** | 语音合成引擎依赖 | 已包含在 `requirements.txt` |
+| **可选依赖** | AWS、爬虫等 | `scripts\install.bat -Optional` |
+| **开发依赖** | 测试、Lint、类型检查 | 已包含在 `requirements.txt` 或 `-Dev` |
 
 ## 单一真相（Single Source of Truth）
 
@@ -33,7 +33,7 @@ Project Local 的依赖按功能分为多个层级，便于按需安装：
 |------|------|
 | Python | `>=3.10,<3.12` |
 | PyTorch | `>=2.6.0`（transformers>=4.38 安全要求） |
-| CUDA（可选） | 12.1  wheel：`--index-url https://download.pytorch.org/whl/cu121` |
+| CUDA（可选） | 2.6+ 使用 cu124：`--index-url https://download.pytorch.org/whl/cu124`（cu121 最高仅 2.5.1） |
 
 ## 依赖详情
 
@@ -60,8 +60,7 @@ Project Local 的依赖按功能分为多个层级，便于按需安装：
 | PyQt6 | 6.6.1 | GUI 框架 |
 | PyQt6-WebEngine | 6.6.0 | Web 视图组件 |
 | qasync | 0.27.1 | PyQt 异步支持 |
-| openai-whisper | 20231117 | 语音识别（ASR） |
-| faster-whisper | 0.10.0 | 加速语音识别 |
+| faster-whisper | 0.10.0 | 语音识别（ASR，Ear 模块） |
 | ctranslate2 | 3.24.0 | 推理加速引擎 |
 | numpy | 1.24.3 | 数值计算 |
 | pyautogui | 0.9.54 | 电脑控制 |
@@ -113,7 +112,7 @@ Project Local 的依赖按功能分为多个层级，便于按需安装：
 | 包名 | 版本要求 | 用途 | 备注 |
 |------|----------|------|------|
 | mcp | >=1.0.0 | Model Context Protocol | 核心功能 |
-| docker | >=7.0.0 | Docker 沙箱 | try/except 保护 |
+| docker | >=7.0.0 | OpenManus Agent 沙箱（Python SDK，非部署用） | try/except 保护，需自行 `pip install docker` |
 | boto3 | >=1.34.0 | AWS Bedrock 集成 | try/except 保护 |
 | crawl4ai | >=0.2.0 | 网页爬取 | 动态导入 |
 
@@ -169,14 +168,14 @@ install_dependencies.bat -Mirror -All
 # 核心依赖
 python -m pip install -r requirements.txt
 
-# PyTorch (CUDA 12.1, 要求 >=2.6.0)
-python -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" --index-url https://download.pytorch.org/whl/cu121
+# PyTorch 2.6+ (CUDA 12.4 wheels; 要求 >=2.6.0)
+python -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" --index-url https://download.pytorch.org/whl/cu124
 
 # GPT-SoVITS 依赖
 python -m pip install transformers huggingface_hub peft pytorch-lightning torchmetrics einops x-transformers librosa soundfile ffmpeg-python onnxruntime pypinyin cn2an nltk matplotlib
 
 # 可选依赖
-python -m pip install docker boto3 crawl4ai mcp
+python -m pip install boto3 crawl4ai mcp
 ```
 
 ### 方式三：Poetry

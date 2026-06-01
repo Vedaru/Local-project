@@ -61,7 +61,6 @@ class ClickThroughMixin:
         """设置全局热键 Alt+D"""
         self = cast("AvatarWidget", self)
         try:
-
             # 热键常量
             self._MOD_ALT = 0x0001
             self._HOTKEY_ID = 1

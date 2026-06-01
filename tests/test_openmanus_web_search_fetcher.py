@@ -25,9 +25,7 @@ if "loguru" not in sys.modules:
 if "googlesearch" not in sys.modules:
     googlesearch_stub = types.ModuleType("googlesearch")
     googlesearch_stub.search = lambda *args, **kwargs: []
-    googlesearch_stub.__spec__ = importlib.machinery.ModuleSpec(
-        "googlesearch", loader=None
-    )
+    googlesearch_stub.__spec__ = importlib.machinery.ModuleSpec("googlesearch", loader=None)
     sys.modules["googlesearch"] = googlesearch_stub
 
 if "duckduckgo_search" not in sys.modules:
@@ -38,9 +36,7 @@ if "duckduckgo_search" not in sys.modules:
             return []
 
     duckduckgo_stub.DDGS = _DummyDDGS
-    duckduckgo_stub.__spec__ = importlib.machinery.ModuleSpec(
-        "duckduckgo_search", loader=None
-    )
+    duckduckgo_stub.__spec__ = importlib.machinery.ModuleSpec("duckduckgo_search", loader=None)
     sys.modules["duckduckgo_search"] = duckduckgo_stub
 
 if "baidusearch" not in sys.modules:
@@ -48,12 +44,8 @@ if "baidusearch" not in sys.modules:
     baidusearch_mod = types.ModuleType("baidusearch.baidusearch")
     baidusearch_mod.search = lambda *args, **kwargs: []
     baidusearch_pkg.baidusearch = baidusearch_mod
-    baidusearch_pkg.__spec__ = importlib.machinery.ModuleSpec(
-        "baidusearch", loader=None
-    )
-    baidusearch_mod.__spec__ = importlib.machinery.ModuleSpec(
-        "baidusearch.baidusearch", loader=None
-    )
+    baidusearch_pkg.__spec__ = importlib.machinery.ModuleSpec("baidusearch", loader=None)
+    baidusearch_mod.__spec__ = importlib.machinery.ModuleSpec("baidusearch.baidusearch", loader=None)
     sys.modules["baidusearch"] = baidusearch_pkg
     sys.modules["baidusearch.baidusearch"] = baidusearch_mod
 
@@ -260,10 +252,7 @@ def test_fetch_content_batch_uses_rust_batch_extension(monkeypatch):
     class _BatchExtensionModule:
         @staticmethod
         def fetch_content_batch(urls, _timeout, _max_chars):
-            return [
-                (True, f"Rust extension article body {index} " * 30, None)
-                for index, _ in enumerate(urls)
-            ]
+            return [(True, f"Rust extension article body {index} " * 30, None) for index, _ in enumerate(urls)]
 
     monkeypatch.setattr(
         WebContentFetcher,

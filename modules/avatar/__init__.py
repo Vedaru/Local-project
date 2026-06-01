@@ -67,9 +67,7 @@ def _load_gui_symbol(name: str) -> Any:
         else:
             raise AttributeError(name)
     except Exception as exc:
-        raise ImportError(
-            "Avatar GUI features require PyQt6 and PyQt6-WebEngine to be installed."
-        ) from exc
+        raise ImportError("Avatar GUI features require PyQt6 and PyQt6-WebEngine to be installed.") from exc
 
     globals()[name] = symbol
     return symbol
@@ -79,6 +77,7 @@ def __getattr__(name: str) -> Any:
     if name in _GUI_SYMBOLS:
         return _load_gui_symbol(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "AvatarWidget",

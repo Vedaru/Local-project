@@ -237,6 +237,16 @@ class MicroserviceAIService:
                 "wav_path": "",
                 **tts_data,
             }
+            wav_path = str(speak_payload.get("wav_path") or "").strip()
+            status = str(speak_payload.get("status") or "").strip()
+            mode = str(speak_payload.get("mode") or "").strip()
+            if not wav_path:
+                _logger.warning(
+                    "TTS 无可用 wav，将仅文本嘴型: status=%s mode=%s segment_count=%s",
+                    status or "unknown",
+                    mode or "unknown",
+                    speak_payload.get("segment_count"),
+                )
             self.callbacks.on_speak_request(speak_payload)
 
     def _emit_shutdown(self) -> None:

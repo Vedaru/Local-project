@@ -3,13 +3,13 @@
 # ============================================================
 
 # LLM 与 API
-openai==1.35.0
-python-dotenv==1.0.0
-requests==2.31.0
+openai>=1.58.1,<2
+python-dotenv>=1.0.1
+requests>=2.32.3
 httpx[http2]==0.28.1
 h2>=4.0.0
 pyyaml==6.0
-pydantic==2.5.0
+pydantic>=2.10.4,<3
 
 # 中文分词
 jieba==0.42.1
@@ -30,34 +30,47 @@ sentence-transformers==2.2.2
 
 # GUI
 PyQt6==6.6.1
+PyQt6-Qt6>=6.6.0,<6.7
+PyQt6-sip>=13.6,<14
 PyQt6-WebEngine==6.6.0
 qasync==0.27.1
 
-# 语音识别 (ASR)
-openai-whisper==20231117
-faster-whisper==0.10.0
-ctranslate2==3.24.0
+# 语音识别 (ASR) — Ear 使用 faster-whisper（不要安装 openai-whisper 源码包）
+faster-whisper>=1.1.0,<2
+av>=12
+ctranslate2>=4.0,<5
 numpy==1.24.3
 
 # 电脑控制
 pyautogui==0.9.54
 pygetwindow==0.0.9
 
-# Agent 框架
+# Agent 框架（OpenManus Manus / BrowserUseTool 浏览器自动化）
+# 安装 Python 包后还需下载浏览器内核: playwright install chromium
 browser-use==0.1.40
-playwright==1.40.0
+playwright>=1.49.0
+# browser-use==0.1.40 传递依赖（显式列出，避免 Agent 微服务环境缺包）
+langchain-core>=0.3.0,<0.4
+langchain-openai>=0.3.0,<0.4
+langchain-anthropic>=0.3.0,<0.4
+langchain-ollama>=0.2.0,<0.4
+markdownify>=0.14.0,<0.15
+posthog>=3.0.0,<4.0
 tenacity==8.2.3
 structlog==23.2.0
 loguru==0.7.2
-tiktoken==0.5.1
+tiktoken>=0.7,<1
 aiofiles==23.2.1
 colorama==0.4.6
-fastapi==0.104.1
-uvicorn==0.24.0
+# 微服务 API：若环境含 mcp/sse-starlette（Starlette 1.x），用 fastapi>=0.128.6；纯净环境可用 0.115+0.41
+fastapi>=0.128.6,<0.136
+starlette>=1.0.0,<2.0.0
+uvicorn[standard]>=0.34.0,<0.37
 html2text==2020.1.16
 googlesearch-python==1.2.3
 baidusearch==1.0.3
-duckduckgo_search==3.9.6
+ddgs>=9.0.0
+duckduckgo_search>=8.1.0
 tomli==2.0.1
 beautifulsoup4==4.12.2
 
@@ -68,15 +81,9 @@ pytesseract==0.3.10
 tqdm==4.66.1
 
 # ============================================================
-# GPT-SoVITS 语音合成引擎依赖
+# GPT-SoVITS 语音合成（必装；PyTorch 由 install.bat 在 requirements 之前安装）
+# transformers>=4.38 要求 torch>=2.6.0 (CVE-2025-32434)
 # ============================================================
-
-# PyTorch 核心（安装方式见文档，需根据 CUDA 版本选择）
-# 注意: transformers>=4.38 要求 torch>=2.6.0 (CVE-2025-32434)
-# pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu121
-# torch>=2.6.0
-# torchaudio>=2.6.0
-# torchvision>=0.21.0
 
 # HuggingFace 生态
 transformers>=4.38.0
@@ -100,6 +107,8 @@ onnxruntime>=1.16.0
 # 中文文本处理
 pypinyin>=0.49.0
 cn2an>=0.5.22
+fast_langdetect>=1.0.0
+split-lang>=2.1.0
 
 # NLP 工具
 nltk>=3.8.0
@@ -108,6 +117,7 @@ matplotlib>=3.7.0
 # ============================================================
 # OpenManus Agent 框架依赖（可选）
 # ============================================================
+# 浏览器自动化见上方「Agent 框架」: browser-use、playwright 及 langchain-*
 
 # Model Context Protocol
 mcp>=1.0.0

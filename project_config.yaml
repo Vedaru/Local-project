@@ -8,6 +8,16 @@ meta:
   config_version: 2
   unified_config: true
 
+# GUI 启动前自检（main.py）；环境变量 SKIP_STARTUP_SELF_CHECK=1 可跳过
+startup:
+  self_check_enabled: true
+  strict_mode: true
+  abort_on_critical_failure: true
+  run_full_test_suite: false
+  run_smoke_test_suite: true  # 全部 tests/ 绿后再开 run_full_test_suite
+  test_suite_timeout_sec: 300
+  timeout_sec: 5.0
+
 # --------------------- 应用核心配置 ---------------------
 api:
   ark_api_key: "sk-330189069eaf41f989fef22f330627d5"
@@ -70,28 +80,29 @@ services:
 
 orchestrator:
   llm_executor_workers: 4
-  memory_timeout_sec: 8.0
-  memory_retrieve_timeout_sec: 8.0
-  memory_store_timeout_sec: 1.8
+  memory_timeout_sec: 3.0
+  memory_retrieve_timeout_sec: 2.5
+  memory_store_timeout_sec: 1.0
   memory_batch_timeout_sec: 10.0
   agent_timeout_sec: 180.0
-  voice_timeout_sec: 60.0
-  max_requests_per_second: 8.0
-  burst_size: 16
+  voice_timeout_sec: 25.0
+  max_requests_per_second: 12.0
+  burst_size: 24
   voice_async_batch_enabled: true
   voice_batch_max_size: 8
-  voice_batch_collect_window_ms: 8
-  voice_batch_result_wait_sec: 1.2
+  voice_batch_collect_window_ms: 3
+  voice_batch_result_wait_sec: 2.0
   voice_batch_congested_queue_size: 12
-  voice_batch_result_wait_sec_congested: 0.4
+  voice_batch_result_wait_sec_congested: 1.0
   voice_hit_priority_direct_enabled: true
-  voice_hit_priority_direct_timeout_sec: 8.0
+  voice_hit_priority_direct_timeout_sec: 5.0
+  voice_chat_sync_wait_sec: 25.0
   circuit_fail_threshold: 3
-  circuit_cooldown_sec: 30.0
+  circuit_cooldown_sec: 15.0
   pending_memory_queue_size: 24
 
 voice:
-  connect_timeout_sec: 5
+  connect_timeout_sec: 3
   read_timeout_sec: 30
   streaming_mode: 3
   parallel_infer: false
@@ -103,8 +114,9 @@ voice:
   cpp_accel_lib: ""
   wav_output_dir: "data/temp"
   wav_cleanup_enabled: true
-  wav_cleanup_interval_sec: 120
-  wav_ttl_sec: 1800
+  wav_cleanup_interval_sec: 60
+  wav_ttl_sec: 300
+  delete_wav_after_playback: true
 
 expression:
   auto_reset_sec: 8.0  # 表情保持时间（秒），FACS 模式下需要更长
@@ -118,7 +130,7 @@ expression:
   neutral_tail_sec: 0.26
 
 gateway:
-  chat_timeout_sec: 60
+  chat_timeout_sec: 45
   api_key: ""
   # 与 uvicorn --host 保持一致；非回环监听时必须配置 api_key（或环境变量 GATEWAY_API_KEY）
   bind_host: "127.0.0.1"
@@ -138,8 +150,8 @@ client:
 
 network:
   http_client:
-    pool_max_connections: 100
-    pool_max_keepalive: 20
+    pool_max_connections: 200
+    pool_max_keepalive: 50
 
 # --------------------- 运行时策略配置 ---------------------
 runtime:
@@ -166,8 +178,8 @@ openmanus:
     api_type: ""
     api_version: ""
   search:
-    engine: "Baidu"
-    fallback_engines: ["DuckDuckGo", "Bing"]
+    engine: "DuckDuckGo"
+    fallback_engines: ["Bing", "Baidu"]
     lang: "zh"
     country: "cn"
   browser:

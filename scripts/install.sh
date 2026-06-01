@@ -16,7 +16,7 @@ python3 -m pip install "httpx[http2]" h2
 
 if [[ "${1:-}" == "--with-torch" ]]; then
   python3 -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" \
-    --index-url https://download.pytorch.org/whl/cu121 || \
+    --index-url https://download.pytorch.org/whl/cu124 || \
   python3 -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" \
     --index-url https://download.pytorch.org/whl/cpu
 fi

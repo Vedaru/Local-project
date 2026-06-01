@@ -20,7 +20,7 @@
 ### セットアップ
 
 ```powershell
-git clone https://github.com/CHANGE_ME/local-project.git
+git clone https://github.com/Vedaru/Local-project.git
 cd local-project
 
 python -m venv .venv

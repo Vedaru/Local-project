@@ -16,12 +16,7 @@ from typing import Optional
 
 import yaml
 
-from .config_base import (
-    TUNING_PATH,
-    _env_int,
-    _env_str,
-    _read_bool,
-)
+from .config_base import TUNING_PATH, _env_int, _env_str, _read_bool
 
 # ===================== 子数据类 =====================
 
@@ -65,6 +60,8 @@ class OrchestratorTuning:
     voice_batch_result_wait_sec_congested: float = 0.4
     voice_hit_priority_direct_enabled: bool = True
     voice_hit_priority_direct_timeout_sec: float = 8.0
+    # /chat 整段回复等待 TTS 就绪（秒）；0=沿用 batch 短等待（测试/极速模式）
+    voice_chat_sync_wait_sec: float = 25.0
 
     circuit_fail_threshold: int = 3
     circuit_cooldown_sec: float = 30.0
@@ -77,7 +74,7 @@ class VoiceTuning:
 
     connect_timeout_sec: int = 5
     read_timeout_sec: int = 30
-    streaming_mode: int = 3          # 0=off, 2=simple, 3=full
+    streaming_mode: int = 3  # 0=off, 2=simple, 3=full
     parallel_infer: bool = False
     min_chunk_length: int = 8
     overlap_length: int = 1
@@ -92,6 +89,10 @@ class VoiceTuning:
     wav_cleanup_enabled: bool = True
     wav_cleanup_interval_sec: float = 120.0
     wav_ttl_sec: float = 1800.0
+    delete_wav_after_playback: bool = True
+
+    sample_rate: int = 32000
+    chunk_size: int = 256
 
 
 @dataclass
@@ -193,59 +194,159 @@ class TuningConfig:
                 memory_service_port=_env_int("MEMORY_SERVICE_PORT", _get(svc_raw, "memory_service_port", 18082)),
                 agent_service_port=_env_int("AGENT_SERVICE_PORT", _get(svc_raw, "agent_service_port", 18083)),
                 voice_service_port=_env_int("VOICE_SERVICE_PORT", _get(svc_raw, "voice_service_port", 18084)),
-                orchestrator_url=_env_str("ORCHESTRATOR_URL", _get(svc_raw, "orchestrator_url", "http://localhost:18081")),
-                memory_service_url=_env_str("MEMORY_SERVICE_URL", _get(svc_raw, "memory_service_url", "http://localhost:18082")),
-                agent_service_url=_env_str("AGENT_SERVICE_URL", _get(svc_raw, "agent_service_url", "http://localhost:18083")),
-                voice_service_url=_env_str("VOICE_SERVICE_URL", _get(svc_raw, "voice_service_url", "http://localhost:18084")),
+                orchestrator_url=_env_str(
+                    "ORCHESTRATOR_URL", _get(svc_raw, "orchestrator_url", "http://localhost:18081")
+                ),
+                memory_service_url=_env_str(
+                    "MEMORY_SERVICE_URL", _get(svc_raw, "memory_service_url", "http://localhost:18082")
+                ),
+                agent_service_url=_env_str(
+                    "AGENT_SERVICE_URL", _get(svc_raw, "agent_service_url", "http://localhost:18083")
+                ),
+                voice_service_url=_env_str(
+                    "VOICE_SERVICE_URL", _get(svc_raw, "voice_service_url", "http://localhost:18084")
+                ),
             ),
             orchestrator=OrchestratorTuning(
-                llm_executor_workers=max(1, _env_int("ORCH_LLM_EXECUTOR_WORKERS", _get(orch_raw, "llm_executor_workers", 4))),
-                memory_timeout_sec=float(_env_str("ORCH_MEMORY_TIMEOUT_SEC", _get(orch_raw, "memory_timeout_sec", 8.0))),
-                memory_retrieve_timeout_sec=float(_env_str("ORCH_MEMORY_RETRIEVAL_TIMEOUT_SEC", _get(orch_raw, "memory_retrieve_timeout_sec", 8.0))),
-                memory_store_timeout_sec=float(_env_str("ORCH_MEMORY_STORE_TIMEOUT_SEC", _get(orch_raw, "memory_store_timeout_sec", 1.8))),
-                memory_batch_timeout_sec=float(_env_str("ORCH_MEMORY_BATCH_TIMEOUT_SEC", _get(orch_raw, "memory_batch_timeout_sec", 10.0))),
+                llm_executor_workers=max(
+                    1, _env_int("ORCH_LLM_EXECUTOR_WORKERS", _get(orch_raw, "llm_executor_workers", 4))
+                ),
+                memory_timeout_sec=float(
+                    _env_str("ORCH_MEMORY_TIMEOUT_SEC", _get(orch_raw, "memory_timeout_sec", 8.0))
+                ),
+                memory_retrieve_timeout_sec=float(
+                    _env_str("ORCH_MEMORY_RETRIEVAL_TIMEOUT_SEC", _get(orch_raw, "memory_retrieve_timeout_sec", 8.0))
+                ),
+                memory_store_timeout_sec=float(
+                    _env_str("ORCH_MEMORY_STORE_TIMEOUT_SEC", _get(orch_raw, "memory_store_timeout_sec", 1.8))
+                ),
+                memory_batch_timeout_sec=float(
+                    _env_str("ORCH_MEMORY_BATCH_TIMEOUT_SEC", _get(orch_raw, "memory_batch_timeout_sec", 10.0))
+                ),
                 agent_timeout_sec=float(_env_str("ORCH_AGENT_TIMEOUT_SEC", _get(orch_raw, "agent_timeout_sec", 180.0))),
                 voice_timeout_sec=float(_env_str("ORCH_VOICE_TIMEOUT_SEC", _get(orch_raw, "voice_timeout_sec", 60.0))),
-                max_requests_per_second=max(0.1, float(_env_str("ORCH_MAX_REQUESTS_PER_SECOND", _get(orch_raw, "max_requests_per_second", 8.0)))),
+                max_requests_per_second=max(
+                    0.1, float(_env_str("ORCH_MAX_REQUESTS_PER_SECOND", _get(orch_raw, "max_requests_per_second", 8.0)))
+                ),
                 burst_size=max(1, _env_int("ORCH_BURST_SIZE", _get(orch_raw, "burst_size", 16))),
-                voice_async_batch_enabled=_read_bool(os.getenv("ORCH_VOICE_ASYNC_BATCH_ENABLED"), _get(orch_raw, "voice_async_batch_enabled", True)),
-                voice_batch_max_size=max(1, _env_int("ORCH_VOICE_BATCH_MAX_SIZE", _get(orch_raw, "voice_batch_max_size", 8))),
-                voice_batch_collect_window_ms=max(1, _env_int("ORCH_VOICE_BATCH_COLLECT_WINDOW_MS", _get(orch_raw, "voice_batch_collect_window_ms", 8))),
-                voice_batch_result_wait_sec=max(0.05, float(_env_str("ORCH_VOICE_BATCH_RESULT_WAIT_SEC", _get(orch_raw, "voice_batch_result_wait_sec", 1.2)))),
-                voice_batch_congested_queue_size=max(1, _env_int("ORCH_VOICE_CONGESTED_QUEUE_SIZE", _get(orch_raw, "voice_batch_congested_queue_size", 12))),
-                voice_batch_result_wait_sec_congested=max(0.0, float(_env_str("ORCH_VOICE_BATCH_RESULT_WAIT_SEC_CONGESTED", _get(orch_raw, "voice_batch_result_wait_sec_congested", 0.4)))),
-                voice_hit_priority_direct_enabled=_read_bool(os.getenv("ORCH_VOICE_HIT_PRIORITY_DIRECT_ENABLED"), _get(orch_raw, "voice_hit_priority_direct_enabled", True)),
-                voice_hit_priority_direct_timeout_sec=max(0.1, float(_env_str("ORCH_VOICE_HIT_PRIORITY_DIRECT_TIMEOUT_SEC", _get(orch_raw, "voice_hit_priority_direct_timeout_sec", 8.0)))),
-                circuit_fail_threshold=_env_int("ORCH_CIRCUIT_FAIL_THRESHOLD", _get(orch_raw, "circuit_fail_threshold", 3)),
-                circuit_cooldown_sec=float(_env_str("ORCH_CIRCUIT_COOLDOWN_SEC", _get(orch_raw, "circuit_cooldown_sec", 30.0))),
-                pending_memory_queue_size=max(1, _env_int("ORCH_MEMORY_PENDING_QUEUE_SIZE", _get(orch_raw, "pending_memory_queue_size", 24))),
+                voice_async_batch_enabled=_read_bool(
+                    os.getenv("ORCH_VOICE_ASYNC_BATCH_ENABLED"), _get(orch_raw, "voice_async_batch_enabled", True)
+                ),
+                voice_batch_max_size=max(
+                    1, _env_int("ORCH_VOICE_BATCH_MAX_SIZE", _get(orch_raw, "voice_batch_max_size", 8))
+                ),
+                voice_batch_collect_window_ms=max(
+                    1,
+                    _env_int("ORCH_VOICE_BATCH_COLLECT_WINDOW_MS", _get(orch_raw, "voice_batch_collect_window_ms", 8)),
+                ),
+                voice_batch_result_wait_sec=max(
+                    0.05,
+                    float(
+                        _env_str("ORCH_VOICE_BATCH_RESULT_WAIT_SEC", _get(orch_raw, "voice_batch_result_wait_sec", 1.2))
+                    ),
+                ),
+                voice_batch_congested_queue_size=max(
+                    1,
+                    _env_int("ORCH_VOICE_CONGESTED_QUEUE_SIZE", _get(orch_raw, "voice_batch_congested_queue_size", 12)),
+                ),
+                voice_batch_result_wait_sec_congested=max(
+                    0.0,
+                    float(
+                        _env_str(
+                            "ORCH_VOICE_BATCH_RESULT_WAIT_SEC_CONGESTED",
+                            _get(orch_raw, "voice_batch_result_wait_sec_congested", 0.4),
+                        )
+                    ),
+                ),
+                voice_hit_priority_direct_enabled=_read_bool(
+                    os.getenv("ORCH_VOICE_HIT_PRIORITY_DIRECT_ENABLED"),
+                    _get(orch_raw, "voice_hit_priority_direct_enabled", True),
+                ),
+                voice_hit_priority_direct_timeout_sec=max(
+                    0.1,
+                    float(
+                        _env_str(
+                            "ORCH_VOICE_HIT_PRIORITY_DIRECT_TIMEOUT_SEC",
+                            _get(orch_raw, "voice_hit_priority_direct_timeout_sec", 8.0),
+                        )
+                    ),
+                ),
+                voice_chat_sync_wait_sec=max(
+                    0.0,
+                    float(
+                        _env_str(
+                            "ORCH_VOICE_CHAT_SYNC_WAIT_SEC",
+                            _get(orch_raw, "voice_chat_sync_wait_sec", 25.0),
+                        )
+                    ),
+                ),
+                circuit_fail_threshold=_env_int(
+                    "ORCH_CIRCUIT_FAIL_THRESHOLD", _get(orch_raw, "circuit_fail_threshold", 3)
+                ),
+                circuit_cooldown_sec=float(
+                    _env_str("ORCH_CIRCUIT_COOLDOWN_SEC", _get(orch_raw, "circuit_cooldown_sec", 30.0))
+                ),
+                pending_memory_queue_size=max(
+                    1, _env_int("ORCH_MEMORY_PENDING_QUEUE_SIZE", _get(orch_raw, "pending_memory_queue_size", 24))
+                ),
             ),
             voice=VoiceTuning(
-                connect_timeout_sec=_env_int("VOICE_TTS_CONNECT_TIMEOUT_SEC", _get(voice_raw, "connect_timeout_sec", 5)),
+                connect_timeout_sec=_env_int(
+                    "VOICE_TTS_CONNECT_TIMEOUT_SEC", _get(voice_raw, "connect_timeout_sec", 5)
+                ),
                 read_timeout_sec=_env_int("VOICE_TTS_READ_TIMEOUT_SEC", _get(voice_raw, "read_timeout_sec", 30)),
                 streaming_mode=_env_int("VOICE_TTS_STREAMING_MODE", _get(voice_raw, "streaming_mode", 3)),
-                parallel_infer=_read_bool(os.getenv("VOICE_TTS_PARALLEL_INFER"), _get(voice_raw, "parallel_infer", False)),
+                parallel_infer=_read_bool(
+                    os.getenv("VOICE_TTS_PARALLEL_INFER"), _get(voice_raw, "parallel_infer", False)
+                ),
                 min_chunk_length=max(4, _env_int("VOICE_TTS_MIN_CHUNK_LENGTH", _get(voice_raw, "min_chunk_length", 8))),
                 overlap_length=max(0, _env_int("VOICE_TTS_OVERLAP_LENGTH", _get(voice_raw, "overlap_length", 1))),
                 text_split_method=_env_str("VOICE_TTS_TEXT_SPLIT_METHOD", _get(voice_raw, "text_split_method", "cut1")),
-                buffered_fallback_enabled=_read_bool(os.getenv("TTS_ENABLE_BUFFERED_FALLBACK"), _get(voice_raw, "buffered_fallback_enabled", True)),
-                system_tts_fallback_enabled=_read_bool(os.getenv("VOICE_ENABLE_SYSTEM_TTS_FALLBACK"), _get(voice_raw, "system_tts_fallback_enabled", True)),
+                buffered_fallback_enabled=_read_bool(
+                    os.getenv("TTS_ENABLE_BUFFERED_FALLBACK"), _get(voice_raw, "buffered_fallback_enabled", True)
+                ),
+                system_tts_fallback_enabled=_read_bool(
+                    os.getenv("VOICE_ENABLE_SYSTEM_TTS_FALLBACK"), _get(voice_raw, "system_tts_fallback_enabled", True)
+                ),
                 cpp_accel_lib=_env_str("VOICE_CPP_ACCEL_LIB", _get(voice_raw, "cpp_accel_lib", ""), allow_empty=True),
                 wav_output_dir=_env_str("VOICE_WAV_OUTPUT_DIR", _get(voice_raw, "wav_output_dir", "data/temp")),
-                wav_cleanup_enabled=_read_bool(os.getenv("VOICE_WAV_CLEANUP_ENABLED"), _get(voice_raw, "wav_cleanup_enabled", True)),
-                wav_cleanup_interval_sec=max(5.0, float(_env_str("VOICE_WAV_CLEANUP_INTERVAL_SEC", _get(voice_raw, "wav_cleanup_interval_sec", 120)))),
+                wav_cleanup_enabled=_read_bool(
+                    os.getenv("VOICE_WAV_CLEANUP_ENABLED"), _get(voice_raw, "wav_cleanup_enabled", True)
+                ),
+                wav_cleanup_interval_sec=max(
+                    5.0,
+                    float(_env_str("VOICE_WAV_CLEANUP_INTERVAL_SEC", _get(voice_raw, "wav_cleanup_interval_sec", 120))),
+                ),
                 wav_ttl_sec=max(30.0, float(_env_str("VOICE_WAV_TTL_SEC", _get(voice_raw, "wav_ttl_sec", 1800)))),
+                delete_wav_after_playback=_read_bool(
+                    os.getenv("VOICE_DELETE_WAV_AFTER_PLAYBACK"),
+                    _get(voice_raw, "delete_wav_after_playback", True),
+                ),
             ),
             expression=ExpressionTuning(
-                auto_reset_sec=float(_env_str("LOCAL_EXPRESSION_AUTO_RESET_SEC", _get(expr_raw, "auto_reset_sec", 2.4))),
-                min_timer_gap_ms=max(40, _env_int("LOCAL_EXPRESSION_MIN_TIMER_GAP_MS", _get(expr_raw, "min_timer_gap_ms", 120))),
-                timeline_play_motion=_read_bool(os.getenv("LOCAL_EXPRESSION_TIMELINE_PLAY_MOTION"), _get(expr_raw, "timeline_play_motion", False)),
-                min_segment_sec=float(_env_str("LOCAL_EXPRESSION_MIN_SEGMENT_SEC", _get(expr_raw, "min_segment_sec", 0.30))),
+                auto_reset_sec=float(
+                    _env_str("LOCAL_EXPRESSION_AUTO_RESET_SEC", _get(expr_raw, "auto_reset_sec", 2.4))
+                ),
+                min_timer_gap_ms=max(
+                    40, _env_int("LOCAL_EXPRESSION_MIN_TIMER_GAP_MS", _get(expr_raw, "min_timer_gap_ms", 120))
+                ),
+                timeline_play_motion=_read_bool(
+                    os.getenv("LOCAL_EXPRESSION_TIMELINE_PLAY_MOTION"), _get(expr_raw, "timeline_play_motion", False)
+                ),
+                min_segment_sec=float(
+                    _env_str("LOCAL_EXPRESSION_MIN_SEGMENT_SEC", _get(expr_raw, "min_segment_sec", 0.30))
+                ),
                 min_hold_sec=float(_env_str("LOCAL_EXPRESSION_MIN_HOLD_SEC", _get(expr_raw, "min_hold_sec", 0.55))),
                 switch_margin=float(_env_str("LOCAL_EXPRESSION_SWITCH_MARGIN", _get(expr_raw, "switch_margin", 0.10))),
-                continuity_bias=float(_env_str("LOCAL_EXPRESSION_CONTINUITY_BIAS", _get(expr_raw, "continuity_bias", 0.12))),
-                smooth_window_sec=float(_env_str("LOCAL_EXPRESSION_SMOOTH_WINDOW_SEC", _get(expr_raw, "smooth_window_sec", 0.55))),
-                neutral_tail_sec=float(_env_str("LOCAL_EXPRESSION_NEUTRAL_TAIL_SEC", _get(expr_raw, "neutral_tail_sec", 0.26))),
+                continuity_bias=float(
+                    _env_str("LOCAL_EXPRESSION_CONTINUITY_BIAS", _get(expr_raw, "continuity_bias", 0.12))
+                ),
+                smooth_window_sec=float(
+                    _env_str("LOCAL_EXPRESSION_SMOOTH_WINDOW_SEC", _get(expr_raw, "smooth_window_sec", 0.55))
+                ),
+                neutral_tail_sec=float(
+                    _env_str("LOCAL_EXPRESSION_NEUTRAL_TAIL_SEC", _get(expr_raw, "neutral_tail_sec", 0.26))
+                ),
             ),
             gateway=GatewayTuning(
                 chat_timeout_sec=float(_env_str("GATEWAY_CHAT_TIMEOUT_SEC", _get(gw_raw, "chat_timeout_sec", 60.0))),
@@ -306,3 +407,45 @@ def get_tuning() -> TuningConfig:
     if _tuning_instance is None:
         _tuning_instance = load_tuning()
     return _tuning_instance
+
+
+# All env-var names that load_tuning() reads (used by tests to clean up).
+TUNING_ENV_OVERRIDE_KEYS: list[str] = [
+    # Services
+    "GATEWAY_PORT", "ORCHESTRATOR_PORT", "MEMORY_SERVICE_PORT",
+    "AGENT_SERVICE_PORT", "VOICE_SERVICE_PORT",
+    # Orchestrator
+    "ORCH_LLM_EXECUTOR_WORKERS", "ORCH_MEMORY_TIMEOUT_SEC",
+    "ORCH_MEMORY_RETRIEVAL_TIMEOUT_SEC", "ORCH_MEMORY_STORE_TIMEOUT_SEC",
+    "ORCH_MEMORY_BATCH_TIMEOUT_SEC", "ORCH_AGENT_TIMEOUT_SEC",
+    "ORCH_VOICE_TIMEOUT_SEC", "ORCH_MAX_REQUESTS_PER_SECOND",
+    "ORCH_BURST_SIZE", "ORCH_VOICE_ASYNC_BATCH_ENABLED",
+    "ORCH_VOICE_BATCH_MAX_SIZE", "ORCH_VOICE_BATCH_COLLECT_WINDOW_MS",
+    "ORCH_VOICE_BATCH_RESULT_WAIT_SEC", "ORCH_VOICE_CONGESTED_QUEUE_SIZE",
+    "ORCH_CIRCUIT_FAIL_THRESHOLD", "ORCH_CIRCUIT_COOLDOWN_SEC",
+    "ORCH_MEMORY_PENDING_QUEUE_SIZE",
+    # Voice
+    "VOICE_TTS_CONNECT_TIMEOUT_SEC", "VOICE_TTS_READ_TIMEOUT_SEC",
+    "VOICE_TTS_STREAMING_MODE", "VOICE_TTS_PARALLEL_INFER",
+    "VOICE_TTS_MIN_CHUNK_LENGTH", "VOICE_TTS_OVERLAP_LENGTH",
+    "VOICE_TTS_TEXT_SPLIT_METHOD", "TTS_ENABLE_BUFFERED_FALLBACK",
+    "VOICE_ENABLE_SYSTEM_TTS_FALLBACK", "VOICE_CPP_ACCEL_LIB",
+    "VOICE_WAV_OUTPUT_DIR", "VOICE_WAV_CLEANUP_ENABLED",
+    "VOICE_WAV_CLEANUP_INTERVAL_SEC", "VOICE_WAV_TTL_SEC",
+    "VOICE_DELETE_WAV_AFTER_PLAYBACK",
+    # Expression
+    "LOCAL_EXPRESSION_AUTO_RESET_SEC", "LOCAL_EXPRESSION_MIN_TIMER_GAP_MS",
+    "LOCAL_EXPRESSION_TIMELINE_PLAY_MOTION", "LOCAL_EXPRESSION_MIN_SEGMENT_SEC",
+    "LOCAL_EXPRESSION_MIN_HOLD_SEC", "LOCAL_EXPRESSION_SWITCH_MARGIN",
+    "LOCAL_EXPRESSION_CONTINUITY_BIAS", "LOCAL_EXPRESSION_SMOOTH_WINDOW_SEC",
+    "LOCAL_EXPRESSION_NEUTRAL_TAIL_SEC",
+    # Gateway / Client
+    "GATEWAY_CHAT_TIMEOUT_SEC", "GATEWAY_API_KEY", "GATEWAY_BIND_HOST",
+    "LOCAL_GUI_USER_ID", "CLIENT_REQUEST_TIMEOUT_SEC",
+    # Security
+    "SECURITY_TOOL_BROWSER_AUTOMATION_ENABLED",
+    "SECURITY_TOOL_PYTHON_EXECUTION_ENABLED",
+    "SECURITY_TOOL_SHELL_EXECUTION_ENABLED",
+    "SECURITY_TOOL_FILE_EDITOR_ENABLED",
+    "SECURITY_TOOL_MCP_ENABLED",
+]

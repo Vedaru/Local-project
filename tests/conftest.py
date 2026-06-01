@@ -5,51 +5,16 @@ This module provides shared fixtures and configuration for all tests.
 """
 
 import sys
-import types
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Stub optional packages that may not be installed or supported
-if "mcp" not in sys.modules:
-    mcp_stub = types.ModuleType("mcp")
+# Install stubs for optional dependencies
+from tests.stubs import install_all_stubs
 
-    class _DummyClientSession:
-        pass
-
-    class _DummyStdioServerParameters:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    mcp_stub.ClientSession = _DummyClientSession
-    mcp_stub.StdioServerParameters = _DummyStdioServerParameters
-
-    mcp_client = types.ModuleType("mcp.client")
-    mcp_sse = types.ModuleType("mcp.client.sse")
-    mcp_stdio = types.ModuleType("mcp.client.stdio")
-
-    mcp_sse.sse_client = lambda *args, **kwargs: None
-    mcp_stdio.stdio_client = lambda *args, **kwargs: None
-
-    mcp_types = types.ModuleType("mcp.types")
-
-    class _DummyListToolsResult:
-        pass
-
-    class _DummyTextContent:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    mcp_types.ListToolsResult = _DummyListToolsResult
-    mcp_types.TextContent = _DummyTextContent
-
-    sys.modules["mcp"] = mcp_stub
-    sys.modules["mcp.client"] = mcp_client
-    sys.modules["mcp.client.sse"] = mcp_sse
-    sys.modules["mcp.client.stdio"] = mcp_stdio
-    sys.modules["mcp.types"] = mcp_types
+install_all_stubs()
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent

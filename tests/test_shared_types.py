@@ -15,6 +15,7 @@ class TestErrorResult:
 
     def test_import(self):
         from microservices.shared.types import ErrorResult
+
         assert ErrorResult is not None
 
     def test_basic_creation(self):
@@ -130,6 +131,7 @@ class TestGatewayTimeoutDerivation:
     def mock_tuning(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """Create a temporary tuning.yaml and point config_tuning to it."""
         import yaml
+
         tuning_data = {
             "services": {
                 "gateway_port": 18080,

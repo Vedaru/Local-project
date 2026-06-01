@@ -112,9 +112,7 @@ class Ear:
             self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
             logger.info("✅ Whisper 模型加载完成（GPU 模式，float16 精度）。")
         except (RuntimeError, OSError) as e:
-            raise RuntimeError(
-                f"[Ear] 错误：加载模型失败（GPU 模式下仅支持 CUDA）。\n" f"原始错误: {e}\n" f"请检查 CUDA 环境和驱动。"
-            ) from e
+            raise RuntimeError(f"[Ear] 错误：加载模型失败（GPU 模式下仅支持 CUDA）。\n" f"原始错误: {e}\n" f"请检查 CUDA 环境和驱动。") from e
 
     def _open_stream(self):
         if self.stream is None:

@@ -1,4 +1,4 @@
-.PHONY: install test lint format clean docker-build docker-up docker-down pre-commit
+.PHONY: install test lint format clean pre-commit
 
 install:
 	python -m pip install -r requirements.txt
@@ -18,15 +18,6 @@ format:
 
 clean:
 	python -c "import pathlib, shutil; [shutil.rmtree(p, ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]"
-
-docker-build:
-	docker compose -f docker/docker-compose.yml build
-
-docker-up:
-	docker compose -f docker/docker-compose.yml up -d
-
-docker-down:
-	docker compose -f docker/docker-compose.yml down
 
 pre-commit:
 	pre-commit run --all-files

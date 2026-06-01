@@ -20,7 +20,7 @@
 ### 初始化
 
 ```powershell
-git clone https://github.com/CHANGE_ME/local-project.git
+git clone https://github.com/Vedaru/Local-project.git
 cd local-project
 
 python -m venv .venv
@@ -30,8 +30,6 @@ python -m pip install -r requirements.txt
 ```
 
 推荐脚本入口（Windows）：`scripts\install.bat`、`scripts\start.bat`、`scripts\check.bat`。根目录同名 `.bat` 为兼容包装。
-
-Docker 后端栈：`docker compose -f docker/docker-compose.yml up -d` 或 `make docker-up`。
 
 配置分层见 `config/` 目录与 [`DEPENDENCIES.md`](DEPENDENCIES.md)。
 

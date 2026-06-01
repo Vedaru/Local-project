@@ -1,11 +1,18 @@
 import json
 import os
+import sys
 import threading
 import time
-import tkinter as tk
 from datetime import datetime
-from tkinter import ttk
-from urllib import request
+
+try:
+    import tkinter as tk
+    from tkinter import ttk
+except ImportError:
+    print("[monitor_panel] tkinter not available (embeddable Python). Monitor panel disabled.")
+    print("[monitor_panel] To use the monitor panel, install a full Python distribution with tkinter.")
+    sys.exit(0)
+from modules.utils import ensure_local_no_proxy_env, http_get_json_local
 
 
 def _resolve_default_ports() -> dict[str, str]:
@@ -43,6 +50,7 @@ DEFAULT_VOICE_PORT = os.getenv("VOICE_SERVICE_PORT", _DEFAULT_PORTS["voice"])
 
 class ServiceMonitorApp:
     def __init__(self, root: tk.Tk) -> None:
+        ensure_local_no_proxy_env()
         self.root = root
         self.root.title("Project Local - Microservices Monitor")
         self.root.geometry("1080x560")
@@ -216,13 +224,7 @@ class ServiceMonitorApp:
 
     @staticmethod
     def _http_json(url: str, timeout: int = 3) -> dict:
-        req = request.Request(url=url, method="GET")
-        with request.urlopen(req, timeout=timeout) as response:
-            text = response.read().decode("utf-8", errors="replace")
-            data = json.loads(text)
-            if isinstance(data, dict):
-                return dict(data)
-            return {"data": data}
+        return http_get_json_local(url, timeout=float(timeout))
 
     def _render_rows(self, rows: list[dict], elapsed_ms: float) -> None:
         updated_at = datetime.now().strftime("%H:%M:%S")

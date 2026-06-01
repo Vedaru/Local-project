@@ -1,12 +1,19 @@
+"""
+Voice C++ 加速后端 — FFI 绑定 voice_cpp_engine 库
+
+提供 WAV 写入、PCM 音量计算和 chunk 索引构建能力。
+DLL 搜索路径和候选库发现逻辑委托给 cpp_accel_common。
+"""
+
 from __future__ import annotations
 
 import ctypes
 import os
-import sys
 import threading
 from pathlib import Path
 from typing import Optional
 
+from .cpp_accel_common import as_uint8_pointer, load_cpp_backend_common
 from .logging_config import get_logger
 
 logger = get_logger("voice_cpp_accel")
@@ -14,22 +21,6 @@ logger = get_logger("voice_cpp_accel")
 _PY_BYTES_AS_STRING = ctypes.pythonapi.PyBytes_AsString
 _PY_BYTES_AS_STRING.argtypes = [ctypes.py_object]
 _PY_BYTES_AS_STRING.restype = ctypes.c_void_p
-
-
-def _as_uint8_pointer(data: bytes | bytearray) -> tuple[object, object]:
-    if isinstance(data, bytes):
-        address = int(_PY_BYTES_AS_STRING(data))
-        pointer = ctypes.cast(address, ctypes.POINTER(ctypes.c_uint8))
-        return pointer, data
-
-    if isinstance(data, bytearray):
-        if not data:
-            return ctypes.cast(ctypes.c_void_p(), ctypes.POINTER(ctypes.c_uint8)), data
-        view = (ctypes.c_uint8 * len(data)).from_buffer(data)
-        pointer = ctypes.cast(view, ctypes.POINTER(ctypes.c_uint8))
-        return pointer, view
-
-    raise TypeError("pcm buffer must be bytes or bytearray")
 
 
 def _as_int16_pointer(data: bytes | bytearray) -> tuple[object, int, object]:
@@ -109,7 +100,7 @@ class VoiceCppBackend:
             return False
 
         path_bytes = os.fspath(wav_path).encode("utf-8")
-        pcm_ptr, keepalive = _as_uint8_pointer(pcm_data)
+        pcm_ptr, keepalive = as_uint8_pointer(pcm_data)
         _ = keepalive
         result = int(self._write_wav(path_bytes, pcm_ptr, len(pcm_data), int(sample_rate)))
         return result == 0
@@ -251,114 +242,6 @@ _backend_lock = threading.Lock()
 _backend_cache: Optional[VoiceCppBackend] = None
 _backend_attempted = False
 _backend_error: Optional[str] = None
-_windows_dll_handles: list[object] = []
-_windows_dll_dirs_seen: set[str] = set()
-
-
-def _candidate_library_paths(explicit_library: str = "") -> list[Path]:
-    root_dir = Path(__file__).resolve().parents[1]
-    explicit_library = (explicit_library or "").strip()
-    env_library = (os.getenv("VOICE_CPP_ACCEL_LIB", "") or "").strip()
-
-    candidates: list[Path] = []
-    if explicit_library:
-        candidates.append(Path(explicit_library))
-    if env_library:
-        candidates.append(Path(env_library))
-
-    if os.name == "nt":
-        library_names = ["voice_cpp_engine.dll"]
-    elif os.name == "posix" and "darwin" in sys.platform:
-        library_names = ["voice_cpp_engine.dylib", "libvoice_cpp_engine.dylib"]
-    else:
-        library_names = ["voice_cpp_engine.so", "libvoice_cpp_engine.so"]
-
-    search_dirs = [
-        root_dir / "build" / "voice_cpp_engine",
-        root_dir / "build" / "voice_cpp_engine" / "Release",
-        root_dir / "build" / "voice_cpp_engine" / "Debug",
-        root_dir / "cpp_modules" / "voice_cpp_engine" / "build",
-        root_dir / "cpp_modules" / "voice_cpp_engine" / "build" / "Release",
-        root_dir / "cpp_modules" / "voice_cpp_engine" / "build" / "Debug",
-    ]
-
-    for search_dir in search_dirs:
-        for library_name in library_names:
-            candidates.append(search_dir / library_name)
-
-    deduplicated: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = str(candidate.resolve()) if candidate.exists() else str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduplicated.append(candidate)
-
-    return deduplicated
-
-
-def _register_windows_dll_dirs(extra_dirs: list[Path]) -> None:
-    if os.name != "nt":
-        return
-
-    add_dll_directory = getattr(os, "add_dll_directory", None)
-    if add_dll_directory is None:
-        return
-
-    candidate_dirs: list[Path] = []
-    candidate_dirs.extend(extra_dirs)
-
-    path_raw = os.environ.get("PATH", "")
-    if path_raw:
-        for item in path_raw.split(os.pathsep):
-            item = item.strip().strip('"')
-            if item:
-                candidate_dirs.append(Path(item))
-
-    candidate_dirs.extend(
-        [
-            Path("D:/mingw64/bin"),
-            Path("C:/mingw64/bin"),
-            Path.home()
-            / "AppData"
-            / "Local"
-            / "Microsoft"
-            / "WinGet"
-            / "Packages"
-            / "BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe"
-            / "mingw64"
-            / "bin",
-            Path.home()
-            / "AppData"
-            / "Local"
-            / "Microsoft"
-            / "WinGet"
-            / "Packages"
-            / "MartinStorsjo.LLVM-MinGW.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe"
-            / "llvm-mingw-20260324-ucrt-x86_64"
-            / "bin",
-        ]
-    )
-
-    for candidate_dir in candidate_dirs:
-        try:
-            resolved = str(candidate_dir.resolve())
-        except Exception:
-            resolved = str(candidate_dir)
-
-        normalized = resolved.lower().rstrip("\\/")
-        if not normalized or normalized in _windows_dll_dirs_seen:
-            continue
-        if not Path(resolved).exists():
-            continue
-
-        try:
-            handle = add_dll_directory(resolved)
-            _windows_dll_handles.append(handle)
-            _windows_dll_dirs_seen.add(normalized)
-        except Exception:
-            continue
 
 
 def load_voice_cpp_backend(*, explicit_library: str = "") -> VoiceCppBackend:
@@ -374,36 +257,25 @@ def load_voice_cpp_backend(*, explicit_library: str = "") -> VoiceCppBackend:
             raise RuntimeError(_backend_error)
 
         _backend_attempted = True
-        errors: list[str] = []
-        attempted_paths: list[str] = []
 
-        for candidate in _candidate_library_paths(explicit_library=explicit_library):
-            if not candidate.exists() or not candidate.is_file():
-                continue
-            attempted_paths.append(str(candidate))
-            try:
-                _register_windows_dll_dirs([candidate.parent])
-                library = ctypes.CDLL(str(candidate))
-                _backend_cache = VoiceCppBackend(library=library, library_path=candidate)
-                logger.info("Voice C++ acceleration loaded: %s", candidate)
-                return _backend_cache
-            except OSError as exc:
-                logger.warning("Failed to load voice C++ acceleration (%s): %s", candidate, exc)
-                errors.append(f"{candidate}: {exc}")
-            except Exception as exc:
-                logger.warning("Failed to initialize voice C++ backend (%s): %s", candidate, exc)
-                errors.append(f"{candidate}: {exc}")
+    # 使用公共加载器（在锁外执行 I/O 和 CDLL 加载）
+    def _factory(library: ctypes.CDLL, library_path: Path) -> VoiceCppBackend:
+        return VoiceCppBackend(library=library, library_path=library_path)
 
-        if attempted_paths:
-            detail = "; ".join(errors) if errors else "no successful candidate"
-            _backend_error = (
-                "Voice C++ acceleration backend is required but failed to load. "
-                f"Tried {len(attempted_paths)} path(s): {', '.join(attempted_paths)}. "
-                f"Details: {detail}"
-            )
+    result = load_cpp_backend_common(
+        library_name="voice_cpp_engine.dll",
+        env_var_name="VOICE_CPP_ACCEL_LIB",
+        module_name="voice_cpp_engine",
+        backend_factory=_factory,
+        explicit_library=explicit_library,
+        logger_name="voice_cpp_accel",
+        required=True,
+    )
+
+    with _backend_lock:
+        if result is not None:
+            _backend_cache = result  # type: ignore[assignment]
         else:
-            _backend_error = (
-                "Voice C++ acceleration backend is required but no library file was found in candidate paths."
-            )
+            _backend_error = "Voice C++ acceleration backend failed to load."
 
-        raise RuntimeError(_backend_error)
+    return result  # type: ignore[return-value]

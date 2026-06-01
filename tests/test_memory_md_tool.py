@@ -27,7 +27,9 @@ def test_memory_md_write_and_view(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     tool = MemoryMarkdownTool()
 
     write_result = asyncio.run(
-        tool.execute(command="write", scope="user", file="preferences.md", content="# User Preferences\n- Speak Chinese")
+        tool.execute(
+            command="write", scope="user", file="preferences.md", content="# User Preferences\n- Speak Chinese"
+        )
     )
     assert "Memory file written" in write_result
 

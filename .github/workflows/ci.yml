@@ -124,7 +124,7 @@ jobs:
 
       - name: Run tests
         run: |
-          python -m pytest tests/ -v --tb=short
+          python -m pytest tests/ -v --tb=short -n auto
         env:
           ARK_API_KEY: "test-key"
           MODEL_NAME: "test-model"
@@ -194,7 +194,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          python -m pytest tests/ --cov=modules --cov-report=xml --cov-report=html -v
+          python -m pytest tests/ --cov=modules --cov=microservices --cov-report=xml --cov-report=html --cov-fail-under=55 -v -n auto
         env:
           ARK_API_KEY: "test-key"
           MODEL_NAME: "test-model"

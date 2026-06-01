@@ -20,15 +20,7 @@ import dotenv
 import yaml
 from pydantic import SecretStr
 
-from .config_base import (
-    CONFIG_PATH,
-    ENV_PATH,
-    GPT_SOVITS_ROOT,
-    PROJECT_ROOT,
-    _clean_env_value,
-    _to_float,
-    _to_int,
-)
+from .config_base import CONFIG_PATH, ENV_PATH, GPT_SOVITS_ROOT, PROJECT_ROOT, _clean_env_value, _to_float, _to_int
 
 
 @dataclass

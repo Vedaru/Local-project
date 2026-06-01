@@ -78,9 +78,7 @@ class ExpressionOrchestrator:
 
         analyzable_text = ""
         if isinstance(expression, dict):
-            analyzable_text = sanitize_dialogue_text(
-                str(expression.get("text") or expression.get("answer") or "")
-            )
+            analyzable_text = sanitize_dialogue_text(str(expression.get("text") or expression.get("answer") or ""))
         elif isinstance(expression, str):
             analyzable_text = sanitize_dialogue_text(expression)
         else:
@@ -146,10 +144,7 @@ class ExpressionOrchestrator:
         def _decay_to_neutral() -> None:
             if not self._expression_manager:
                 return
-            if (
-                self._expression_manager.current_emotion == target_emotion
-                and target_emotion != Emotion.NEUTRAL
-            ):
+            if self._expression_manager.current_emotion == target_emotion and target_emotion != Emotion.NEUTRAL:
                 self._expression_manager.reset()
             if self._emotion_decay_timer is timer:
                 self._emotion_decay_timer = None

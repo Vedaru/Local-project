@@ -31,7 +31,9 @@ class _FakeVoiceCppBackend:
                 output_file.write(b"FAKEWAV")
         return self.wav_success
 
-    def compute_volume_from_pcm16(self, pcm_chunk: bytes, *, gate: float, normalizer: float, power: float) -> float | None:
+    def compute_volume_from_pcm16(
+        self, pcm_chunk: bytes, *, gate: float, normalizer: float, power: float
+    ) -> float | None:
         self.volume_calls += 1
         _ = (pcm_chunk, gate, normalizer, power)
         return self.volume
@@ -161,10 +163,7 @@ def test_tts_worker_uses_buffered_fallback_when_enabled(monkeypatch: pytest.Monk
 
     assert audio_items[0] == VoiceManager._STREAM_START
     assert audio_items[-1] == VoiceManager._STREAM_END
-    assert any(
-        chunk not in (VoiceManager._STREAM_START, VoiceManager._STREAM_END)
-        for chunk in audio_items
-    )
+    assert any(chunk not in (VoiceManager._STREAM_START, VoiceManager._STREAM_END) for chunk in audio_items)
 
     cache_key = manager._cache_key("启用回退")
     assert manager._audio_cache.get(cache_key) == fallback_audio
@@ -310,11 +309,7 @@ def test_tts_worker_cached_audio_uses_cpp_chunk_acceleration():
     manager.tts_worker()
 
     audio_items = _drain_queue_items(manager.audio_queue)
-    data_chunks = [
-        item
-        for item in audio_items
-        if item not in (VoiceManager._STREAM_START, VoiceManager._STREAM_END)
-    ]
+    data_chunks = [item for item in audio_items if item not in (VoiceManager._STREAM_START, VoiceManager._STREAM_END)]
     stats = manager.get_tts_stats()
 
     assert data_chunks == [b"abcd", b"efgh"]
@@ -337,11 +332,7 @@ def test_tts_worker_cached_audio_chunk_index_fallback_to_python():
     manager.tts_worker()
 
     audio_items = _drain_queue_items(manager.audio_queue)
-    data_chunks = [
-        item
-        for item in audio_items
-        if item not in (VoiceManager._STREAM_START, VoiceManager._STREAM_END)
-    ]
+    data_chunks = [item for item in audio_items if item not in (VoiceManager._STREAM_START, VoiceManager._STREAM_END)]
     stats = manager.get_tts_stats()
 
     assert data_chunks == [b"123456"]

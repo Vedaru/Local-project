@@ -1,16 +1,37 @@
-# voice.py - 语音模块（低延迟版）
+"""
+Voice 模块 — 语音合成与播放管理
+
+提供低延迟的语音合成（TTS）能力，支持 GPT-SoVITS 和系统 TTS 回退。
+
+架构:
+    VoiceManager
+        ├── GPT-SoVITS TTS (主要路径)
+        │   ├── 本地 GPT-SoVITS 服务 (http://127.0.0.1:9880)
+        │   ├── C++ 加速后端 (可选)
+        │   └── 流式音频分块播放
+        ├── 系统 TTS 回退 (pyttsx3/say)
+        └── 音频缓存 (LRU, 最近 24 条)
+
+主要接口:
+    - speak(text): 同步语音合成并播放
+    - speak_stream(text): 流式语音合成，逐句回调
+    - stop(): 中断当前语音播放
+
+配置来源:
+    TuningConfig.voice (project_config.yaml -> modules.config_tuning)
+"""
 
 import os
 import queue
 import subprocess
 import threading
+import time
 import unicodedata
 import wave
 from collections import deque
 from typing import Any, Iterator, Optional, Union
 
-import requests
-from requests.adapters import HTTPAdapter
+import httpx
 
 try:
     import pyaudio
@@ -22,7 +43,7 @@ except ImportError:
 
 from .config import GPT_SOVITS_PATH, get_tuning
 from .logging_config import get_logger
-from .utils import check_sovits_service, start_gpt_sovits_api
+from .utils import check_sovits_service, probe_sovits_tts_ready, start_gpt_sovits_api
 from .voice_cpp_accel import load_voice_cpp_backend
 
 logger = get_logger("voice")
@@ -44,7 +65,9 @@ class VoiceManager:
         (0x2F800, 0x2FA1F),
     )
 
-    def __init__(self, sovits_url: str = "http://127.0.0.1:9880", ref_audio: str = "", prompt_text: str = "", tuning=None) -> None:
+    def __init__(
+        self, sovits_url: str = "http://127.0.0.1:9880", ref_audio: str = "", prompt_text: str = "", tuning=None
+    ) -> None:
         self.sovits_url = sovits_url
         self.ref_audio = ref_audio
         self.prompt_text = prompt_text
@@ -67,14 +90,26 @@ class VoiceManager:
         self.cpp_accel_lib = vt.cpp_accel_lib
         self.text_queue: queue.Queue[Optional[str]] = queue.Queue()
         self.audio_queue: queue.Queue[Optional[bytes]] = queue.Queue()
-        self.session = requests.Session()
-        adapter = HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=0)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        self.session = httpx.Client(
+            timeout=httpx.Timeout(
+                connect=float(self.connect_timeout_sec),
+                read=float(self.read_timeout_sec),
+                write=10.0,
+                pool=5.0,
+            ),
+            limits=httpx.Limits(
+                max_connections=32,
+                max_keepalive_connections=16,
+                keepalive_expiry=60.0,
+            ),
+            http1=True,
+            http2=False,
+            trust_env=False,
+        )
 
         self._audio_cache: dict[str, bytes] = {}
         self._audio_cache_order: deque[str] = deque()
-        self._audio_cache_capacity = 24
+        self._audio_cache_capacity = 50
         self._audio_cache_lock = threading.Lock()
 
         self._tts_stats_lock = threading.Lock()
@@ -101,9 +136,9 @@ class VoiceManager:
             logger.warning("SoVITS 服务当前不可达: %s/tts，已启用本机语音兜底。", self.sovits_url.rstrip("/"))
             self._trigger_sovits_bootstrap_async()
 
-        # 低延迟音频配置（仅配置，不初始化 pyaudio）
-        self.sample_rate = 32000
-        self.chunk_size = 256
+        # 低延迟音频配置（从 TuningConfig 读取）
+        self.sample_rate = vt.sample_rate
+        self.chunk_size = vt.chunk_size
 
         # 延迟初始化状态标记
         self.p: Any = None
@@ -112,6 +147,12 @@ class VoiceManager:
         # 播放状态控制
         self.is_playing = False
         self.stop_current = threading.Event()
+
+        # SoVITS：串行 HTTP + TTS 就绪门闩（避免并发预热打爆推理导致 502）
+        self._sovits_http_lock = threading.Lock()
+        self._sovits_tts_ready = threading.Event()
+        if self._is_sovits_reachable():
+            threading.Thread(target=self._probe_sovits_tts_ready_async, daemon=True, name="sovits-tts-probe").start()
 
     def start(self) -> None:
         """
@@ -260,6 +301,7 @@ class VoiceManager:
         return {
             "sovits_url": self.sovits_url,
             "sovits_reachable": self._is_sovits_reachable(),
+            "sovits_tts_ready": bool(getattr(self, "_sovits_tts_ready", threading.Event()).is_set()),
             "system_tts_fallback_enabled": bool(getattr(self, "system_tts_enabled", False)),
             "bootstrap_attempted": bool(getattr(self, "_bootstrap_attempted", False)),
             "voice_cpp_accel_enabled": bool(getattr(self, "_voice_cpp_backend", None)),
@@ -268,6 +310,29 @@ class VoiceManager:
     def _is_sovits_reachable(self) -> bool:
         docs_url = f"{self.sovits_url.rstrip('/')}/docs"
         return bool(check_sovits_service(docs_url))
+
+    def _probe_sovits_tts_ready_async(self) -> None:
+        if self._ref_audio_missing:
+            return
+        if probe_sovits_tts_ready(
+            self.sovits_url,
+            ref_audio_path=self.ref_audio,
+            prompt_text=self.prompt_text,
+        ):
+            self._sovits_tts_ready.set()
+
+    def _ensure_sovits_tts_ready(self, timeout_sec: float = 120.0) -> bool:
+        if self._sovits_tts_ready.is_set():
+            return True
+        if self._ref_audio_missing:
+            return False
+        if not self._sovits_tts_ready.is_set():
+            self._trigger_sovits_bootstrap_async()
+        deadline = time.monotonic() + max(1.0, float(timeout_sec))
+        while time.monotonic() < deadline:
+            if self._sovits_tts_ready.wait(timeout=1.0):
+                return True
+        return self._sovits_tts_ready.is_set()
 
     def _trigger_sovits_bootstrap_async(self) -> None:
         lock = getattr(self, "_bootstrap_lock", None)
@@ -282,14 +347,23 @@ class VoiceManager:
 
         def _bootstrap() -> None:
             try:
-                process = start_gpt_sovits_api(GPT_SOVITS_PATH)
+                process, tts_ready = start_gpt_sovits_api(
+                    GPT_SOVITS_PATH,
+                    sovits_base_url=self.sovits_url.rstrip("/"),
+                    ref_audio_path=self.ref_audio,
+                    prompt_text=self.prompt_text,
+                )
                 if process is not None:
                     self._sovits_process = process
                     logger.info("已自动拉起 GPT-SoVITS API 服务")
+                if tts_ready:
+                    self._sovits_tts_ready.set()
+                elif process is not None and not self._ref_audio_missing:
+                    self._probe_sovits_tts_ready_async()
             except Exception as exc:
                 logger.warning("自动拉起 GPT-SoVITS 失败: %s", exc)
 
-        threading.Thread(target=_bootstrap, daemon=True).start()
+        threading.Thread(target=_bootstrap, daemon=True, name="sovits-bootstrap").start()
 
     def _speak_with_system_tts(self, text: str) -> bool:
         if not bool(getattr(self, "system_tts_enabled", False)):
@@ -327,6 +401,73 @@ class VoiceManager:
             return completed.returncode == 0
         except Exception:
             return False
+
+    def save_system_tts_wav(self, text: str, wav_path: str) -> bool:
+        if not bool(getattr(self, "system_tts_enabled", False)):
+            return False
+        if os.name != "nt":
+            return False
+        if not text or not wav_path:
+            return False
+
+        safe_text = self._sanitize_system_tts_text(text)
+        if not safe_text:
+            return False
+
+        os.makedirs(os.path.dirname(wav_path) if os.path.dirname(wav_path) else ".", exist_ok=True)
+        safe_path = wav_path.replace("'", "''")
+        script = (
+            "$ErrorActionPreference='Stop';"
+            "Add-Type -AssemblyName System.Speech;"
+            "[Console]::InputEncoding=[System.Text.Encoding]::UTF8;"
+            f"$path='{safe_path}';"
+            "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+            "$s.SetOutputToWaveFile($path);"
+            "$t=[Console]::In.ReadToEnd();"
+            "if($t){$s.Speak($t)};"
+            "$s.Dispose();"
+        )
+
+        self._increment_tts_stat("system_tts_fallback_attempts")
+        try:
+            completed = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                input=safe_text,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=120,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            logger.warning("System TTS wav fallback timed out: %s", exc)
+            self._increment_tts_stat("system_tts_fallback_errors")
+            return False
+        except Exception as exc:
+            logger.warning("System TTS wav fallback failed: %s", exc)
+            self._increment_tts_stat("system_tts_fallback_errors")
+            return False
+
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()
+            if len(detail) > 400:
+                detail = detail[:400] + "..."
+            logger.warning(
+                "System TTS wav fallback failed with code=%s detail=%s",
+                completed.returncode,
+                detail or "<no output>",
+            )
+            self._increment_tts_stat("system_tts_fallback_errors")
+            return False
+
+        if not os.path.exists(wav_path) or os.path.getsize(wav_path) == 0:
+            logger.warning("System TTS wav fallback produced empty wav: %s", wav_path)
+            self._increment_tts_stat("system_tts_fallback_errors")
+            return False
+
+        self._increment_tts_stat("system_tts_fallback_success")
+        return True
 
     @classmethod
     def _is_allowed_tts_char(cls, ch: str) -> bool:
@@ -427,10 +568,10 @@ class VoiceManager:
                 self._audio_cache.pop(oldest, None)
 
     @staticmethod
-    def _raise_for_status_with_body(response: requests.Response, *, context: str) -> None:
+    def _raise_for_status_with_body(response, *, context: str, log_error: bool = True) -> None:
         try:
             response.raise_for_status()
-        except requests.exceptions.HTTPError:
+        except httpx.HTTPStatusError:
             body_preview = ""
             try:
                 body_preview = (response.text or "").strip()
@@ -438,24 +579,88 @@ class VoiceManager:
                 body_preview = ""
             if len(body_preview) > 600:
                 body_preview = body_preview[:600] + "..."
-            logger.error(
-                "TTS %s HTTP错误 status=%s body=%s",
-                context,
-                getattr(response, "status_code", "unknown"),
-                body_preview,
-            )
+            if log_error:
+                logger.error(
+                    "TTS %s HTTP错误 status=%s body=%s",
+                    context,
+                    getattr(response, "status_code", "unknown"),
+                    body_preview,
+                )
             raise
 
+    def _post_tts_buffered(
+        self,
+        tts_data: dict,
+        *,
+        connect_timeout: int,
+        read_timeout: int,
+        max_attempts: int = 6,
+    ) -> bytes:
+        """串行 POST /tts，对 502/503 退避重试。"""
+        retryable = {502, 503, 504}
+        last_exc: Exception | None = None
+
+        with self._sovits_http_lock:
+            for attempt in range(max_attempts):
+                is_last = attempt >= max_attempts - 1
+                try:
+                    response = self.session.post(
+                        f"{self.sovits_url}/tts",
+                        json=tts_data,
+                        timeout=httpx.Timeout(
+                            connect=float(connect_timeout),
+                            read=float(read_timeout),
+                            write=10.0,
+                            pool=5.0,
+                        ),
+                    )
+                    if response.status_code in retryable and not is_last:
+                        logger.debug(
+                            "TTS buffered 尚未就绪 status=%s，%ss 后重试 (%s/%s)",
+                            response.status_code,
+                            3 * (attempt + 1),
+                            attempt + 1,
+                            max_attempts,
+                        )
+                        time.sleep(3.0 * (attempt + 1))
+                        continue
+                    self._raise_for_status_with_body(response, context="buffered", log_error=is_last)
+                    return response.content or b""
+                except httpx.HTTPStatusError as exc:
+                    last_exc = exc
+                    status = exc.response.status_code
+                    if status in retryable and not is_last:
+                        logger.debug(
+                            "TTS buffered 重试 status=%s (%s/%s)",
+                            status,
+                            attempt + 1,
+                            max_attempts,
+                        )
+                        time.sleep(3.0 * (attempt + 1))
+                        continue
+                    if is_last:
+                        raise
+                except httpx.RequestError as exc:
+                    last_exc = exc
+                    if not is_last:
+                        time.sleep(2.0 * (attempt + 1))
+                        continue
+                    raise
+
+        if last_exc:
+            raise last_exc
+        return b""
+
     def _request_tts_audio(self, text: str, *, connect_timeout: int, read_timeout: int) -> bytes:
+        if not self._ensure_sovits_tts_ready(timeout_sec=max(30.0, float(read_timeout))):
+            logger.warning("SoVITS TTS 未就绪，跳过合成")
+            return b""
         tts_data = self._build_buffered_tts_params(text)
-        response = self.session.post(
-            f"{self.sovits_url}/tts",
-            json=tts_data,
-            stream=False,
-            timeout=(connect_timeout, read_timeout),
+        return self._post_tts_buffered(
+            tts_data,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
         )
-        self._raise_for_status_with_body(response, context="buffered")
-        return response.content or b""
 
     @staticmethod
     def _looks_like_wav_container(audio_data: bytes) -> bool:
@@ -600,10 +805,7 @@ class VoiceManager:
         if total_size <= 0 or chunk_size <= 0:
             return []
 
-        return [
-            (offset, min(chunk_size, total_size - offset))
-            for offset in range(0, total_size, chunk_size)
-        ]
+        return [(offset, min(chunk_size, total_size - offset)) for offset in range(0, total_size, chunk_size)]
 
     def _iter_audio_packets(self, audio_data: bytes, *, packet_size: int = 512) -> Iterator[bytes]:
         if not audio_data:
@@ -639,28 +841,54 @@ class VoiceManager:
 
     def _stream_tts_to_queue(self, text: str, *, connect_timeout: int, read_timeout: int) -> tuple[str, bytes]:
         """流式拉取音频并实时推送到播放队列。"""
-        with self.session.post(
-            f"{self.sovits_url}/tts",
-            json=self._build_tts_params(text),
-            stream=True,
-            timeout=(connect_timeout, read_timeout),
-        ) as resp:
-            self._raise_for_status_with_body(resp, context="stream")
-
-            self.audio_queue.put(self._STREAM_START)
-            chunk_cache: list[bytes] = []
-
-            for chunk in resp.iter_content(chunk_size=512):
-                if self.stop_current.is_set():
-                    break
-                if chunk:
-                    chunk_cache.append(chunk)
-                    self.audio_queue.put(chunk)
-
-            if chunk_cache and not self.stop_current.is_set():
-                return "success", b"".join(chunk_cache)
-
+        if not self._ensure_sovits_tts_ready(timeout_sec=max(30.0, float(read_timeout))):
             return "empty", b""
+
+        retryable = {502, 503, 504}
+        max_attempts = 6
+        tts_params = self._build_tts_params(text)
+
+        with self._sovits_http_lock:
+            for attempt in range(max_attempts):
+                is_last = attempt >= max_attempts - 1
+                try:
+                    with self.session.stream(
+                        "POST",
+                        f"{self.sovits_url}/tts",
+                        json=tts_params,
+                        timeout=httpx.Timeout(
+                            connect=float(connect_timeout),
+                            read=float(read_timeout),
+                            write=10.0,
+                            pool=5.0,
+                        ),
+                    ) as resp:
+                        if resp.status_code in retryable and not is_last:
+                            time.sleep(3.0 * (attempt + 1))
+                            continue
+                        self._raise_for_status_with_body(resp, context="stream", log_error=is_last)
+
+                        self.audio_queue.put(self._STREAM_START)
+                        chunk_cache: list[bytes] = []
+
+                        for chunk in resp.iter_bytes(chunk_size=512):
+                            if self.stop_current.is_set():
+                                break
+                            if chunk:
+                                chunk_cache.append(chunk)
+                                self.audio_queue.put(chunk)
+
+                        if chunk_cache and not self.stop_current.is_set():
+                            return "success", b"".join(chunk_cache)
+
+                        return "empty", b""
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code in retryable and not is_last:
+                        time.sleep(3.0 * (attempt + 1))
+                        continue
+                    if is_last:
+                        raise
+        return "empty", b""
 
     def speak_and_save(self, text: str, wav_path: str) -> bool:
         """
@@ -710,7 +938,7 @@ class VoiceManager:
 
             return True
 
-        except requests.exceptions.RequestException as e:
+        except httpx.RequestError as e:
             logger.error(f"TTS 网络错误: {e}")
             self._increment_tts_stat("sync_errors")
             return False
@@ -809,6 +1037,8 @@ class VoiceManager:
             if self._ref_audio_missing:
                 # 预热时若参考音频缺失，直接返回以避免 400
                 return
+            if not self._ensure_sovits_tts_ready(timeout_sec=120.0):
+                return
 
             warmup_audio = self._request_tts_audio(
                 "你好",
@@ -877,7 +1107,7 @@ class VoiceManager:
                         self._set_cached_audio(text, stream_audio)
                     else:
                         self._increment_tts_stat("stream_empty")
-                except requests.exceptions.RequestException as e:
+                except httpx.RequestError as e:
                     logger.error(f"TTS 流式网络错误: {e}")
                     self._increment_tts_stat("stream_errors")
                     self._trigger_sovits_bootstrap_async()
@@ -908,7 +1138,7 @@ class VoiceManager:
                                     break
                                 self.audio_queue.put(packet)
                             continue
-                    except requests.exceptions.RequestException as e:
+                    except httpx.RequestError as e:
                         logger.error(f"TTS 缓冲回退网络错误: {e}")
                         self._increment_tts_stat("buffered_fallback_errors")
                         self._trigger_sovits_bootstrap_async()
@@ -926,7 +1156,7 @@ class VoiceManager:
                     continue
                 self._increment_tts_stat("system_tts_fallback_errors")
 
-            except requests.exceptions.RequestException as e:
+            except httpx.RequestError as e:
                 logger.error(f"TTS 网络错误: {e}")
             except Exception as e:
                 logger.error(f"TTS 错误: {e}", exc_info=True)
@@ -994,12 +1224,17 @@ class VoiceManager:
         self.stream.stop_stream()
         self.stream.close()
         self.p.terminate()
-        process = getattr(self, "_sovits_process", None)
-        if process is not None:
+        session = getattr(self, "session", None)
+        if session is not None:
             try:
-                process.terminate()
+                session.close()
             except Exception:
                 pass
+        process = getattr(self, "_sovits_process", None)
+        if process is not None:
+            from .utils import kill_process_tree
+
+            kill_process_tree(process)
 
     # ==================== 异步接口 ====================
 

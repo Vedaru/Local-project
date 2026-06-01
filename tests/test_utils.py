@@ -212,10 +212,33 @@ class TestAvatarControlTags:
         assert commands == [("TapBody", 2), ("Idle", None)]
 
 
+class TestLocalHttpHelpers:
+    """Tests for local no-proxy HTTP helpers."""
+
+    def test_is_local_service_url(self):
+        from modules.utils import is_local_service_url
+
+        assert is_local_service_url("http://127.0.0.1:9880/docs") is True
+        assert is_local_service_url("http://localhost:18084/health") is True
+        assert is_local_service_url("https://api.example.com/v1") is False
+
+    def test_ensure_local_no_proxy_env_merges_markers(self, monkeypatch):
+        import os
+
+        from modules.utils import ensure_local_no_proxy_env
+
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        ensure_local_no_proxy_env()
+        value = (os.environ.get("NO_PROXY") or "").lower()
+        assert "127.0.0.1" in value
+        assert "localhost" in value
+
+
 class TestCheckSovitsService:
     """Tests for check_sovits_service function."""
 
-    @patch("modules.utils.requests.get")
+    @patch("modules.utils.requests_get_local")
     def test_check_sovits_service_returns_true_on_success(self, mock_get):
         """Test that True is returned when service is available."""
         from modules.utils import check_sovits_service
@@ -227,7 +250,7 @@ class TestCheckSovitsService:
         result = check_sovits_service()
         assert result is True
 
-    @patch("modules.utils.requests.get")
+    @patch("modules.utils.requests_get_local")
     def test_check_sovits_service_returns_false_on_error(self, mock_get):
         """Test that False is returned when service is unavailable."""
         from modules.utils import check_sovits_service
@@ -237,7 +260,7 @@ class TestCheckSovitsService:
         result = check_sovits_service()
         assert result is False
 
-    @patch("modules.utils.requests.get")
+    @patch("modules.utils.requests_get_local")
     def test_check_sovits_service_returns_false_on_non_200(self, mock_get):
         """Test that False is returned on non-200 status code."""
         from modules.utils import check_sovits_service
@@ -257,15 +280,17 @@ class TestStartGptSovitsApi:
         """Test that None is returned for invalid path."""
         from modules.utils import start_gpt_sovits_api
 
-        result = start_gpt_sovits_api("/nonexistent/path")
-        assert result is None
+        process, tts_ready = start_gpt_sovits_api("/nonexistent/path")
+        assert process is None
+        assert tts_ready is False
 
     def test_start_gpt_sovits_api_returns_none_for_none_path(self):
         """Test that None is returned for None path."""
         from modules.utils import start_gpt_sovits_api
 
-        result = start_gpt_sovits_api(None)
-        assert result is None
+        process, tts_ready = start_gpt_sovits_api(None)
+        assert process is None
+        assert tts_ready is False
 
 
 class TestUtilityHelpers:

@@ -473,7 +473,7 @@ class TTS:
         self.init_vits_weights(self.configs.vits_weights_path)
         self.init_bert_weights(self.configs.bert_base_path)
         self.init_cnhuhbert_weights(self.configs.cnhuhbert_base_path)
-        # self.enable_half_precision(self.configs.is_half)
+        self.enable_half_precision(self.configs.is_half, save=False)
 
     def init_cnhuhbert_weights(self, base_path: str):
         print(f"Loading CNHuBERT weights from {base_path}")
@@ -482,6 +482,8 @@ class TTS:
         self.cnhuhbert_model = self.cnhuhbert_model.to(self.configs.device)
         if self.configs.is_half and str(self.configs.device) != "cpu":
             self.cnhuhbert_model = self.cnhuhbert_model.half()
+        else:
+            self.cnhuhbert_model = self.cnhuhbert_model.float()
 
     def init_bert_weights(self, base_path: str):
         print(f"Loading BERT weights from {base_path}")
@@ -491,6 +493,8 @@ class TTS:
         self.bert_model = self.bert_model.to(self.configs.device)
         if self.configs.is_half and str(self.configs.device) != "cpu":
             self.bert_model = self.bert_model.half()
+        else:
+            self.bert_model = self.bert_model.float()
 
     def init_vits_weights(self, weights_path: str):
         self.configs.vits_weights_path = weights_path
@@ -588,6 +592,8 @@ class TTS:
         self.vits_model = vits_model
         if self.configs.is_half and str(self.configs.device) != "cpu":
             self.vits_model = self.vits_model.half()
+        else:
+            self.vits_model = self.vits_model.float()
 
         self.configs.save_configs()
 
@@ -608,6 +614,8 @@ class TTS:
         self.t2s_model = t2s_model
         if self.configs.is_half and str(self.configs.device) != "cpu":
             self.t2s_model = self.t2s_model.half()
+        else:
+            self.t2s_model = self.t2s_model.float()
 
         codebook = t2s_model.model.ar_audio_embedding.weight.clone()
         mute_emb = codebook[self.configs.mute_tokens[self.configs.version]].unsqueeze(0)
@@ -673,7 +681,7 @@ class TTS:
         if self.configs.is_half == True:
             self.vocoder = self.vocoder.half().to(self.configs.device)
         else:
-            self.vocoder = self.vocoder.to(self.configs.device)
+            self.vocoder = self.vocoder.float().to(self.configs.device)
 
     def init_sr_model(self):
         if self.sr_model is not None:

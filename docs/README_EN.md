@@ -75,7 +75,7 @@ The following tools stay serial by default for safety:
 ### Option 1: Windows Batch Scripts (Recommended)
 
 ```batch
-git clone https://github.com/CHANGE_ME/local-project.git
+git clone https://github.com/Vedaru/Local-project.git
 cd local-project
 
 REM Install core dependencies
@@ -87,14 +87,6 @@ scripts\start.bat
 
 Optional runtime check: `scripts\check.bat`
 
-### Option 4: Docker (backend stack only)
-
-```powershell
-copy docker\.env.example docker\.env
-docker compose -f docker/docker-compose.yml up -d
-make docker-up
-```
-
 **Installation Parameters:**
 
 | Parameter | Description |
@@ -103,13 +95,13 @@ make docker-up
 | `-Mirror` | Use Tsinghua mirror for faster downloads |
 | `-Torch` | Install PyTorch (CUDA 12.1) |
 | `-GptSovits` | Install GPT-SoVITS voice synthesis dependencies |
-| `-Optional` | Install optional dependencies (Docker, AWS, crawlers, etc.) |
+| `-Optional` | Install optional dependencies (AWS, crawlers, etc.) |
 | `-All` | Install all dependencies |
 
 ### Option 2: System Python / Virtual Environment
 
 ```powershell
-git clone https://github.com/CHANGE_ME/local-project.git
+git clone https://github.com/Vedaru/Local-project.git
 cd local-project
 
 python -m venv .venv
@@ -119,7 +111,7 @@ REM Install core dependencies
 python -m pip install -r requirements.txt
 
 REM Install PyTorch (requires >=2.6.0, choose based on CUDA version)
-python -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" --index-url https://download.pytorch.org/whl/cu121
+python -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" --index-url https://download.pytorch.org/whl/cu124
 
 REM Install GPT-SoVITS dependencies (optional)
 python -m pip install transformers huggingface_hub peft librosa soundfile pypinyin cn2an
@@ -130,7 +122,7 @@ python main.py
 ### Option 3: Poetry
 
 ```powershell
-git clone https://github.com/CHANGE_ME/local-project.git
+git clone https://github.com/Vedaru/Local-project.git
 cd local-project
 
 poetry install
@@ -172,7 +164,6 @@ python -m pytest tests/test_voice_tts_chain.py -q
 ```text
 Local-project/
 ├── config/                      # Layered YAML (default / dev / prod)
-├── docker/                      # Docker images and compose
 ├── scripts/                     # install / start / check scripts
 ├── modules/                     # Core business modules
 ├── microservices/               # FastAPI services

@@ -89,9 +89,7 @@ class TrayMixin:
                 )
             else:
                 self.drag_action.setText("🔒 禁用拖拽模式")
-                self.tray_icon.showMessage(
-                    "Avatar", "拖拽模式 - 可以拖动窗口位置", QSystemTrayIcon.MessageIcon.Information, 2000
-                )
+                self.tray_icon.showMessage("Avatar", "拖拽模式 - 可以拖动窗口位置", QSystemTrayIcon.MessageIcon.Information, 2000)
 
     def _on_toggle_visibility(self):
         """切换窗口可见性"""

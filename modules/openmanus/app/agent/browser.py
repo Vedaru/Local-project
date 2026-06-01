@@ -7,7 +7,9 @@ from app.agent.toolcall import ToolCallAgent
 from app.logger import logger
 from app.prompt.browser import NEXT_STEP_PROMPT, SYSTEM_PROMPT
 from app.schema import Message, ToolChoice
-from app.tool import BrowserUseTool, Terminate, ToolCollection
+from app.tool import Terminate, ToolCollection
+
+BROWSER_USE_TOOL_NAME = "browser_use"
 
 
 # Avoid circular import if BrowserAgent needs BrowserContextHelper
@@ -35,7 +37,7 @@ class BrowserContextHelper:
         )
 
     async def get_browser_state(self) -> Optional[dict]:
-        browser_tool = self.agent.available_tools.get_tool(BrowserUseTool().name)
+        browser_tool = self.agent.available_tools.get_tool(BROWSER_USE_TOOL_NAME)
         if not browser_tool:
             try:
                 sandbox_module = __import__(
@@ -149,9 +151,19 @@ class BrowserContextHelper:
         )
 
     async def cleanup_browser(self):
-        browser_tool = self.agent.available_tools.get_tool(BrowserUseTool().name)
+        browser_tool = self.agent.available_tools.get_tool(BROWSER_USE_TOOL_NAME)
         if browser_tool and hasattr(browser_tool, "cleanup"):
             await browser_tool.cleanup()
+
+
+def _build_browser_agent_tools() -> ToolCollection:
+    try:
+        from app.tool.browser_use_tool import BrowserUseTool
+
+        return ToolCollection(BrowserUseTool(), Terminate())
+    except ImportError:
+        logger.warning("browser_use 未安装，BrowserAgent 仅保留 Terminate 工具")
+        return ToolCollection(Terminate())
 
 
 class BrowserAgent(ToolCallAgent):
@@ -172,9 +184,7 @@ class BrowserAgent(ToolCallAgent):
     max_steps: int = 100
 
     # Configure the available tools
-    available_tools: ToolCollection = Field(
-        default_factory=lambda: ToolCollection(BrowserUseTool(), Terminate())
-    )
+    available_tools: ToolCollection = Field(default_factory=_build_browser_agent_tools)
 
     # Use Auto for tool choice to allow both tool usage and free-form responses
     tool_choices: ToolChoice = ToolChoice.AUTO

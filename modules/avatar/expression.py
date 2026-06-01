@@ -56,10 +56,14 @@ class EmotionAnalyzer:
 
         # 标点符号的情感倾向权重
         self._punctuation_weights = {
-            "！": 0.3, "!": 0.3,
-            "？": -0.15, "?": -0.15,
-            "...": -0.15, "……": -0.15,
-            "~": 0.15, "～": 0.15,
+            "！": 0.3,
+            "!": 0.3,
+            "？": -0.15,
+            "?": -0.15,
+            "...": -0.15,
+            "……": -0.15,
+            "~": 0.15,
+            "～": 0.15,
         }
 
     def split_segments(self, text: str) -> list[str]:
@@ -79,9 +83,7 @@ class EmotionAnalyzer:
         for segment in major_segments:
             if len(segment) >= 16 and re.search(r"[，,、：:]", segment):
                 expanded_segments.extend(
-                    piece.strip()
-                    for piece in re.split(r"(?<=[，,、：:])", segment)
-                    if piece and piece.strip()
+                    piece.strip() for piece in re.split(r"(?<=[，,、：:])", segment) if piece and piece.strip()
                 )
             else:
                 expanded_segments.append(segment)
@@ -124,17 +126,15 @@ class EmotionAnalyzer:
         )
         uncertainty_signal = min(
             1.8,
-            punctuation_question * 0.30
-            + punctuation_ellipsis * 0.26
-            + max(0.0, (average_segment_len - 16.0) * 0.012),
+            punctuation_question * 0.30 + punctuation_ellipsis * 0.26 + max(0.0, (average_segment_len - 16.0) * 0.012),
         )
         staccato_signal = min(
             1.5,
-            short_segments * 0.16
-            + max(0, segment_count - 2) * 0.08
-            + cadence_density * 0.18,
+            short_segments * 0.16 + max(0, segment_count - 2) * 0.08 + cadence_density * 0.18,
         )
-        playful_signal = min(1.7, punctuation_tilde * 0.48 + punctuation_exclaim * 0.16 + max(0.0, 0.16 - punctuation_ellipsis * 0.05))
+        playful_signal = min(
+            1.7, punctuation_tilde * 0.48 + punctuation_exclaim * 0.16 + max(0.0, 0.16 - punctuation_ellipsis * 0.05)
+        )
         aggression_signal = max(
             0.0,
             punctuation_exclaim * 0.24
@@ -144,10 +144,22 @@ class EmotionAnalyzer:
             - punctuation_ellipsis * 0.08,
         )
 
-        final_happy = max(0.0, playful_signal + energy_signal * 0.30 - uncertainty_signal * 0.22 - aggression_signal * 0.35)
-        final_sad = max(0.0, punctuation_ellipsis * 0.34 + max(0.0, 0.20 - energy_signal * 0.10) + max(0.0, uncertainty_signal - playful_signal) * 0.08)
+        final_happy = max(
+            0.0, playful_signal + energy_signal * 0.30 - uncertainty_signal * 0.22 - aggression_signal * 0.35
+        )
+        final_sad = max(
+            0.0,
+            punctuation_ellipsis * 0.34
+            + max(0.0, 0.20 - energy_signal * 0.10)
+            + max(0.0, uncertainty_signal - playful_signal) * 0.08,
+        )
         final_angry = max(0.0, aggression_signal + punctuation_exclaim * 0.10 + max(0.0, staccato_signal - 0.3) * 0.15)
-        final_surprised = max(0.0, min(punctuation_exclaim, punctuation_question) * 0.42 + punctuation_exclaim * 0.08 + punctuation_question * 0.08)
+        final_surprised = max(
+            0.0,
+            min(punctuation_exclaim, punctuation_question) * 0.42
+            + punctuation_exclaim * 0.08
+            + punctuation_question * 0.08,
+        )
 
         # 问句默认偏思考，只有在高不确定+低愉悦时才提升困惑。
         final_thinking = max(
@@ -164,10 +176,21 @@ class EmotionAnalyzer:
             + max(0.0, uncertainty_signal - playful_signal - 0.35) * 0.22
             - playful_signal * 0.14,
         )
-        final_shy = max(0.0, 0.04 + (0.10 if text_len <= 12 else 0.0) + (0.06 if punctuation_tilde > 0 and punctuation_exclaim == 0 else 0.0) - punctuation_exclaim * 0.05)
+        final_shy = max(
+            0.0,
+            0.04
+            + (0.10 if text_len <= 12 else 0.0)
+            + (0.06 if punctuation_tilde > 0 and punctuation_exclaim == 0 else 0.0)
+            - punctuation_exclaim * 0.05,
+        )
         final_neutral = max(
             0.10,
-            0.24 + max(0.0, 0.10 - (final_happy + final_sad + final_angry + final_surprised + final_confused + final_thinking) * 0.03),
+            0.24
+            + max(
+                0.0,
+                0.10
+                - (final_happy + final_sad + final_angry + final_surprised + final_confused + final_thinking) * 0.03,
+            ),
         )
 
         raw_scores = {
@@ -272,6 +295,7 @@ class ExpressionManager:
         # 从 TuningConfig 读取情感分析参数（替代散落的 os.getenv）
         try:
             from modules.config import get_tuning
+
             _expr_tuning = get_tuning().expression
             min_segment_sec = max(0.12, min(0.8, _expr_tuning.min_segment_sec))
             min_hold_sec = max(0.2, min(1.5, _expr_tuning.min_hold_sec))
@@ -312,8 +336,7 @@ class ExpressionManager:
         for segment, segment_duration in zip(segments, durations):
             weights = self._analyzer.score_weights(segment)
             blended = {
-                emotion: weights.get(emotion, 0.0) * 0.72 + carry.get(emotion, 0.0) * 0.28
-                for emotion in Emotion
+                emotion: weights.get(emotion, 0.0) * 0.72 + carry.get(emotion, 0.0) * 0.28 for emotion in Emotion
             }
 
             if previous_selected is not None:
@@ -356,7 +379,9 @@ class ExpressionManager:
             offset += segment_duration
 
         if not timeline:
-            timeline.append(ExpressionTimelinePoint(offset_sec=0.0, emotion=Emotion.NEUTRAL, confidence=1.0, segment=""))
+            timeline.append(
+                ExpressionTimelinePoint(offset_sec=0.0, emotion=Emotion.NEUTRAL, confidence=1.0, segment="")
+            )
 
         # smooth_window_sec 已在上方从 TuningConfig 统一读取
 

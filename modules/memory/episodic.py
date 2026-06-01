@@ -155,7 +155,7 @@ class EpisodicMemory:
 
                 # Recency bonus (newer is slightly more relevant)
                 age_hours = (now - e.timestamp) / 3600.0
-                recency_bonus = 1.0 / (1.0 + age_hours ** 0.5)
+                recency_bonus = 1.0 / (1.0 + age_hours**0.5)
 
                 score = containment * self._lexical_weight + recency_bonus * self._recency_weight
 
@@ -303,6 +303,7 @@ class EpisodicMemory:
         try:
             if os.path.isfile(target):
                 import shutil
+
                 try:
                     shutil.copy2(target, backup)
                 except Exception as exc:
@@ -363,7 +364,4 @@ class EpisodicMemory:
 
     def _prune(self):
         cutoff = time.time() - 86400 * 30
-        self._episodes = [
-            e for e in self._episodes
-            if e.active or e.timestamp >= cutoff
-        ]
+        self._episodes = [e for e in self._episodes if e.active or e.timestamp >= cutoff]

@@ -56,9 +56,7 @@ def test_execute_invalid_tool_returns_failure():
 def test_execute_maps_toolerror_to_failure_result():
     collection = ToolCollection(_DummyTool(name="alpha"))
 
-    result = asyncio.run(
-        collection.execute(name="alpha", tool_input={"raise_tool_error": True})
-    )
+    result = asyncio.run(collection.execute(name="alpha", tool_input={"raise_tool_error": True}))
 
     assert result.error == "dummy tool error"
     stats = collection.get_stats()
@@ -69,9 +67,7 @@ def test_execute_maps_toolerror_to_failure_result():
 def test_execute_maps_unexpected_error_to_failure_result():
     collection = ToolCollection(_DummyTool(name="alpha"))
 
-    result = asyncio.run(
-        collection.execute(name="alpha", tool_input={"raise_unexpected": True})
-    )
+    result = asyncio.run(collection.execute(name="alpha", tool_input={"raise_unexpected": True}))
 
     assert result.error and "execution failed" in result.error
     stats = collection.get_stats()

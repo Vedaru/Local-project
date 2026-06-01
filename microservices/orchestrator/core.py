@@ -392,11 +392,19 @@ class OrchestratorCore:
             ).to_dict()
 
         try:
+            import httpx as _httpx
             timeout_sec = float(timeout_override) if timeout_override is not None else self.cfg.voice_timeout_sec
+            # TTS 合成可能耗时较长，read 超时需覆盖整个合成过程
+            voice_timeout = _httpx.Timeout(
+                connect=5.0,
+                read=max(0.1, timeout_sec),
+                write=10.0,
+                pool=3.0,
+            )
             tts = await http_client.post_json(
                 f"{self.cfg.voice_service_url}/speak",
                 payload={"text": text, "voice": "default"},
-                timeout=max(0.1, timeout_sec),
+                timeout=voice_timeout,
                 headers={"x-request-id": request_id},
             )
             self.record_circuit_success("voice")
@@ -610,7 +618,7 @@ class OrchestratorCore:
 
     async def prewarm_voice_openers(self, request_id: str) -> None:
         """Preload likely opening phrases to reduce first-chunk TTS latency."""
-        phrases = self._predict_opening_phrases(limit=2)
+        phrases = self._predict_opening_phrases(limit=3)
         if not phrases:
             return
 
@@ -630,7 +638,13 @@ class OrchestratorCore:
             if isinstance(result, dict):
                 self._store_prewarmed_voice(phrase, result)
 
-    async def _submit_single_voice_with_batch_scheduler(self, text: str, request_id: str) -> dict:
+    async def _submit_single_voice_with_batch_scheduler(
+        self,
+        text: str,
+        request_id: str,
+        *,
+        min_wait_sec: float | None = None,
+    ) -> dict:
         cfg = self.cfg
         answer = self._normalize_voice_text(text)
         if not answer:
@@ -646,6 +660,17 @@ class OrchestratorCore:
 
         if not cfg.voice_async_batch_enabled:
             result = await self.invoke_voice_service(answer, request_id)
+            self._store_prewarmed_voice(answer, result)
+            return result
+
+        # GUI 整段回复需要等到 wav 就绪，不能用 0.x 秒的 batch 短等待
+        if min_wait_sec is not None and float(min_wait_sec) > cfg.voice_batch_result_wait_sec + 0.05:
+            wait_cap = max(1.0, float(min_wait_sec))
+            result = await self.invoke_voice_service(
+                answer,
+                request_id,
+                timeout_override=min(wait_cap, cfg.voice_timeout_sec),
+            )
             self._store_prewarmed_voice(answer, result)
             return result
 
@@ -739,8 +764,17 @@ class OrchestratorCore:
             segments = [normalized]
 
         # 先发送第一段，满足首句优先触发。
+        sync_wait = max(0.0, float(getattr(self.cfg, "voice_chat_sync_wait_sec", 0.0) or 0.0))
+        wait_kwargs: dict[str, float] = {}
+        if sync_wait > 0:
+            wait_kwargs["min_wait_sec"] = min(sync_wait, float(self.cfg.voice_timeout_sec))
+
         first_segment = segments[0]
-        first_payload = await self._submit_single_voice_with_batch_scheduler(first_segment, request_id)
+        first_payload = await self._submit_single_voice_with_batch_scheduler(
+            first_segment,
+            request_id,
+            **wait_kwargs,
+        )
         segment_payloads: list[dict[str, Any]] = [
             {
                 "index": 0,
@@ -752,7 +786,11 @@ class OrchestratorCore:
         if len(segments) > 1:
             tail_results = await asyncio.gather(
                 *[
-                    self._submit_single_voice_with_batch_scheduler(segment_text, request_id)
+                    self._submit_single_voice_with_batch_scheduler(
+                        segment_text,
+                        request_id,
+                        **wait_kwargs,
+                    )
                     for segment_text in segments[1:]
                 ],
                 return_exceptions=True,
@@ -817,6 +855,16 @@ class OrchestratorCore:
             with self._llm_pending_lock:
                 self._llm_pending_jobs = max(0, self._llm_pending_jobs - 1)
 
+    async def run_llm_job_async(self, func, *args, **kwargs):
+        """原生异步 LLM 调用 — 直接在事件循环中运行，跳过线程池。"""
+        with self._llm_pending_lock:
+            self._llm_pending_jobs += 1
+        try:
+            return await func(*args, **kwargs)
+        finally:
+            with self._llm_pending_lock:
+                self._llm_pending_jobs = max(0, self._llm_pending_jobs - 1)
+
     # ---- Health snapshot ----
 
     def health_snapshot(self) -> dict[str, Any]:
@@ -845,6 +893,26 @@ class OrchestratorCore:
                 "stats": self.voice_stats_snapshot(),
             },
         }
+
+    # ---- Connection warmup ----
+
+    async def warmup_service_connections(self) -> None:
+        """预热到所有下游服务的 HTTP 连接，消除首次请求的 TCP/TLS 握手延迟。"""
+        import asyncio as _aio
+
+        urls = [
+            f"{self.cfg.memory_service_url}/health",
+            f"{self.cfg.voice_service_url}/health",
+            f"{self.cfg.agent_service_url}/health",
+        ]
+
+        async def _ping(url: str) -> None:
+            try:
+                await http_client.get_json(url, timeout=3.0)
+            except Exception:
+                pass
+
+        await _aio.gather(*[_ping(u) for u in urls], return_exceptions=True)
 
     # ---- Shutdown ----
 

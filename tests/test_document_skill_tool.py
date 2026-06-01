@@ -25,9 +25,7 @@ def test_document_skill_generate_css_template():
     _, DocumentSkillTool = _load_tool_types()
     tool = DocumentSkillTool()
 
-    result = asyncio.run(
-        tool.execute(command="generate_css_template", format="pptx", preset="business")
-    )
+    result = asyncio.run(tool.execute(command="generate_css_template", format="pptx", preset="business"))
 
     assert "CSS template" in result
     assert "font-family" in result

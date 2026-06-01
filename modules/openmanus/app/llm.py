@@ -1,6 +1,12 @@
 from typing import Dict, List, Optional, Union
 
-import tiktoken
+try:
+    import tiktoken
+
+    _TIKTOKEN_AVAILABLE = True
+except ImportError:
+    tiktoken = None
+    _TIKTOKEN_AVAILABLE = False
 from openai import (
     APIError,
     AsyncAzureOpenAI,
@@ -42,6 +48,13 @@ MULTIMODAL_MODELS = [
 ]
 
 
+class _FallbackEncoding:
+    def encode(self, text: str) -> List[str]:
+        if not text:
+            return []
+        return list(text)
+
+
 class LLM:
     _instances: Dict[str, "LLM"] = {}
 
@@ -78,11 +91,21 @@ class LLM:
             )
 
             # Initialize tokenizer
-            try:
-                self.tokenizer = tiktoken.encoding_for_model(self.model)
-            except KeyError:
-                # If the model is not in tiktoken's presets, use cl100k_base as default
-                self.tokenizer = tiktoken.get_encoding("cl100k_base")
+            if _TIKTOKEN_AVAILABLE and tiktoken is not None:
+                try:
+                    self.tokenizer = tiktoken.encoding_for_model(self.model)
+                except KeyError:
+                    # If the model is not in tiktoken's presets, use cl100k_base as default
+                    self.tokenizer = tiktoken.get_encoding("cl100k_base")
+                except Exception as exc:
+                    logger.warning("tiktoken init failed; using fallback tokenizer: %s", exc)
+                    self.tokenizer = _FallbackEncoding()
+            else:
+                logger.warning(
+                    "tiktoken not installed; using fallback tokenizer (approximate counts). "
+                    "Install with scripts\\install.bat or pip install tiktoken."
+                )
+                self.tokenizer = _FallbackEncoding()
 
             if self.api_type == "azure":
                 self.client = AsyncAzureOpenAI(

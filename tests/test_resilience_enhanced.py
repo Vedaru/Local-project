@@ -103,33 +103,25 @@ class TestCalculateDelay:
         assert calculate_delay(cfg, 3) == 2.0
 
     def test_exponential_strategy_no_jitter(self):
-        cfg = RetryConfig(
-            strategy=RetryStrategy.EXPONENTIAL, base_delay=1.0, max_delay=100.0, jitter=False
-        )
+        cfg = RetryConfig(strategy=RetryStrategy.EXPONENTIAL, base_delay=1.0, max_delay=100.0, jitter=False)
         assert calculate_delay(cfg, 0) == 1.0  # 1 * 2^0
         assert calculate_delay(cfg, 1) == 2.0  # 1 * 2^1
         assert calculate_delay(cfg, 2) == 4.0  # 1 * 2^2
         assert calculate_delay(cfg, 3) == 8.0  # 1 * 2^3
 
     def test_exponential_capped_at_max_delay(self):
-        cfg = RetryConfig(
-            strategy=RetryStrategy.EXPONENTIAL, base_delay=10.0, max_delay=30.0, jitter=False
-        )
+        cfg = RetryConfig(strategy=RetryStrategy.EXPONENTIAL, base_delay=10.0, max_delay=30.0, jitter=False)
         delay = calculate_delay(cfg, 10)  # would be 10240 without cap
         assert delay <= 30.0
 
     def test_linear_strategy(self):
-        cfg = RetryConfig(
-            strategy=RetryStrategy.LINEAR, base_delay=1.0, max_delay=60.0, jitter=False
-        )
+        cfg = RetryConfig(strategy=RetryStrategy.LINEAR, base_delay=1.0, max_delay=60.0, jitter=False)
         assert calculate_delay(cfg, 0) == 1.0  # 1 * (0+1)
         assert calculate_delay(cfg, 1) == 2.0  # 1 * (1+1)
         assert calculate_delay(cfg, 4) == 5.0  # 1 * (4+1)
 
     def test_jitter_adds_randomness(self):
-        cfg = RetryConfig(
-            strategy=RetryStrategy.FIXED, base_delay=10.0, max_delay=60.0, jitter=True, jitter_factor=0.5
-        )
+        cfg = RetryConfig(strategy=RetryStrategy.FIXED, base_delay=10.0, max_delay=60.0, jitter=True, jitter_factor=0.5)
         delays = [calculate_delay(cfg, 0) for _ in range(20)]
         # With jitter, not all delays should be exactly the same
         unique_delays = set(delays)
@@ -169,6 +161,7 @@ class TestCircuitBreaker:
 
         # First call fails -> opens circuit
         with pytest.raises(Exception):
+
             @breaker
             def failing_func():
                 raise ConnectionError("down")

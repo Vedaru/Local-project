@@ -99,8 +99,11 @@ flowchart LR
 ### 方式一：Windows 批处理脚本（推荐）
 
 ```batch
-git clone https://github.com/CHANGE_ME/local-project.git
+git clone https://github.com/Vedaru/Local-project.git
 cd local-project
+
+REM 安装独立 Python Runtime（3.10.x，与 pyproject 开发版本一致；不使用 Conda）
+scripts\setup_runtime.bat
 
 REM 安装核心依赖（推荐 scripts/ 目录）
 scripts\install.bat
@@ -108,8 +111,8 @@ scripts\install.bat
 REM 或根目录兼容入口
 install_dependencies.bat
 
-REM 安装完整依赖（含 PyTorch + GPT-SoVITS）
-scripts\install.bat -Torch -GptSovits
+REM 安装完整依赖（默认含 PyTorch + GPT-SoVITS；网络不稳可加 -Mirror）
+scripts\install.bat -Mirror
 
 REM 启动项目
 scripts\start.bat
@@ -124,16 +127,15 @@ scripts\start.bat
 | 参数 | 说明 |
 |------|------|
 | `-Dev` | 安装开发/测试依赖 |
-| `-Mirror` | 使用清华镜像源加速 |
-| `-Torch` | 安装 PyTorch (CUDA 12.1) |
-| `-GptSovits` | 安装 GPT-SoVITS 语音合成依赖 |
-| `-Optional` | 安装可选依赖 (Docker, AWS, 爬虫等) |
-| `-All` | 安装所有依赖 |
+| `-Mirror` | 使用清华镜像源（下载失败时推荐） |
+| `-SkipTorch` | 跳过 PyTorch（不推荐；GPT-SoVITS 需要 torch） |
+| `-Optional` | 安装可选依赖 (AWS, 爬虫等) |
+| `-All` | 开发 + 可选依赖（PyTorch/GPT-SoVITS 默认已装） |
 
 ### 方式二：系统 Python / 虚拟环境
 
 ```powershell
-git clone https://github.com/CHANGE_ME/local-project.git
+git clone https://github.com/Vedaru/Local-project.git
 cd local-project
 
 python -m venv .venv
@@ -143,7 +145,7 @@ REM 安装核心依赖
 python -m pip install -r requirements.txt
 
 REM 安装 PyTorch（要求 >=2.6.0，根据 CUDA 版本选择）
-python -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" --index-url https://download.pytorch.org/whl/cu121
+python -m pip install "torch>=2.6.0" "torchaudio>=2.6.0" "torchvision>=0.21.0" --index-url https://download.pytorch.org/whl/cu124
 
 REM 安装 GPT-SoVITS 依赖（可选）
 python -m pip install transformers huggingface_hub peft librosa soundfile pypinyin cn2an
@@ -154,32 +156,14 @@ python main.py
 ### 方式三：Poetry
 
 ```powershell
-git clone https://github.com/CHANGE_ME/local-project.git
+git clone https://github.com/Vedaru/Local-project.git
 cd local-project
 
 poetry install
 poetry run python main.py
 ```
 
-### 方式四：Docker（仅后端微服务栈）
-
-GUI 仍在宿主机运行；容器内启动 Gateway / Orchestrator / 各后端服务。
-
-```powershell
-copy docker\.env.example docker\.env
-# 编辑 docker\.env，设置 GATEWAY_API_KEY
-
-docker compose -f docker/docker-compose.yml build
-docker compose -f docker/docker-compose.yml up -d
-
-# 或使用 Makefile
-make docker-build
-make docker-up
-```
-
-根目录 `docker-compose.yml` 为兼容入口，实际编排见 [`docker/docker-compose.yml`](../docker/docker-compose.yml)。
-
-### Linux / macOS
+### 方式四：Linux / macOS
 
 ```bash
 chmod +x scripts/install.sh scripts/start.sh
@@ -224,7 +208,6 @@ Local-project/
 ├── main.py                      # GUI 入口（PyQt6 + qasync）
 ├── application.py               # GUI 应用编排
 ├── config/                      # 分层配置（default / development / production）
-├── docker/                      # Docker 镜像与 compose 编排
 ├── scripts/                     # 安装与启动脚本（install/start/check）
 ├── assets/                      # Avatar 模型、参考音频
 ├── data/                        # 运行时数据（日志、记忆，gitignore）
@@ -265,7 +248,6 @@ Local-project/
 | `h2 package is not installed` | `pip install "httpx[http2]" h2` |
 | 网关启动失败（非回环） | 设置 `GATEWAY_API_KEY` 或 `gateway.api_key` |
 | PyTorch 版本冲突 | 升级至 `torch>=2.6.0`（见 DEPENDENCIES.md） |
-| Docker Gateway 拒绝启动 | 在 `docker/.env` 中设置 `GATEWAY_API_KEY` |
 | 缺少本地密钥 | 复制 `.env.example` → `.env`，可选 `project_config.yaml` |
 
 更多运维命令见 [`OPS_HEALTH.md`](OPS_HEALTH.md)；依赖问题见 [`DEPENDENCIES.md`](DEPENDENCIES.md)。

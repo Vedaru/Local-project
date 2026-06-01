@@ -309,7 +309,9 @@ class PalaceKnowledgeGraph:
                 row = self._conn.execute("SELECT COUNT(*) AS c FROM triples WHERE active=1").fetchone()
         return int((row["c"] if row else 0) or 0)
 
-    def timeline(self, *, subject: Optional[str] = None, user_id: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+    def timeline(
+        self, *, subject: Optional[str] = None, user_id: Optional[str] = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
         uid = self._normalize_user_id(user_id)
         params: list[Any] = []
         where = ["1=1"]

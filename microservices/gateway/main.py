@@ -20,6 +20,7 @@ import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 # 将项目根目录加入 sys.path，确保能 import modules
@@ -31,12 +32,29 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+import httpx as _httpx
+
 from microservices.shared.bind_policy import bind_requires_gateway_api_key, validate_gateway_bind_and_api_key
 from microservices.shared.http_client import get_json, post_json
 from modules.logging_config import clear_context, get_logger, set_context
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
-app = FastAPI(title="project-local-gateway", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app):
+    ensure_supported_python_runtime(logger=logger)
+    bind_host = _resolve_gateway_bind_host()
+    validate_gateway_bind_and_api_key(bind_host=bind_host, api_key=GATEWAY_API_KEY)
+    logger.info(
+        "Gateway bind policy ok: host=%s bind_requires_api_key=%s api_key_configured=%s",
+        bind_host,
+        bind_requires_gateway_api_key(bind_host),
+        bool(GATEWAY_API_KEY),
+    )
+    yield
+
+
+app = FastAPI(title="project-local-gateway", version="0.1.0", lifespan=lifespan)
 logger = get_logger("Gateway")
 
 
@@ -179,19 +197,6 @@ class ChatRequest(BaseModel):
     route_to_agent: bool = Field(default=False)
 
 
-@app.on_event("startup")
-async def startup_event() -> None:
-    ensure_supported_python_runtime(logger=logger)
-    bind_host = _resolve_gateway_bind_host()
-    validate_gateway_bind_and_api_key(bind_host=bind_host, api_key=GATEWAY_API_KEY)
-    logger.info(
-        "Gateway bind policy ok: host=%s bind_requires_api_key=%s api_key_configured=%s",
-        bind_host,
-        bind_requires_gateway_api_key(bind_host),
-        bool(GATEWAY_API_KEY),
-    )
-
-
 @app.get("/health")
 async def health(request: Request) -> dict:
     return {
@@ -244,10 +249,18 @@ async def service_status(request: Request) -> dict:
 async def chat(request: ChatRequest, http_request: Request) -> dict:
     try:
         request_id = getattr(http_request.state, "request_id", str(uuid.uuid4()))
+        # orchestrator 的 /chat 端点可能触发 Agent 任务（耗时 60-180s），
+        # 期间不返回数据，read 超时必须覆盖整个 pipeline。
+        chat_timeout = _httpx.Timeout(
+            connect=5.0,
+            read=GATEWAY_CHAT_TIMEOUT_SEC,
+            write=10.0,
+            pool=3.0,
+        )
         result = await post_json(
             f"{ORCHESTRATOR_URL}/chat",
             payload=request.model_dump(),
-            timeout=GATEWAY_CHAT_TIMEOUT_SEC,
+            timeout=chat_timeout,
             headers={"x-request-id": request_id},
         )
         result["request_id"] = request_id

@@ -4,6 +4,7 @@ import time
 import uuid
 import wave
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -14,24 +15,7 @@ from starlette.responses import Response
 from modules.logging_config import clear_context, get_logger, set_context
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
-app = FastAPI(title="project-local-voice-service", version="0.1.0")
-
 logger = get_logger("VoiceService")
-
-
-@app.middleware("http")
-async def request_context_middleware(
-    request: Request,
-    call_next: Callable[[Request], Awaitable[Response]],
-) -> Response:
-    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
-    set_context(request_id=rid)
-    try:
-        response = await call_next(request)
-        response.headers.setdefault("x-request-id", rid)
-        return response
-    finally:
-        clear_context()
 
 
 def _read_bool(raw: str | None, default: bool) -> bool:
@@ -200,10 +184,13 @@ def _try_init_voice() -> None:
         _VOICE_INIT_ERROR = str(exc)
 
 
-@app.on_event("startup")
-async def startup_event() -> None:
+@asynccontextmanager
+async def lifespan(app):
     global _CLEANUP_TASK
 
+    from modules.utils import ensure_local_no_proxy_env
+
+    ensure_local_no_proxy_env()
     ensure_supported_python_runtime(logger=logger)
     await asyncio.to_thread(_ensure_wav_output_dir)
     await asyncio.to_thread(_try_init_voice)
@@ -216,11 +203,7 @@ async def startup_event() -> None:
             int(VOICE_WAV_TTL_SEC),
             _ensure_wav_output_dir(),
         )
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    global _CLEANUP_TASK
+    yield
 
     if _CLEANUP_TASK is not None:
         _CLEANUP_TASK.cancel()
@@ -234,9 +217,37 @@ async def shutdown_event() -> None:
         await asyncio.to_thread(_VOICE_MANAGER.close)
 
 
+app = FastAPI(title="project-local-voice-service", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def request_context_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
+    set_context(request_id=rid)
+    try:
+        response = await call_next(request)
+        response.headers.setdefault("x-request-id", rid)
+        return response
+    finally:
+        clear_context()
+
+
 class SpeakRequest(BaseModel):
     text: str = Field(min_length=1)
     voice: str = Field(default="default")
+
+
+@app.get("/health/live")
+async def health_live() -> dict:
+    """轻量就绪探针：不访问 SoVITS，供 start.bat / 编排器判断进程已可接受连接。"""
+    return {
+        "status": "ok",
+        "service": "voice-service",
+        "voice_manager_ready": _VOICE_MANAGER is not None,
+    }
 
 
 @app.get("/health")
@@ -265,11 +276,28 @@ async def health() -> dict:
 @app.post("/speak")
 async def speak(request: SpeakRequest) -> dict:
     if _VOICE_MANAGER is not None:
-        provider = await asyncio.to_thread(_VOICE_MANAGER.get_provider_status)
-        wav_path = await asyncio.to_thread(_build_wav_output_path)
+        # 并行执行 provider 检查和 wav 路径生成（消除串行等待）
+        provider, wav_path = await asyncio.gather(
+            asyncio.to_thread(_VOICE_MANAGER.get_provider_status),
+            asyncio.to_thread(_build_wav_output_path),
+        )
+
         success = await asyncio.to_thread(_VOICE_MANAGER.speak_and_save, request.text, wav_path)
 
         if not success:
+            fallback_ok = await asyncio.to_thread(_VOICE_MANAGER.save_system_tts_wav, request.text, wav_path)
+            if fallback_ok:
+                logger.info("SoVITS 合成失败，已切换系统 TTS wav 兜底")
+                wav_meta = await asyncio.to_thread(_read_wav_meta, wav_path)
+                return {
+                    "status": "ready",
+                    "voice": request.voice,
+                    "preview": request.text[:80],
+                    "mode": "wav-ready-system-tts",
+                    "wav_path": wav_path,
+                    **wav_meta,
+                }
+
             try:
                 if os.path.exists(wav_path):
                     os.remove(wav_path)
@@ -282,6 +310,18 @@ async def speak(request: SpeakRequest) -> dict:
                 "mode": "tts-failed",
                 "wav_path": "",
                 "reason": "speak_and_save_failed",
+            }
+
+        # 验证文件确实存在且可读，防止竞态删除或写入失败
+        if not os.path.isfile(wav_path) or os.path.getsize(wav_path) < 100:
+            logger.warning("TTS 报告成功但文件不存在或过小: %s", wav_path)
+            return {
+                "status": "failed",
+                "voice": request.voice,
+                "preview": request.text[:80],
+                "mode": "tts-failed",
+                "wav_path": "",
+                "reason": "wav_file_missing_after_write",
             }
 
         wav_meta = await asyncio.to_thread(_read_wav_meta, wav_path)

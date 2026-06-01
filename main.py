@@ -8,6 +8,7 @@ Minimal entry point responsible for:
 4. Starting LocalProjectApplication (Avatar GUI with microservices client)
 """
 
+import atexit
 import os
 import signal
 import sys
@@ -42,6 +43,27 @@ def main() -> None:
 
     app_config = get_cached_config()
 
+    from modules.startup_self_check import (
+        load_startup_check_options,
+        log_startup_report,
+        run_startup_self_check,
+        should_abort_startup,
+    )
+
+    startup_opts = load_startup_check_options()
+    if startup_opts.enabled:
+        logger.info("正在执行开机自检...")
+        startup_report = run_startup_self_check(app_config, options=startup_opts)
+        log_startup_report(logger, startup_report)
+        if should_abort_startup(startup_report, options=startup_opts):
+            logger.error(
+                "开机自检未通过（严格模式）：请运行 scripts\\install.bat 安装依赖、"
+                "scripts\\start.bat 启动微服务，修复日志中的 [FAIL] 项。"
+                "仅调试时可设 SKIP_STARTUP_SELF_CHECK=1 或 startup.strict_mode: false。"
+            )
+            input("\n按 Enter 键退出...")
+            sys.exit(1)
+
     # Required by QtWebEngine: set before QApplication is created.
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
@@ -58,11 +80,7 @@ def main() -> None:
     try:
         import qasync
     except ImportError:
-        logger.error(
-            "qasync 未安装。请运行: pip install qasync\n"
-            "qasync 用于将 asyncio 事件循环与 PyQt6 事件循环集成，"
-            "是当前架构的必要依赖。"
-        )
+        logger.error("qasync 未安装。请运行: pip install qasync\n" "qasync 用于将 asyncio 事件循环与 PyQt6 事件循环集成，" "是当前架构的必要依赖。")
         sys.exit(1)
 
     loop = qasync.QEventLoop(qt_app)
@@ -72,6 +90,9 @@ def main() -> None:
 
     gui_app = LocalProjectApplication(app_config, qt_app)
     gui_app.setup()
+
+    # atexit 兜底：确保子进程在任何退出路径下都被清理
+    atexit.register(gui_app.cleanup)
 
     quit_event = asyncio.Event()
 

@@ -19,12 +19,8 @@ from openai import RateLimitError as OpenAIRateLimitError
 from .config import client
 from .json_utils import extract_first_json
 from .logging_config import get_logger
-from .resilience import (
-    RateLimitError as LocalRateLimitError,
-)
-from .resilience import (
-    ServiceUnavailableError,
-)
+from .resilience import RateLimitError as LocalRateLimitError
+from .resilience import ServiceUnavailableError
 
 logger = get_logger("llm")
 
@@ -102,6 +98,7 @@ class AgentRoutingDecision:
     reason: str = ""
     is_atomic: bool = True
 
+
 # ---- 缓存已拼装的 system prompt ----
 _prompt_cache = TimedCache[str](ttl_seconds=PROMPT_CACHE_TTL_SECONDS)
 
@@ -149,10 +146,12 @@ def _get_enhanced_prompt(base_prompt: str) -> str:
 
 
 def _compute_backoff_delay(attempt: int) -> float:
-    return float(min(
-        EXPONENTIAL_BACKOFF_MAX_DELAY,
-        EXPONENTIAL_BACKOFF_BASE_DELAY * (2 ** max(0, int(attempt))),
-    ))
+    return float(
+        min(
+            EXPONENTIAL_BACKOFF_MAX_DELAY,
+            EXPONENTIAL_BACKOFF_BASE_DELAY * (2 ** max(0, int(attempt))),
+        )
+    )
 
 
 def _normalize_text(value: object, default: str = "") -> str:
@@ -234,29 +233,38 @@ def _parse_agent_routing_decision(
         reason = reason or "任务包含互斥目标"
 
     if should_trigger and confidence < min_confidence:
-        return AgentRoutingDecision(
-            should_trigger=False,
-            confidence=confidence,
-            reason=reason or "confidence below threshold",
-            is_atomic=is_atomic,
-        ), ""
+        return (
+            AgentRoutingDecision(
+                should_trigger=False,
+                confidence=confidence,
+                reason=reason or "confidence below threshold",
+                is_atomic=is_atomic,
+            ),
+            "",
+        )
 
     if should_trigger and not is_atomic:
-        return AgentRoutingDecision(
-            should_trigger=False,
+        return (
+            AgentRoutingDecision(
+                should_trigger=False,
+                confidence=confidence,
+                task=task,
+                reason=reason or "任务包含多个互斥目标，请拆分后再试",
+                is_atomic=False,
+            ),
+            "",
+        )
+
+    return (
+        AgentRoutingDecision(
+            should_trigger=should_trigger,
             confidence=confidence,
             task=task,
-            reason=reason or "任务包含多个互斥目标，请拆分后再试",
-            is_atomic=False,
-        ), ""
-
-    return AgentRoutingDecision(
-        should_trigger=should_trigger,
-        confidence=confidence,
-        task=task,
-        reason=reason,
-        is_atomic=is_atomic,
-    ), ""
+            reason=reason,
+            is_atomic=is_atomic,
+        ),
+        "",
+    )
 
 
 def _build_routing_messages(
@@ -290,6 +298,34 @@ def _build_routing_messages(
 
 def _error_message(exc: Exception) -> str:
     return str(getattr(exc, "message", str(exc)))
+
+
+def _handle_llm_retry(
+    e: Exception,
+    attempt: int,
+    max_retries: int,
+    label: str,
+) -> bool:
+    """统一 LLM 重试错误处理。返回 True 表示应继续重试，False 表示应放弃。"""
+    if isinstance(e, OpenAIRateLimitError):
+        logger.warning("触发限流: %s", e)
+        if attempt < max_retries:
+            time.sleep(_compute_backoff_delay(attempt))
+            return True
+        return False
+    if isinstance(e, (APIConnectionError, APITimeoutError)):
+        translated = _translate_openai_error(e)
+        if attempt < max_retries:
+            logger.warning("%s连接异常(将重试 %d/%d): %s", label, attempt + 1, max_retries, _error_message(translated))
+            time.sleep(_compute_backoff_delay(attempt))
+            return True
+        return False
+    if isinstance(e, APIStatusError):
+        translated = _translate_openai_error(e)
+        logger.error("%s服务返回错误: %s", label, _error_message(translated))
+        return False
+    logger.warning("%s未知错误: %s", label, e, exc_info=True)
+    return False
 
 
 def _reverse_validate_agent_route(
@@ -432,10 +468,7 @@ def decide_agent_routing(
                 attempt_messages.append(
                     {
                         "role": "system",
-                        "content": (
-                            "上一次输出无法解析为有效 JSON。错误反馈："
-                            f"{parse_feedback}。请严格只输出 JSON 对象，不要附加解释。"
-                        ),
+                        "content": ("上一次输出无法解析为有效 JSON。错误反馈：" f"{parse_feedback}。请严格只输出 JSON 对象，不要附加解释。"),
                     }
                 )
 
@@ -506,7 +539,7 @@ def _extract_completed_sentences(buffer: str) -> tuple[list[str], str]:
     start = 0
     for idx, ch in enumerate(buffer):
         if ch in "。！？!?；;\n":
-            sentence = buffer[start: idx + 1].strip()
+            sentence = buffer[start : idx + 1].strip()
             if sentence:
                 completed.append(sentence)
             start = idx + 1
@@ -541,11 +574,7 @@ def call_llm_with_sentence_callback(
         messages.append(
             {
                 "role": "system",
-                "content": (
-                    "以下是与你当前用户相关的记忆上下文。仅当与当前输入语义相关时再参考；"
-                    "若相关性弱，请忽略这些记忆并按当前输入自然作答。\n\n"
-                    f"{memory_context}"
-                ),
+                "content": ("以下是与你当前用户相关的记忆上下文。仅当与当前输入语义相关时再参考；" "若相关性弱，请忽略这些记忆并按当前输入自然作答。\n\n" f"{memory_context}"),
             }
         )
     messages.append({"role": "user", "content": prompt})
@@ -673,28 +702,185 @@ def call_llm(system_prompt, model_name, prompt, memory_context="", max_retries=2
 
             content = response.choices[0].message.content
             return (content or "").strip() or "抱歉，我没能生成有效回复。"
-        except OpenAIRateLimitError as e:
-            logger.warning("触发限流: %s", e)
-            if attempt < max_retries:
-                time.sleep(_compute_backoff_delay(attempt))
+        except (OpenAIRateLimitError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+            if _handle_llm_retry(e, attempt, max_retries, "LLM "):
                 continue
-            return "抱歉，请求太频繁了，稍后再试。"
-        except (APIConnectionError, APITimeoutError) as e:
-            translated = _translate_openai_error(e)
-            if attempt < max_retries:
-                logger.warning("LLM 连接异常(将重试 %d/%d): %s", attempt + 1, max_retries, _error_message(translated))
-                time.sleep(_compute_backoff_delay(attempt))
-                continue
-            logger.error("连接失败: %s", _error_message(translated))
-            return "抱歉，我现在连接不上服务。"
-        except APIStatusError as e:
-            translated = _translate_openai_error(e)
-            logger.error("服务返回错误: %s", _error_message(translated))
+            if isinstance(e, OpenAIRateLimitError):
+                return "抱歉，请求太频繁了，稍后再试。"
+            if isinstance(e, (APIConnectionError, APITimeoutError)):
+                return "抱歉，我现在连接不上服务。"
             return "抱歉，服务出现错误，请稍后再试。"
 
 
 async def call_llm_async(system_prompt, model_name, prompt, memory_context="", max_retries=2):
-    """call_llm 的异步包装 — 在 asyncio 线程池中执行同步 LLM 调用。"""
-    import asyncio
+    """原生异步 LLM 调用 — 直接在事件循环中运行，消除 ThreadPoolExecutor 开销。"""
+    from .config import async_client
 
-    return await asyncio.to_thread(call_llm, system_prompt, model_name, prompt, memory_context, max_retries)
+    system_prompt = _normalize_text(system_prompt)
+    model_name = _normalize_text(model_name)
+    prompt = _normalize_text(prompt)
+    memory_context = _normalize_text(memory_context)
+
+    if not model_name:
+        logger.error("未配置 MODEL_NAME，请检查 .env 文件")
+        return "抱歉，模型未配置，暂时无法回答。"
+
+    if not prompt:
+        return "请先输入内容。"
+
+    enhanced_system_prompt = _get_enhanced_prompt(system_prompt)
+    messages = [{"role": "system", "content": enhanced_system_prompt}]
+
+    if memory_context:
+        memory_prompt = (
+            "以下是与你当前用户相关的记忆上下文。仅当与当前输入语义相关时再参考；"
+            "若相关性弱，请忽略这些记忆并按当前输入自然作答。\n\n"
+            f"{memory_context}\n\n"
+            "回答规则：\n"
+            "- 仅在记忆与当前问题明显相关时使用记忆事实，禁止为了引用记忆而强行转移话题\n"
+            "- 事实性问题优先使用记忆中的明确事实，尤其是用户偏好、习惯和近期确认的信息\n"
+            "- 记忆冲突时按优先级处理：最近对话 > 已知事实 > 历史对话(用户输入) > 相关记忆\n"
+            "- 若记忆中没有足够依据，直接说明不确定，并向用户追问，不要猜测\n"
+            "- 表达自然，不要机械复述\u201c我记得\u201d或逐段引用标题"
+        )
+        messages.append({"role": "system", "content": memory_prompt})
+
+    messages.append({"role": "user", "content": prompt})
+
+    import asyncio as _aio
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = await async_client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=MAX_TOKENS_DEFAULT,
+                temperature=0.7,
+                top_p=0.9,
+                presence_penalty=0.1,
+                frequency_penalty=0.1,
+            )
+            content = response.choices[0].message.content
+            return (content or "").strip() or "抱歉，我没能生成有效回复。"
+        except (OpenAIRateLimitError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+            if isinstance(e, OpenAIRateLimitError):
+                logger.warning("触发限流: %s", e)
+                if attempt < max_retries:
+                    await _aio.sleep(_compute_backoff_delay(attempt))
+                    continue
+                return "抱歉，请求太频繁了，稍后再试。"
+            if isinstance(e, (APIConnectionError, APITimeoutError)):
+                translated = _translate_openai_error(e)
+                if attempt < max_retries:
+                    logger.warning("LLM连接异常(将重试 %d/%d): %s", attempt + 1, max_retries, _error_message(translated))
+                    await _aio.sleep(_compute_backoff_delay(attempt))
+                    continue
+                return "抱歉，我现在连接不上服务。"
+            if isinstance(e, APIStatusError):
+                translated = _translate_openai_error(e)
+                logger.error("LLM服务返回错误: %s", _error_message(translated))
+                return "抱歉，服务出现错误，请稍后再试。"
+        except Exception as exc:
+            logger.warning("异步LLM调用失败: %s", exc, exc_info=True)
+            return "抱歉，服务出现错误，请稍后再试。"
+
+    return "抱歉，服务出现错误，请稍后再试。"
+
+
+async def call_llm_with_sentence_callback_async(
+    system_prompt,
+    model_name,
+    prompt,
+    memory_context="",
+    on_sentence=None,
+    max_retries=2,
+):
+    """原生异步流式 LLM 调用 — 逐句回调，直接在事件循环中运行。"""
+    from .config import async_client
+
+    if not callable(on_sentence):
+        return await call_llm_async(system_prompt, model_name, prompt, memory_context, max_retries)
+
+    system_prompt = _normalize_text(system_prompt)
+    model_name = _normalize_text(model_name)
+    prompt = _normalize_text(prompt)
+    memory_context = _normalize_text(memory_context)
+
+    if not model_name or not prompt:
+        return await call_llm_async(system_prompt, model_name, prompt, memory_context, max_retries)
+
+    enhanced_system_prompt = _get_enhanced_prompt(system_prompt)
+    messages = [{"role": "system", "content": enhanced_system_prompt}]
+
+    if memory_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": ("以下是与你当前用户相关的记忆上下文。仅当与当前输入语义相关时再参考；" "若相关性弱，请忽略这些记忆并按当前输入自然作答。\n\n" f"{memory_context}"),
+            }
+        )
+    messages.append({"role": "user", "content": prompt})
+
+    import asyncio as _aio
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = await async_client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=MAX_TOKENS_DEFAULT,
+                temperature=0.7,
+                top_p=0.9,
+                presence_penalty=0.1,
+                frequency_penalty=0.1,
+                stream=True,
+            )
+
+            all_text = ""
+            sentence_buffer = ""
+            async for chunk in response:
+                try:
+                    chunk_text = chunk.choices[0].delta.content or ""
+                except Exception:
+                    chunk_text = ""
+                if not chunk_text:
+                    continue
+
+                all_text += chunk_text
+                sentence_buffer += chunk_text
+                completed, sentence_buffer = _extract_completed_sentences(sentence_buffer)
+                for sentence in completed:
+                    try:
+                        on_sentence(sentence)
+                    except Exception as exc:
+                        logger.debug("sentence callback failed: %s", exc)
+
+            tail = sentence_buffer.strip()
+            if tail:
+                try:
+                    on_sentence(tail)
+                except Exception as exc:
+                    logger.debug("sentence callback failed on tail: %s", exc)
+
+            final_text = all_text.strip()
+            if final_text:
+                return final_text
+            return "抱歉，我没能生成有效回复。"
+        except OpenAIRateLimitError as e:
+            logger.warning("触发限流: %s", e)
+            if attempt < max_retries:
+                await _aio.sleep(_compute_backoff_delay(attempt))
+                continue
+            break
+        except (APIConnectionError, APITimeoutError) as e:
+            translated = _translate_openai_error(e)
+            if attempt < max_retries:
+                logger.warning("异步LLM流式连接异常(将重试 %d/%d): %s", attempt + 1, max_retries, _error_message(translated))
+                await _aio.sleep(_compute_backoff_delay(attempt))
+                continue
+            break
+        except Exception as exc:
+            logger.warning("异步流式LLM失败，回退同步调用: %s", exc)
+            break
+
+    return await call_llm_async(system_prompt, model_name, prompt, memory_context, max_retries)

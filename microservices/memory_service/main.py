@@ -15,6 +15,7 @@ import time
 import uuid
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 import uvicorn
@@ -104,7 +105,8 @@ class MemoryWAL:
         with open(self._wal_path, "a", encoding="utf-8") as handle:
             handle.write(line + "\n")
             handle.flush()
-            os.fsync(handle.fileno())
+            # 移除 os.fsync：Windows 上每次 fsync 增加 10-50ms 延迟。
+            # 本地桌面应用依赖 OS 写缓冲即可，崩溃恢复由启动时 WAL replay 保证。
 
     def _rebuild_state_from_disk(self) -> None:
         pending: dict[str, dict] = {}
@@ -451,7 +453,27 @@ def _replay_pending_wal_records() -> dict[str, int]:
     return {"replayed": replayed, "failed": failed}
 
 
-app = FastAPI(title="Memory Service (MemPalace)", version="3.0.0")
+@asynccontextmanager
+async def lifespan(app):
+    """Pre-initialize engine on startup, cleanup on shutdown."""
+    ensure_supported_python_runtime(logger=logger)
+    with _engine_lock:
+        if not hasattr(app.state, "memory_engine"):
+            _set_cached_engine(None)
+    _get_engine()
+    replay_result = await asyncio.to_thread(_replay_pending_wal_records)
+    if replay_result.get("replayed", 0) > 0 or replay_result.get("failed", 0) > 0:
+        logger.info(
+            "[WAL] replay complete replayed=%s failed=%s",
+            replay_result.get("replayed", 0),
+            replay_result.get("failed", 0),
+        )
+    logger.info(f"MemoryService 就绪 | PID={os.getpid()}")
+    yield
+    reset_engine_for_tests()
+
+
+app = FastAPI(title="Memory Service (MemPalace)", version="3.0.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -475,29 +497,6 @@ class BatchRequest(BaseModel):
     n_results: int = Field(default=5, ge=1, le=20)
     retrieve: bool = True
     store_content: Optional[str] = None
-
-
-@app.on_event("startup")
-async def _startup():
-    """Pre-initialize engine on startup."""
-    ensure_supported_python_runtime(logger=logger)
-    with _engine_lock:
-        if not hasattr(app.state, "memory_engine"):
-            _set_cached_engine(None)
-    _get_engine()
-    replay_result = await asyncio.to_thread(_replay_pending_wal_records)
-    if replay_result.get("replayed", 0) > 0 or replay_result.get("failed", 0) > 0:
-        logger.info(
-            "[WAL] replay complete replayed=%s failed=%s",
-            replay_result.get("replayed", 0),
-            replay_result.get("failed", 0),
-        )
-    logger.info(f"MemoryService 就绪 | PID={os.getpid()}")
-
-
-@app.on_event("shutdown")
-async def _shutdown():
-    reset_engine_for_tests()
 
 
 def _health_sync() -> dict:

@@ -23,6 +23,7 @@ import asyncio
 import concurrent.futures
 import datetime
 import os
+import re
 import sys
 import threading
 from typing import Callable, Optional
@@ -190,24 +191,14 @@ def _sync_openmanus_config():
             except Exception:
                 return default
 
-        api_key = str(
-            os.environ.get("ARK_API_KEY")
-            or llm_cfg.get("api_key")
-            or cfg.get_api_key()
-            or ""
-        )
+        api_key = str(os.environ.get("ARK_API_KEY") or llm_cfg.get("api_key") or cfg.get_api_key() or "")
         base_url = str(
             os.environ.get("ARK_BASE_URL")
             or llm_cfg.get("base_url")
             or cfg.ark_base_url
             or "https://ark.cn-beijing.volces.com/api/v3"
         )
-        model = str(
-            os.environ.get("MODEL_NAME")
-            or llm_cfg.get("model")
-            or cfg.model_name
-            or "deepseek-v3-250324"
-        )
+        model = str(os.environ.get("MODEL_NAME") or llm_cfg.get("model") or cfg.model_name or "deepseek-v3-250324")
         max_tokens = _safe_int(llm_cfg.get("max_tokens", 8192), 8192)
         temperature = _safe_float(llm_cfg.get("temperature", 0.0), 0.0)
         api_type = str(llm_cfg.get("api_type", "") or "")
@@ -314,6 +305,7 @@ class ManusAgent:
         self._active_future_lock = threading.Lock()
         self._active_future: Optional[concurrent.futures.Future] = None
         self._initialized = False
+        self._llm_fallback = False
 
         # 在任何 OpenManus 模块被导入之前，先将项目 API 设置同步到 config.toml
         _sync_openmanus_config()
@@ -378,15 +370,13 @@ class ManusAgent:
 
     async def _ensure_agent(self):
         """确保 OpenManus Manus agent 已创建（延迟初始化）。"""
-        if self._agent is not None:
+        if self._initialized:
             return
 
         # 延迟导入 — config.toml 此时已由 __init__ 中的 _sync_openmanus_config() 写好
         from app.config import config
 
-        allowed_directories = "\n".join(
-            f"- {path}" for path in config.workspace_roots
-        )
+        allowed_directories = "\n".join(f"- {path}" for path in config.workspace_roots)
 
         # 构建自定义的 system prompt
         base_prompt = (
@@ -416,15 +406,34 @@ class ManusAgent:
         # 尝试使用 SpeakingManus（支持语音描述）；如果失败则回落到普通 Manus
         agent_class = _create_speaking_manus_class()
         if agent_class is None:
-            from app.agent.manus import Manus
-            agent_class = Manus
+            try:
+                from app.agent.manus import Manus
 
-        self._agent = await agent_class.create(
-            system_prompt=base_prompt,
-            max_steps=self.max_steps,
-        )
+                agent_class = Manus
+            except (ImportError, ModuleNotFoundError) as import_err:
+                logger.warning("Manus 导入失败 (%s)，使用 LLM-only 兜底 Agent", import_err)
+                agent_class = None
+            except Exception as import_err:
+                logger.warning("Manus 导入异常 (%s)，使用 LLM-only 兜底 Agent", import_err)
+                agent_class = None
+
+        self._llm_fallback = False
+        if agent_class is not None:
+            try:
+                self._agent = await agent_class.create(
+                    system_prompt=base_prompt,
+                    max_steps=self.max_steps,
+                )
+            except Exception as create_err:
+                logger.warning("Manus.create 失败 (%s)，使用 LLM-only 兜底 Agent", create_err)
+                self._agent = None
+                self._llm_fallback = True
+        else:
+            self._agent = None
+            self._llm_fallback = True
+
         self._initialized = True
-        logger.info("OpenManus Manus agent 创建成功")
+        logger.info("OpenManus Manus agent 创建成功 (llm_fallback=%s)", self._llm_fallback)
 
     def run_task(self, task_description: str) -> str:
         """执行给定任务（同步、阻塞）并返回最终结果字符串。
@@ -486,12 +495,7 @@ class ManusAgent:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         safe_task = (task_description or "").strip() or "(empty task)"
         safe_result = (result or "").strip() or "(empty result)"
-        entry = (
-            f"\n## {timestamp}\n"
-            f"### task\n{safe_task}\n\n"
-            "### result\n"
-            f"```\n{safe_result}\n```\n"
-        )
+        entry = f"\n## {timestamp}\n" f"### task\n{safe_task}\n\n" "### result\n" f"```\n{safe_result}\n```\n"
         await tool.execute(
             command="append",
             scope="session",
@@ -514,15 +518,61 @@ class ManusAgent:
 
     async def _execute_steps(self, prepared_task: str) -> object:
         """Execute agent steps on prepared task and return raw output."""
-        from app.schema import AgentState
+        if getattr(self, "_llm_fallback", False) or self._agent is None:
+            # browser_use 未安装时，使用纯 LLM 回复
+            return await self._llm_fallback_reply(prepared_task)
 
-        if self._agent is None:
-            raise RuntimeError("OpenManus agent 初始化失败")
+        from app.schema import AgentState
 
         self._agent.state = AgentState.IDLE
         self._agent.current_step = 0
         self._agent.memory.clear()
         return await self._agent.run(prepared_task)
+
+    @staticmethod
+    def _extract_search_query(task_description: str) -> str:
+        text = re.sub(r"^\[user=[^\]]+\]\s*", "", (task_description or "").strip())
+        if not text:
+            return ""
+        if "搜索" in text:
+            query = text.split("搜索", 1)[-1].strip(" ：:，,")
+            return query or text
+        return ""
+
+    async def _llm_fallback_reply(self, task_description: str) -> str:
+        """当 Manus 不可用时：搜索类任务优先 WebSearch，否则走 LLM 文本回复。"""
+        search_query = self._extract_search_query(task_description)
+        if search_query:
+            try:
+                from app.tool.web_search import WebSearch
+
+                tool = WebSearch()
+                outcome = await tool.execute(query=search_query, num_results=8)
+                if outcome and not getattr(outcome, "error", None):
+                    body = str(getattr(outcome, "output", "") or outcome).strip()
+                    if body:
+                        return body
+            except Exception as exc:
+                logger.warning("WebSearch 兜底失败: %s", exc)
+
+        import asyncio as _aio
+
+        def _sync_call():
+            from modules.config import get_cached_config
+            from modules.llm import call_llm
+
+            cfg = get_cached_config()
+            return call_llm(
+                system_prompt=(
+                    "你是一个 AI 助手。用户的请求原本需要 Agent 执行，但当前 Agent 运行时不可用。"
+                    "请用中文尽可能完成任务；若需要联网搜索而工具不可用，请说明限制并给出你能提供的建议。"
+                ),
+                model_name=cfg.model_name or "",
+                prompt=task_description,
+            )
+
+        loop = _aio.get_running_loop()
+        return await loop.run_in_executor(None, _sync_call)
 
     def _postprocess_result(self, result: object) -> str:
         """Normalize raw agent output for external callers."""

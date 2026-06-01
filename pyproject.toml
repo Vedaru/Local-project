@@ -6,6 +6,7 @@ build-backend = "poetry.core.masonry.api"
 name = "local-project"
 version = "0.1.0"
 description = "AI Desktop Assistant with Avatar - 带虚拟形象的桌面 AI 助手"
+# Windows runtime pin: scripts/runtime_version.txt (currently 3.11.9 embeddable)
 requires-python = ">=3.10,<3.12"
 license = {text = "MIT"}
 authors = [
@@ -22,8 +23,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/local-project/local-project"
-Repository = "https://github.com/local-project/local-project"
+Homepage = "https://github.com/Vedaru/Local-project"
+Repository = "https://github.com/Vedaru/Local-project"
 
 [tool.poetry]
 name = "local-project"
@@ -37,13 +38,13 @@ packages = [{include = "modules"}]
 python = ">=3.10,<3.12"
 
 # LLM 与 API
-openai = "1.35.0"
-python-dotenv = "1.0.0"
-requests = "2.31.0"
+openai = ">=1.58.1,<2"
+python-dotenv = ">=1.0.1"
+requests = ">=2.32.3"
 httpx = {version = "0.28.1", extras = ["http2"]}
 h2 = ">=4.0.0"
 pyyaml = "6.0"
-pydantic = "2.5.0"
+pydantic = ">=2.10.4,<3"
 
 # 中文分词
 jieba = "0.42.1"
@@ -64,13 +65,15 @@ sentence-transformers = "2.2.2"
 
 # GUI
 PyQt6 = "6.6.1"
+PyQt6-Qt6 = ">=6.6.0,<6.7"
+PyQt6-sip = ">=13.6,<14"
 PyQt6-WebEngine = "6.6.0"
 qasync = "0.27.1"
 
-# 语音识别 (ASR)
-openai-whisper = "20231117"
-faster-whisper = "0.10.0"
-ctranslate2 = "3.24.0"
+# 语音识别 (ASR) — Ear 使用 faster-whisper；不安装 openai-whisper 源码包
+faster-whisper = ">=1.1.0,<2"
+av = ">=12"
+ctranslate2 = ">=4.0,<5"
 numpy = "1.24.3"
 
 # 电脑控制
@@ -79,15 +82,16 @@ pygetwindow = "0.0.9"
 
 # Agent 框架
 browser-use = "0.1.40"
-playwright = "1.40.0"
+playwright = ">=1.49.0"
 tenacity = "8.2.3"
 structlog = "23.2.0"
 loguru = "0.7.2"
-tiktoken = "0.5.1"
+tiktoken = ">=0.7,<1"
 aiofiles = "23.2.1"
 colorama = "0.4.6"
-fastapi = "0.104.1"
-uvicorn = "0.24.0"
+fastapi = ">=0.128.6,<0.136"
+starlette = ">=1.0.0,<2.0.0"
+uvicorn = { version = ">=0.34.0,<0.37", extras = ["standard"] }
 html2text = "2020.1.16"
 googlesearch-python = "1.2.3"
 baidusearch = "1.0.3"
@@ -300,7 +304,7 @@ filterwarnings = [
 
 [tool.coverage.run]
 branch = true
-source = ["modules"]
+source = ["modules", "microservices"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
@@ -318,7 +322,7 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "if typing.TYPE_CHECKING:",
 ]
-fail_under = 45
+fail_under = 55
 show_missing = true
 
 [tool.coverage.html]

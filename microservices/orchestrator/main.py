@@ -7,9 +7,11 @@ This file retains only FastAPI routes and wiring.
 
 import asyncio
 import contextlib
+import re
 import threading
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -20,23 +22,7 @@ from microservices.orchestrator.core import OrchestratorConfig, OrchestratorCore
 from modules.logging_config import clear_context, get_logger, set_context
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
-app = FastAPI(title="project-local-orchestrator", version="0.2.0")
 logger = get_logger("Orchestrator")
-
-
-@app.middleware("http")
-async def request_context_middleware(
-    request: Request,
-    call_next: Callable[[Request], Awaitable[Response]],
-) -> Response:
-    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
-    set_context(request_id=rid)
-    try:
-        response = await call_next(request)
-        response.headers.setdefault("x-request-id", rid)
-        return response
-    finally:
-        clear_context()
 
 
 # Singleton core instance (legacy compat with tests)
@@ -75,8 +61,6 @@ def get_core() -> OrchestratorCore:
     """Get (or lazily create) the orchestrator core singleton."""
     expected_cfg = OrchestratorConfig.from_env()
     with _core_lock:
-        # Backward compatibility: tests may set module-level _core=None
-        # to force recreation under new environment values.
         if _core is None and getattr(app.state, "orchestrator_core", None) is not None:
             _set_cached_core(None, None)
 
@@ -90,11 +74,87 @@ def get_core() -> OrchestratorCore:
         return cached_core
 
 
+@asynccontextmanager
+async def lifespan(app):
+    ensure_supported_python_runtime(logger=logger)
+    with _core_lock:
+        if not hasattr(app.state, "orchestrator_core"):
+            _set_cached_core(None, None)
+    # 预热下游服务连接池（异步，不阻塞启动）
+    try:
+        core = get_core()
+        _warmup_task = asyncio.create_task(core.warmup_service_connections())
+    except Exception:
+        _warmup_task = None
+    yield
+    with _core_lock:
+        core, _ = _get_cached_core()
+        if core is None:
+            core = _core
+        _set_cached_core(None, None)
+
+    if core is not None:
+        core.shutdown()
+        await core.flush_pending_memory_writes_on_shutdown()
+        await core.shutdown_voice_batch_worker()
+
+    from microservices.shared.http_client import close_http_clients
+
+    await close_http_clients()
+
+
+app = FastAPI(title="project-local-orchestrator", version="0.2.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def request_context_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
+    set_context(request_id=rid)
+    try:
+        response = await call_next(request)
+        response.headers.setdefault("x-request-id", rid)
+        return response
+    finally:
+        clear_context()
+
+
 class ChatRequest(BaseModel):
     query: str = Field(min_length=1)
     user_id: str = Field(default="anonymous")
     route_to_agent: bool = Field(default=False)
     force_chat_only: bool = Field(default=False)
+
+
+_SUMMON_AGENT_RE = re.compile(
+    r"\[SUMMON_AGENT\](.*?)\[/SUMMON_AGENT\]",
+    re.DOTALL,
+)
+
+
+def _extract_summon_agent_task(answer: str) -> str:
+    """从 LLM 回复中提取 [SUMMON_AGENT] 标签内的 task。返回空串表示无标签。"""
+    match = _SUMMON_AGENT_RE.search(answer or "")
+    if not match:
+        return ""
+    import json as _json
+
+    raw = match.group(1).strip()
+    try:
+        payload = _json.loads(raw)
+        if isinstance(payload, dict):
+            return str(payload.get("task", "") or "").strip()
+    except Exception:
+        pass
+    return raw
+
+
+def _strip_summon_agent_tags(answer: str) -> str:
+    """移除回复中的 [SUMMON_AGENT]...[/SUMMON_AGENT] 标签及前后空白。"""
+    cleaned = _SUMMON_AGENT_RE.sub("", answer or "").strip()
+    return cleaned
 
 
 @app.get("/health")
@@ -111,33 +171,6 @@ async def health() -> dict:
         "service": "orchestrator",
         **health_data,
     }
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    """Initialize app.state cache slots on startup."""
-    ensure_supported_python_runtime(logger=logger)
-    with _core_lock:
-        if not hasattr(app.state, "orchestrator_core"):
-            _set_cached_core(None, None)
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    with _core_lock:
-        core, _ = _get_cached_core()
-        if core is None:
-            core = _core
-        _set_cached_core(None, None)
-
-    if core is not None:
-        core.shutdown()
-        await core.flush_pending_memory_writes_on_shutdown()
-        await core.shutdown_voice_batch_worker()
-
-    from microservices.shared.http_client import close_http_clients
-
-    await close_http_clients()
 
 
 @app.post("/chat")
@@ -247,43 +280,50 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
         streamed_tts_payloads: list[dict] = []
 
         async def _run_llm_with_streaming_tts(query: str, memory_ctx: str) -> tuple[str, list[dict]]:
-            """在 LLM 生成首句时立即触发 TTS 分片任务。"""
-            loop = asyncio.get_running_loop()
-            streaming_futures = []
-            streaming_futures_lock = threading.Lock()
+            """在 LLM 生成首句时立即触发 TTS 分片任务（原生异步，无线程池开销）。"""
+            streaming_payloads: list[dict] = []
+            streaming_payloads_lock = asyncio.Lock()
 
             def _on_sentence_ready(sentence: str) -> None:
                 normalized = str(sentence or "").strip()
                 if not normalized:
                     return
-                fut = asyncio.run_coroutine_threadsafe(
-                    core.submit_voice_with_batch_scheduler(normalized, request_id),
-                    loop,
+                # 在事件循环中直接调度异步 TTS 任务（无需 run_coroutine_threadsafe）
+                task = asyncio.create_task(
+                    _collect_voice_payload(normalized, streaming_payloads, streaming_payloads_lock)
                 )
-                with streaming_futures_lock:
-                    streaming_futures.append(fut)
+                _fire_and_forget_tasks.add(task)
+                task.add_done_callback(_fire_and_forget_tasks.discard)
+
+            async def _collect_voice_payload(text: str, sink: list[dict], lock: asyncio.Lock) -> None:
+                try:
+                    result = await core.submit_voice_with_batch_scheduler(text, request_id)
+                    if isinstance(result, dict):
+                        async with lock:
+                            sink.append(result)
+                except Exception as exc:
+                    logger.debug("streaming voice collect failed: %s", exc)
+
+            _fire_and_forget_tasks: set[asyncio.Task] = set()
 
             try:
-                from modules.llm import call_llm_with_sentence_callback
+                from modules.llm import call_llm_with_sentence_callback_async
 
-                answer_text = await core.run_llm_job(
-                    call_llm_with_sentence_callback,
+                answer_text = await core.run_llm_job_async(
+                    call_llm_with_sentence_callback_async,
                     system_prompt,
                     model_name,
                     query,
                     memory_ctx,
                     _on_sentence_ready,
                 )
-                with streaming_futures_lock:
-                    futures_snapshot = list(streaming_futures)
-                if not futures_snapshot:
-                    return answer_text, []
-                wrapped = [asyncio.wrap_future(item) for item in futures_snapshot]
-                results = await asyncio.gather(*wrapped, return_exceptions=True)
-                payloads = [item for item in results if isinstance(item, dict)]
+                # 等待所有已触发的 TTS 任务完成
+                if _fire_and_forget_tasks:
+                    await asyncio.gather(*_fire_and_forget_tasks, return_exceptions=True)
+                payloads = list(streaming_payloads)
                 return answer_text, payloads
             except Exception as exc:
-                logger.debug("streamed llm path unavailable, fallback normal llm: %s", exc)
+                logger.debug("async streamed llm path unavailable, fallback sync llm: %s", exc)
                 from modules.llm import call_llm
 
                 answer_text = await core.run_llm_job(
@@ -305,19 +345,42 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
                 routed_to_agent = False
             else:
                 try:
-                    agent_result = await __import_post_json()(
-                        f"{cfg.agent_service_url}/execute",
-                        payload={
-                            "task": request.query,
-                            "user_id": request.user_id,
-                            "priority": "normal",
-                        },
-                        timeout=cfg.agent_timeout_sec,
-                        headers={"x-request-id": request_id},
+                    # 并行: Agent 执行 + 提示语音合成（用户立即听到"正在为你处理"）
+                    import httpx as _httpx
+                    agent_timeout = _httpx.Timeout(
+                        connect=5.0,
+                        read=cfg.agent_timeout_sec,
+                        write=10.0,
+                        pool=3.0,
                     )
+                    hint_text = "正在处理。"
+                    hint_tts_task = asyncio.create_task(
+                        core.invoke_voice_service(hint_text, request_id, timeout_override=15.0)
+                    )
+                    agent_call_task = asyncio.create_task(
+                        __import_post_json()(
+                            f"{cfg.agent_service_url}/execute",
+                            payload={
+                                "task": request.query,
+                                "user_id": request.user_id,
+                                "priority": "normal",
+                            },
+                            timeout=agent_timeout,
+                            headers={"x-request-id": request_id},
+                        )
+                    )
+                    # 等待 Agent 完成（提示语音已在后台合成）
+                    agent_result = await agent_call_task
                     answer = agent_result.get("result", "agent returned empty result")
                     agent_mode = agent_result.get("mode", "unknown")
                     core.record_circuit_success("agent")
+                    # 收集提示语音结果，作为第一个 TTS 分片
+                    try:
+                        hint_tts = await hint_tts_task
+                        if isinstance(hint_tts, dict) and not hint_tts.get("error"):
+                            streamed_tts_payloads.append(hint_tts)
+                    except Exception:
+                        pass
                 except Exception:
                     core.record_circuit_failure("agent")
                     routed_to_agent = False
@@ -333,6 +396,39 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
                 memory_text,
             )
 
+            # ═══ 兜底: 语义路由器未触发，但主 LLM 输出了 [SUMMON_AGENT] 标签 ═══
+            if not request.force_chat_only:
+                summoned_task = _extract_summon_agent_task(answer)
+                if summoned_task and not core.is_circuit_open("agent"):
+                    logger.info(
+                        "LLM SUMMON_AGENT tag detected (router missed), task=%s",
+                        summoned_task[:120],
+                    )
+                    # 清除已生成的 TTS 分片（标签文本不应被朗读）
+                    streamed_tts_payloads = []
+                    try:
+                        agent_result = await __import_post_json()(
+                            f"{cfg.agent_service_url}/execute",
+                            payload={
+                                "task": summoned_task,
+                                "user_id": request.user_id,
+                                "priority": "normal",
+                            },
+                            timeout=cfg.agent_timeout_sec,
+                            headers={"x-request-id": request_id},
+                        )
+                        answer = agent_result.get("result", "agent returned empty result")
+                        agent_mode = agent_result.get("mode", "unknown")
+                        routed_to_agent = True
+                        route_reason = f"{route_reason}|summon_agent_tag"
+                        core.record_circuit_success("agent")
+                    except Exception as exc:
+                        logger.warning("SUMMON_AGENT tag agent call failed: %s", exc)
+                        core.record_circuit_failure("agent")
+                        # 保留 LLM 原始回复，但移除标签
+                        answer = _strip_summon_agent_tags(answer)
+                        agent_mode = "tag-agent-failed"
+
         with contextlib.suppress(Exception):
             await prewarm_task
 
@@ -344,23 +440,28 @@ async def chat(request: ChatRequest, http_request: Request) -> dict:
             f"用户: {request.query}\nAI: {answer}",
         )
 
-        if streamed_tts_payloads:
-            flattened_segments: list[dict] = []
-            for payload in streamed_tts_payloads:
-                nested = payload.get("segments")
-                if isinstance(nested, list) and nested:
-                    for segment in nested:
-                        if isinstance(segment, dict):
-                            flattened_segments.append(dict(segment))
-                else:
-                    flattened_segments.append(dict(payload))
+        tts_payload: Any = None
+        try:
+            if streamed_tts_payloads:
+                flattened_segments: list[dict] = []
+                for payload in streamed_tts_payloads:
+                    nested = payload.get("segments")
+                    if isinstance(nested, list) and nested:
+                        for segment in nested:
+                            if isinstance(segment, dict):
+                                flattened_segments.append(dict(segment))
+                    else:
+                        flattened_segments.append(dict(payload))
 
-            if flattened_segments:
-                tts_payload = core.merge_voice_segments(answer, flattened_segments, request_id)
+                if flattened_segments:
+                    tts_payload = core.merge_voice_segments(answer, flattened_segments, request_id)
+                else:
+                    tts_payload = await core.submit_voice_with_batch_scheduler(answer, request_id)
             else:
                 tts_payload = await core.submit_voice_with_batch_scheduler(answer, request_id)
-        else:
-            tts_payload = await core.submit_voice_with_batch_scheduler(answer, request_id)
+        except Exception as tts_exc:
+            logger.warning("TTS 合成失败（不影响文本回复）: %s", tts_exc)
+            tts_payload = {"error": str(tts_exc), "mode": "tts-failed"}
 
         return {
             "answer": answer,

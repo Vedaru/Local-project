@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
@@ -14,23 +15,7 @@ from starlette.responses import Response
 from modules.logging_config import clear_context, get_logger, set_context
 from modules.python_runtime_guard import ensure_supported_python_runtime
 
-app = FastAPI(title="project-local-agent-service", version="0.1.0")
 logger = get_logger("AgentService")
-
-
-@app.middleware("http")
-async def request_context_middleware(
-    request: Request,
-    call_next: Callable[[Request], Awaitable[Response]],
-) -> Response:
-    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
-    set_context(request_id=rid)
-    try:
-        response = await call_next(request)
-        response.headers.setdefault("x-request-id", rid)
-        return response
-    finally:
-        clear_context()
 
 
 class AgentRuntime(Protocol):
@@ -66,21 +51,65 @@ def _try_init_agent() -> None:
             task_timeout_seconds=timeout_s,
         )
         _AGENT_INIT_ERROR = ""
+        _log_optional_agent_dependencies()
     except Exception as exc:
         _REAL_AGENT = None
         _AGENT_INIT_ERROR = str(exc)
 
 
-@app.on_event("startup")
-async def startup_event() -> None:
+def _log_optional_agent_dependencies() -> None:
+    """启动时检查 Agent 依赖；缺失关键包时尝试自动安装。"""
+    from modules.agent.dependencies import (
+        missing_agent_dependencies,
+        pip_install_specs,
+        verify_manus_importable,
+    )
+
+    missing = missing_agent_dependencies(include_optional=False)
+    if missing:
+        specs = list(missing)
+        logger.warning(
+            "Agent 关键依赖缺失: %s",
+            ", ".join(s.pip_spec for s in specs),
+        )
+        ok, detail = pip_install_specs(specs)
+        if ok:
+            logger.info("已自动安装 Agent 依赖: %s", detail)
+        else:
+            logger.error("自动安装失败: %s", detail or "unknown")
+
+    ok, msg = verify_manus_importable()
+    if ok:
+        logger.info("Manus 导入检查: %s", msg)
+    else:
+        logger.error("Manus 导入检查失败: %s", msg)
+
+
+@asynccontextmanager
+async def lifespan(app):
     ensure_supported_python_runtime(logger=logger)
     await asyncio.to_thread(_try_init_agent)
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
+    yield
     if _REAL_AGENT is not None:
         await asyncio.to_thread(_REAL_AGENT.cleanup)
+
+
+app = FastAPI(title="project-local-agent-service", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def request_context_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
+    set_context(request_id=rid)
+    try:
+        response = await call_next(request)
+        response.headers.setdefault("x-request-id", rid)
+        return response
+    finally:
+        clear_context()
 
 
 class ExecuteRequest(BaseModel):

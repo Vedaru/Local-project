@@ -10,18 +10,6 @@ curl -sS "http://127.0.0.1:18083/health" | jq .
 curl -sS "http://127.0.0.1:18084/health" | jq .
 ```
 
-## Docker 栈
-
-```bash
-copy docker\.env.example docker\.env   # Windows
-# 编辑 GATEWAY_API_KEY 后：
-docker compose -f docker/docker-compose.yml up -d
-docker compose -f docker/docker-compose.yml ps
-docker compose -f docker/docker-compose.yml logs -f gateway
-```
-
-容器内已配置 `HEALTHCHECK`；也可在宿主机执行上述 `curl` 命令。
-
 ## 本地脚本
 
 | 脚本 | 说明 |
@@ -29,8 +17,6 @@ docker compose -f docker/docker-compose.yml logs -f gateway
 | `scripts/start.bat` / `scripts/start.sh` | 启动微服务 + GUI |
 | `scripts/start.bat --start-services-only` | 仅启动微服务 |
 | `scripts/check.bat` | Windows 运行时健康检查 |
-| `make docker-up` | 启动 Docker 后端栈 |
-
 ```bash
 curl -sS "http://127.0.0.1:18080/health" | jq .
 curl -sS "http://127.0.0.1:18081/health" | jq .

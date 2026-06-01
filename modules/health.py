@@ -332,9 +332,8 @@ def check_web_fetch_runtime_stats(
         )
 
     requests_count = _safe_non_negative_int(stats.get("requests"))
-    success_count = (
-        _safe_non_negative_int(stats.get("extension_success"))
-        + _safe_non_negative_int(stats.get("binary_success"))
+    success_count = _safe_non_negative_int(stats.get("extension_success")) + _safe_non_negative_int(
+        stats.get("binary_success")
     )
     error_like_count = (
         _safe_non_negative_int(stats.get("extension_empty_or_error"))
@@ -351,10 +350,7 @@ def check_web_fetch_runtime_stats(
         message = f"No successful web fetch in {requests_count} requests"
     elif error_like_count > success_count:
         status = HealthStatus.DEGRADED
-        message = (
-            f"Partial success: {success_count}/{requests_count} succeeded, "
-            f"errors={error_like_count}"
-        )
+        message = f"Partial success: {success_count}/{requests_count} succeeded, " f"errors={error_like_count}"
     else:
         status = HealthStatus.HEALTHY
         message = f"Successful web fetches: {success_count}/{requests_count}"

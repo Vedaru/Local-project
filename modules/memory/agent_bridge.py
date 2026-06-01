@@ -98,7 +98,7 @@ class AgentMemoryBridge:
                     age_hours=age_hours,
                     is_user_preference=is_pref,
                 )
-                score = containment * 0.7 + (0.2 if is_pref else 0.05) + (1.0 / (1.0 + age_hours ** 0.3)) * 0.1
+                score = containment * 0.7 + (0.2 if is_pref else 0.05) + (1.0 / (1.0 + age_hours**0.3)) * 0.1
                 hits.append((score, hit))
 
         hits.sort(reverse=True, key=lambda x: x[0])

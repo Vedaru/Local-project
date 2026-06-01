@@ -6,7 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-def _reload_gateway_module(monkeypatch, gateway_timeout=None, memory_timeout=None, agent_timeout=None, voice_timeout=None):
+def _reload_gateway_module(
+    monkeypatch, gateway_timeout=None, memory_timeout=None, agent_timeout=None, voice_timeout=None
+):
     if gateway_timeout is None:
         monkeypatch.delenv("GATEWAY_CHAT_TIMEOUT_SEC", raising=False)
     else:
@@ -100,6 +102,7 @@ def test_orchestrator_memory_timeout_degrades_instead_of_502(monkeypatch):
 
     monkeypatch.setattr(_http, "post_json", fake_post_json)
     import modules.llm as _llm_mod
+
     monkeypatch.setattr(_llm_mod, "call_llm", lambda *_args, **_kwargs: "mock-answer")
     monkeypatch.setattr(
         _llm_mod,
@@ -108,6 +111,7 @@ def test_orchestrator_memory_timeout_degrades_instead_of_502(monkeypatch):
     )
     monkeypatch.setattr(_llm_mod, "decide_agent_routing", lambda **_kwargs: _Decision())
     import modules.config as _cfg_mod
+
     monkeypatch.setattr(
         _cfg_mod,
         "load_config",
@@ -140,6 +144,7 @@ def test_orchestrator_memory_timeout_degrades_instead_of_502(monkeypatch):
 def test_orchestrator_memory_batch_flushes_previous_turn(monkeypatch):
     import microservices.orchestrator.main as orchestrator
     import microservices.shared.http_client as _http
+
     batch_calls = []
 
     async def fake_post_json(url, payload, timeout, headers=None):
@@ -160,6 +165,7 @@ def test_orchestrator_memory_batch_flushes_previous_turn(monkeypatch):
 
     monkeypatch.setattr(_http, "post_json", fake_post_json)
     import modules.llm as _llm_mod
+
     monkeypatch.setattr(_llm_mod, "call_llm", lambda *_args, **_kwargs: "mock-answer")
     monkeypatch.setattr(
         _llm_mod,
@@ -168,6 +174,7 @@ def test_orchestrator_memory_batch_flushes_previous_turn(monkeypatch):
     )
     monkeypatch.setattr(_llm_mod, "decide_agent_routing", lambda **_kwargs: _Decision())
     import modules.config as _cfg_mod
+
     monkeypatch.setattr(
         _cfg_mod,
         "load_config",
@@ -218,6 +225,7 @@ def test_orchestrator_memory_batch_flushes_previous_turn(monkeypatch):
 def test_orchestrator_voice_batch_returns_queued_when_tts_is_slow(monkeypatch):
     import microservices.orchestrator.main as orchestrator
     import microservices.shared.http_client as _http
+
     monkeypatch.setenv("ORCH_VOICE_ASYNC_BATCH_ENABLED", "1")
     monkeypatch.setenv("ORCH_VOICE_HIT_PRIORITY_DIRECT_ENABLED", "0")
     monkeypatch.setenv("ORCH_VOICE_BATCH_RESULT_WAIT_SEC", "0.01")
@@ -245,6 +253,7 @@ def test_orchestrator_voice_batch_returns_queued_when_tts_is_slow(monkeypatch):
 
     monkeypatch.setattr(_http, "post_json", fake_post_json)
     import modules.llm as _llm_mod
+
     monkeypatch.setattr(_llm_mod, "call_llm", lambda *_args, **_kwargs: "mock-answer")
     monkeypatch.setattr(
         _llm_mod,
@@ -253,6 +262,7 @@ def test_orchestrator_voice_batch_returns_queued_when_tts_is_slow(monkeypatch):
     )
     monkeypatch.setattr(_llm_mod, "decide_agent_routing", lambda **_kwargs: _Decision())
     import modules.config as _cfg_mod
+
     monkeypatch.setattr(
         _cfg_mod,
         "load_config",
@@ -283,6 +293,7 @@ def test_orchestrator_voice_batch_returns_queued_when_tts_is_slow(monkeypatch):
 def test_orchestrator_voice_hit_priority_direct_returns_wav(monkeypatch):
     import microservices.orchestrator.main as orchestrator
     import microservices.shared.http_client as _http
+
     monkeypatch.setenv("ORCH_VOICE_ASYNC_BATCH_ENABLED", "1")
     monkeypatch.setenv("ORCH_VOICE_HIT_PRIORITY_DIRECT_ENABLED", "1")
     monkeypatch.setenv("ORCH_VOICE_HIT_PRIORITY_DIRECT_TIMEOUT_SEC", "0.2")
@@ -310,6 +321,7 @@ def test_orchestrator_voice_hit_priority_direct_returns_wav(monkeypatch):
     monkeypatch.setattr(_http, "post_json", fake_post_json)
 
     import modules.llm as _llm_mod
+
     monkeypatch.setattr(_llm_mod, "call_llm", lambda *_args, **_kwargs: "mock-answer")
     monkeypatch.setattr(
         _llm_mod,
@@ -318,6 +330,7 @@ def test_orchestrator_voice_hit_priority_direct_returns_wav(monkeypatch):
     )
     monkeypatch.setattr(_llm_mod, "decide_agent_routing", lambda **_kwargs: _Decision())
     import modules.config as _cfg_mod
+
     monkeypatch.setattr(
         _cfg_mod,
         "load_config",
@@ -371,6 +384,7 @@ def test_orchestrator_chat_fail_fast_returns_429_when_limited(monkeypatch):
         reason = ""
 
     import modules.llm as _llm_mod
+
     monkeypatch.setattr(_llm_mod, "decide_agent_routing", lambda **_kwargs: _Decision())
     monkeypatch.setattr(_llm_mod, "call_llm", lambda *_args, **_kwargs: "mock-answer")
     monkeypatch.setattr(
@@ -380,6 +394,7 @@ def test_orchestrator_chat_fail_fast_returns_429_when_limited(monkeypatch):
     )
 
     import modules.config as _cfg_mod
+
     monkeypatch.setattr(
         _cfg_mod,
         "load_config",

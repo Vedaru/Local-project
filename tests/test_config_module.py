@@ -135,9 +135,7 @@ class TestLoadConfig:
         """Set up temporary .env and config.yaml for testing."""
         env_file = tmp_path / ".env"
         env_file.write_text(
-            'ARK_API_KEY="test-key-123"\n'
-            "MODEL_NAME=test-model\n"
-            'SYSTEM_PROMPT="You are a test assistant."\n',
+            'ARK_API_KEY="test-key-123"\n' "MODEL_NAME=test-model\n" 'SYSTEM_PROMPT="You are a test assistant."\n',
             encoding="utf-8",
         )
 
@@ -222,4 +220,3 @@ class TestClientProxy:
 def test_config_all_exports_are_available():
     missing = [name for name in config_module.__all__ if not hasattr(config_module, name)]
     assert missing == []
-

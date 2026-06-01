@@ -24,6 +24,35 @@ from app.tool.search import (
 from app.tool.search.base import SearchItem
 
 
+def _build_search_engine_map() -> Dict[str, WebSearchEngine]:
+    """仅注册当前环境已安装依赖的搜索引擎。"""
+    engines: Dict[str, WebSearchEngine] = {}
+
+    def _try_add(name: str, factory) -> None:
+        try:
+            engines[name] = factory()
+        except ImportError as exc:
+            logger.warning("搜索引擎 %s 不可用（缺少依赖）: %s", name, exc)
+        except Exception as exc:
+            logger.warning("搜索引擎 %s 初始化失败: %s", name, exc)
+
+    for name, cls in (
+        ("duckduckgo", DuckDuckGoSearchEngine),
+        ("bing", BingSearchEngine),
+        ("google", GoogleSearchEngine),
+        ("baidu", BaiduSearchEngine),
+    ):
+        if cls is not None:
+            _try_add(name, cls)
+
+    if not engines:
+        logger.error("没有可用的搜索引擎，请安装 duckduckgo_search 或 baidusearch")
+    return engines
+
+
+_SEARCH_ENGINE_CACHE: Optional[Dict[str, WebSearchEngine]] = None
+
+
 class SearchResult(BaseModel):
     """Represents a single search result returned by a search engine."""
 
@@ -654,13 +683,14 @@ class WebSearch(BaseTool):
         },
         "required": ["query"],
     }
-    _search_engine: dict[str, WebSearchEngine] = {
-        "google": GoogleSearchEngine(),
-        "baidu": BaiduSearchEngine(),
-        "duckduckgo": DuckDuckGoSearchEngine(),
-        "bing": BingSearchEngine(),
-    }
     content_fetcher: WebContentFetcher = WebContentFetcher()
+
+    @classmethod
+    def _search_engines(cls) -> Dict[str, WebSearchEngine]:
+        global _SEARCH_ENGINE_CACHE
+        if _SEARCH_ENGINE_CACHE is None:
+            _SEARCH_ENGINE_CACHE = _build_search_engine_map()
+        return _SEARCH_ENGINE_CACHE
 
     async def execute(
         self,
@@ -760,8 +790,12 @@ class WebSearch(BaseTool):
         engine_order = self._get_engine_order()
         failed_engines = []
 
+        engines = self._search_engines()
         for engine_name in engine_order:
-            engine = self._search_engine[engine_name]
+            engine = engines.get(engine_name)
+            if engine is None:
+                failed_engines.append(engine_name)
+                continue
             logger.info(f"🔎 Attempting search with {engine_name.capitalize()}...")
             search_items = await self._perform_search_with_engine(
                 engine, query, num_results, search_params
@@ -854,17 +888,12 @@ class WebSearch(BaseTool):
         )
 
         # Start with preferred engine, then configured fallbacks only.
-        engine_order = [preferred] if preferred in self._search_engine else []
-        engine_order.extend(
-            [
-                fb
-                for fb in fallbacks
-                if fb in self._search_engine and fb not in engine_order
-            ]
-        )
+        engines = self._search_engines()
+        engine_order = [preferred] if preferred in engines else []
+        engine_order.extend([fb for fb in fallbacks if fb in engines and fb not in engine_order])
 
         if not engine_order:
-            return ["google"]
+            return list(engines.keys()) or ["duckduckgo"]
         return engine_order
 
     @retry(

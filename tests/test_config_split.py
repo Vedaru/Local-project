@@ -42,6 +42,7 @@ class TestConfigBase:
             _to_float,
             _to_int,
         )
+
         assert isinstance(PROJECT_ROOT, str)
         assert len(PROJECT_ROOT) > 0
         assert isinstance(CONFIG_PATH, str)
@@ -142,11 +143,13 @@ class TestConfigApp:
 
         yaml_file = tmp_path / "config.yaml"
         yaml_file.write_text(
-            yaml.dump({
-                "api": {"sovits_url": "http://test:9999"},
-                "audio": {"sample_rate": 44100},
-                "ear": {"enabled": False},
-            }),
+            yaml.dump(
+                {
+                    "api": {"sovits_url": "http://test:9999"},
+                    "audio": {"sample_rate": 44100},
+                    "ear": {"enabled": False},
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -191,11 +194,21 @@ class TestConfigTuning:
             get_tuning,
             load_tuning,
         )
-        assert all(v is not None for v in [
-            TuningConfig, ServicesTuning, OrchestratorTuning,
-            VoiceTuning, ExpressionTuning, GatewayTuning, ClientTuning,
-            load_tuning, get_tuning,
-        ])
+
+        assert all(
+            v is not None
+            for v in [
+                TuningConfig,
+                ServicesTuning,
+                OrchestratorTuning,
+                VoiceTuning,
+                ExpressionTuning,
+                GatewayTuning,
+                ClientTuning,
+                load_tuning,
+                get_tuning,
+            ]
+        )
 
     def test_default_values(self):
         from modules.config_tuning import TuningConfig
@@ -214,19 +227,21 @@ class TestConfigTuning:
 
         tuning_file = tmp_path / "tuning.yaml"
         tuning_file.write_text(
-            yaml.dump({
-                "services": {"gateway_port": 9000},
-                "orchestrator": {"memory_timeout_sec": 15.0},
-                "voice": {"connect_timeout_sec": 10},
-            }),
+            yaml.dump(
+                {
+                    "services": {"gateway_port": 9000},
+                    "orchestrator": {"memory_timeout_sec": 15.0},
+                    "voice": {"connect_timeout_sec": 10},
+                }
+            ),
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(
-            "modules.config_tuning.TUNING_PATH",
-            str(tuning_file),
-        )
-        t = load_tuning()
+        from modules.config_tuning import TUNING_ENV_OVERRIDE_KEYS
+
+        for key in TUNING_ENV_OVERRIDE_KEYS:
+            monkeypatch.delenv(key, raising=False)
+        t = load_tuning(path=str(tuning_file))
         assert t.services.gateway_port == 9000
         assert t.orchestrator.memory_timeout_sec == 15.0
         assert t.voice.connect_timeout_sec == 10
@@ -247,10 +262,9 @@ class TestConfigTuning:
 
         tuning_file = tmp_path / "tuning.yaml"
         tuning_file.write_text(yaml.dump({"services": {"gateway_port": 8080}}), encoding="utf-8")
-        monkeypatch.setattr("modules.config_tuning.TUNING_PATH", str(tuning_file))
 
         with patch.dict(os.environ, {"GATEWAY_PORT": "7777"}, clear=False):
-            t = load_tuning()
+            t = load_tuning(path=str(tuning_file))
             assert t.services.gateway_port == 7777  # env override wins
 
 
@@ -275,6 +289,7 @@ class TestConfigLegacy:
             SYSTEM_PROMPT,
             client,
         )
+
         assert SOVITS_URL.startswith("http")
         assert REF_AUDIO.endswith(".wav")
         assert isinstance(EAR_ENABLED, bool)
@@ -327,4 +342,3 @@ class TestConfigReexport:
 
         t = cfg.get_tuning()
         assert isinstance(t, cfg.TuningConfig)
-

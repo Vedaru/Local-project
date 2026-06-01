@@ -88,4 +88,3 @@ def test_tool_gating_table(
     tuning_file.write_text(yaml.dump(_security_tools_yaml(**kwargs)), encoding="utf-8")
     monkeypatch.setattr("modules.config_tuning.TUNING_PATH", str(tuning_file))
     assert is_tool_allowed(tool_name) is expected
-

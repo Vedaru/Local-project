@@ -111,7 +111,7 @@ expression:
   neutral_tail_sec: 0.26
 
 gateway:
-  chat_timeout_sec: 60
+  chat_timeout_sec: 0
   api_key: ""
   bind_host: "127.0.0.1"
 
@@ -133,6 +133,7 @@ network:
     pool_max_keepalive: 20
 
 runtime:
+  # 嵌入式解释器版本锁定见 scripts/runtime_version.txt（须与 pyproject requires-python 一致）
   python:
     min_version: "3.10"
     max_version_exclusive: "3.12"

@@ -4,17 +4,17 @@
 # ╚══════════════════════════════════════════════════════════════╝
 
 [llm]
-model = "deepseek-v3-250324"
-base_url = "https://ark.cn-beijing.volces.com/api/v3"
-api_key = "e0d19dea-e6c7-4530-965b-66562569d2da"
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com"
+api_key = "sk-330189069eaf41f989fef22f330627d5"
 max_tokens = 8192
 temperature = 0.0
 api_type = ""
 api_version = ""
 
 [search]
-engine = "Baidu"
-fallback_engines = ["DuckDuckGo", "Bing"]
+engine = "DuckDuckGo"
+fallback_engines = ["Bing", "Baidu"]
 lang = "zh"
 country = "cn"
 

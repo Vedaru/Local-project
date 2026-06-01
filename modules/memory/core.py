@@ -191,10 +191,12 @@ class MemoryConfig:
         self.episode_similarity_threshold = float(os.environ.get("MEMORY_EPISODE_SIM_THRESHOLD", "0.2"))
 
         # One-time bootstrap from legacy files to new palace storage
-        self.bootstrap_enabled = (
-            (os.environ.get("MEMORY_PALACE_BOOTSTRAP_ENABLED", "1") or "1").strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
+        self.bootstrap_enabled = (os.environ.get("MEMORY_PALACE_BOOTSTRAP_ENABLED", "1") or "1").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.bootstrap_max_episodes = max(
             100,
             int(os.environ.get("MEMORY_PALACE_BOOTSTRAP_MAX_EPISODES", "5000") or "5000"),
@@ -205,10 +207,12 @@ class MemoryConfig:
         self.retrieval_cache_size = int(os.environ.get("MEMORY_RETRIEVAL_CACHE_SIZE", "128"))
 
         # Context gate
-        self.context_gate_enabled = (
-            (os.environ.get("MEMORY_CONTEXT_GATE_ENABLED", "1") or "1").strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
+        self.context_gate_enabled = (os.environ.get("MEMORY_CONTEXT_GATE_ENABLED", "1") or "1").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.context_min_top_score = float(os.environ.get("MEMORY_CONTEXT_MIN_TOP_SCORE", "0.28") or "0.28")
         self.context_low_info_min_top_score = float(
             os.environ.get("MEMORY_CONTEXT_LOW_INFO_MIN_TOP_SCORE", "0.72") or "0.72"
@@ -218,9 +222,7 @@ class MemoryConfig:
         self.context_low_info_max_unique_ratio = float(
             os.environ.get("MEMORY_CONTEXT_LOW_INFO_MAX_UNIQUE_RATIO", "0.78") or "0.78"
         )
-        self.context_low_info_min_margin = float(
-            os.environ.get("MEMORY_CONTEXT_LOW_INFO_MIN_MARGIN", "0.04") or "0.04"
-        )
+        self.context_low_info_min_margin = float(os.environ.get("MEMORY_CONTEXT_LOW_INFO_MIN_MARGIN", "0.04") or "0.04")
         self.context_normal_top_keep_ratio = float(
             os.environ.get("MEMORY_CONTEXT_NORMAL_TOP_KEEP_RATIO", "0.58") or "0.58"
         )
@@ -234,9 +236,8 @@ class MemoryConfig:
 
         # Working continuity fallback
         self.wm_continuity_fallback_enabled = (
-            (os.environ.get("MEMORY_RETRIEVAL_WM_CONTINUITY_FALLBACK_ENABLED", "1") or "1").strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
+            os.environ.get("MEMORY_RETRIEVAL_WM_CONTINUITY_FALLBACK_ENABLED", "1") or "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}
         self.wm_continuity_max_age_sec = max(
             1.0,
             float(os.environ.get("MEMORY_RETRIEVAL_WM_CONTINUITY_MAX_AGE_SEC", "180") or "180"),
@@ -246,9 +247,8 @@ class MemoryConfig:
             int(os.environ.get("MEMORY_RETRIEVAL_WM_CONTINUITY_MAX_RESULTS", "2") or "2"),
         )
         self.wm_continuity_exclude_warmup = (
-            (os.environ.get("MEMORY_RETRIEVAL_WM_CONTINUITY_EXCLUDE_WARMUP", "1") or "1").strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
+            os.environ.get("MEMORY_RETRIEVAL_WM_CONTINUITY_EXCLUDE_WARMUP", "1") or "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
         # Deferred persistence / warmup
         try:
@@ -277,10 +277,12 @@ class MemoryConfig:
 
         # C++ acceleration (episodic retrieval scoring)
         self.cpp_accel_lib = (os.environ.get("MEMORY_CPP_ACCEL_LIB", "") or "").strip()
-        self.cpp_accel_required = (
-            (os.environ.get("MEMORY_CPP_ACCEL_REQUIRED", "0") or "0").strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
+        self.cpp_accel_required = (os.environ.get("MEMORY_CPP_ACCEL_REQUIRED", "0") or "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
         try:
             self.cpp_embedding_dim = max(64, int((os.environ.get("MEMORY_CPP_EMBED_DIM", "384") or "384").strip()))
@@ -288,7 +290,9 @@ class MemoryConfig:
             self.cpp_embedding_dim = 384
 
         try:
-            self.cpp_decay_rate = max(0.0, float((os.environ.get("MEMORY_CPP_DECAY_RATE", "0.0001") or "0.0001").strip()))
+            self.cpp_decay_rate = max(
+                0.0, float((os.environ.get("MEMORY_CPP_DECAY_RATE", "0.0001") or "0.0001").strip())
+            )
         except Exception:
             self.cpp_decay_rate = 0.0001
 
@@ -440,7 +444,9 @@ class HumanMemoryEngine:
             self.working.add_turn(
                 user_text=user_text,
                 ai_text=ai_text,
-                metadata={"user_id": scoped_user_id, "source": "live_turn"} if scoped_user_id else {"source": "live_turn"},
+                metadata={"user_id": scoped_user_id, "source": "live_turn"}
+                if scoped_user_id
+                else {"source": "live_turn"},
             )
 
             wing = wing_for_user(scoped_user_id, default_wing=self._config.default_wing)
@@ -497,9 +503,7 @@ class HumanMemoryEngine:
 
         extracted: list[_CompatFact] = []
         try:
-            result = self._llm_extract_fn(
-                f"从以下用户话语中提取关于用户的事实信息。返回JSON格式。\n用户话语: {user_text}"
-            )
+            result = self._llm_extract_fn(f"从以下用户话语中提取关于用户的事实信息。返回JSON格式。\n用户话语: {user_text}")
         except Exception as e:
             logger.debug("LLM事实提取失败(非致命): %s", e)
             return extracted
@@ -875,9 +879,7 @@ class HumanMemoryEngine:
             return []
 
         keep_ratio = (
-            self._config.context_low_info_top_keep_ratio
-            if low_info
-            else self._config.context_normal_top_keep_ratio
+            self._config.context_low_info_top_keep_ratio if low_info else self._config.context_normal_top_keep_ratio
         )
         keep_ratio = min(max(0.0, float(keep_ratio)), 1.0)
         cutoff = max(required_top, top_score * keep_ratio)
@@ -897,9 +899,9 @@ class HumanMemoryEngine:
 
         parts: list[str] = []
 
-        wm_hits = [
-            hit for hit in hits if hit.source in {"working_memory", "working_memory_continuity"}
-        ][: max(1, n_results)]
+        wm_hits = [hit for hit in hits if hit.source in {"working_memory", "working_memory_continuity"}][
+            : max(1, n_results)
+        ]
         if wm_hits:
             lines = ["【最近对话】"]
             for hit in wm_hits:
