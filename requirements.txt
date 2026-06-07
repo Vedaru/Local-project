@@ -94,7 +94,7 @@ peft>=0.7.0
 pytorch-lightning>=2.1.0
 torchmetrics>=1.2.0
 einops>=0.7.0
-x-transformers>=1.27.0
+x-transformers>=2.19.12
 
 # 音频处理
 librosa>=0.10.0
