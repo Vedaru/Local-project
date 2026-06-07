@@ -100,7 +100,7 @@ tomli = "2.0.1"
 beautifulsoup4 = "4.12.2"
 
 # OCR
-pytesseract = "0.3.10"
+pytesseract = "0.3.13"
 
 # 进度条
 tqdm = "4.66.1"
