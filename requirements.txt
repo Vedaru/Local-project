@@ -93,7 +93,7 @@ peft>=0.7.0
 # 深度学习工具
 pytorch-lightning>=2.1.0
 torchmetrics>=1.2.0
-einops>=0.7.0
+einops>=0.8.2
 x-transformers>=1.27.0
 
 # 音频处理
